@@ -1,0 +1,29 @@
+services:
+  touchgrass:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Inside the container the server must bind all interfaces; the
+      # published port stays localhost-only on the host.
+      TOUCHGRASS_ADDR: ":8080"
+      TOUCHGRASS_DB: "/data/touchgrass.db"
+      # Required: the single admin password. Export it before up:
+      #   export TOUCHGRASS_ADMIN_PASSWORD='choose-a-strong-password'
+      TOUCHGRASS_ADMIN_PASSWORD: "${TOUCHGRASS_ADMIN_PASSWORD:?set TOUCHGRASS_ADMIN_PASSWORD first}"
+    volumes:
+      - touchgrass-data:/data
+      # Daemon access for inventory, metrics, and log tails. This socket
+      # is root-equivalent on the host (:ro is hygiene, not enforcement)
+      # — see docs/threat-model.md. Never publish the API port beyond
+      # loopback while this mount is present.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  touchgrass-data:

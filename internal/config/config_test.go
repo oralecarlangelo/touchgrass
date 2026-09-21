@@ -1,0 +1,189 @@
+package config
+
+import (
+	"testing"
+	"time"
+)
+
+const testAdminPassword = "secret"
+
+func TestLoad(t *testing.T) {
+	t.Parallel()
+
+	defaults := Config{
+		Addr: "127.0.0.1:8080", DB: "./touchgrass.db", Env: "prod",
+		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
+		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
+		AdminPassword: testAdminPassword, CookieSecure: false,
+		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
+		RetentionErrors: 720 * time.Hour, MaxOccurrences: 10000,
+		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
+	}
+
+	tests := []struct {
+		name        string
+		env         map[string]string
+		expected    Config
+		expectedErr bool
+	}{
+		{
+			name:        "defaults with password",
+			env:         map[string]string{adminPasswordEnvVar: testAdminPassword},
+			expected:    defaults,
+			expectedErr: false,
+		},
+		{
+			name: "custom values from env",
+			env: map[string]string{
+				"TOUCHGRASS_ADDR": ":8080", "TOUCHGRASS_DB": "/data/t.db", "APP_ENV": "dev",
+				"TOUCHGRASS_METRICS_INTERVAL": "10s", adminPasswordEnvVar: testAdminPassword,
+				"TOUCHGRASS_COOKIE_SECURE": "true", "TOUCHGRASS_WATCH_INTERVAL": "2s",
+				"TOUCHGRASS_RETENTION_ERRORS": "24h", "TOUCHGRASS_INGEST_MAX_OCCURRENCES": "500",
+				"TOUCHGRASS_RETENTION_LOGS": "48h", "TOUCHGRASS_LOGS_MAX_LINES": "1000",
+				"TOUCHGRASS_LOG_POLL_INTERVAL": "2s",
+			},
+			expected: Config{
+				Addr: ":8080", DB: "/data/t.db", Env: "dev",
+				MetricsInterval: 10 * time.Second, RetentionMetrics: 168 * time.Hour,
+				RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
+				AdminPassword: testAdminPassword, CookieSecure: true,
+				WatchInterval: 2 * time.Second, CutoverTimeout: 10 * time.Minute,
+				RetentionErrors: 24 * time.Hour, MaxOccurrences: 500,
+				RetentionLogs: 48 * time.Hour, MaxLogLines: 1000, LogPollInterval: 2 * time.Second,
+			},
+			expectedErr: false,
+		},
+		{
+			name:        "missing password",
+			env:         map[string]string{},
+			expected:    Config{},
+			expectedErr: true,
+		},
+		{
+			name:        "invalid addr",
+			env:         map[string]string{"TOUCHGRASS_ADDR": "not-an-addr", adminPasswordEnvVar: "s"},
+			expected:    Config{},
+			expectedErr: true,
+		},
+		{
+			name:        "invalid env",
+			env:         map[string]string{"APP_ENV": "staging", adminPasswordEnvVar: "s"},
+			expected:    Config{},
+			expectedErr: true,
+		},
+		{
+			name:        "invalid interval",
+			env:         map[string]string{"TOUCHGRASS_METRICS_INTERVAL": "soon", adminPasswordEnvVar: "s"},
+			expected:    Config{},
+			expectedErr: true,
+		},
+		{
+			name:        "non-positive retention",
+			env:         map[string]string{"TOUCHGRASS_RETENTION_METRICS": "0s", adminPasswordEnvVar: "s"},
+			expected:    Config{},
+			expectedErr: true,
+		},
+		{
+			name:        "non-boolean cookie flag",
+			env:         map[string]string{"TOUCHGRASS_COOKIE_SECURE": "maybe", adminPasswordEnvVar: "s"},
+			expected:    Config{},
+			expectedErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := load(func(key string) string {
+				return tt.env[key]
+			})
+
+			if tt.expectedErr {
+				if err == nil {
+					t.Fatal("load() error = nil, want error")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("load() error = %v, want nil", err)
+			}
+
+			if cfg != tt.expected {
+				t.Errorf("load() = %+v, want %+v", cfg, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLoadIngest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "invalid errors retention",
+			env:  map[string]string{"TOUCHGRASS_RETENTION_ERRORS": "soon", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "non-positive occurrence cap",
+			env:  map[string]string{"TOUCHGRASS_INGEST_MAX_OCCURRENCES": "0", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "non-numeric occurrence cap",
+			env:  map[string]string{"TOUCHGRASS_INGEST_MAX_OCCURRENCES": "many", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "invalid logs retention",
+			env:  map[string]string{"TOUCHGRASS_RETENTION_LOGS": "soon", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "non-positive log line cap",
+			env:  map[string]string{"TOUCHGRASS_LOGS_MAX_LINES": "0", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "invalid log poll interval",
+			env:  map[string]string{"TOUCHGRASS_LOG_POLL_INTERVAL": "often", adminPasswordEnvVar: "s"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := load(func(key string) string { return tt.env[key] }); err == nil {
+				t.Error("load() error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestLoadReadsProcessEnv(t *testing.T) {
+	t.Setenv("TOUCHGRASS_ADDR", "127.0.0.1:9090")
+	t.Setenv("TOUCHGRASS_DB", ":memory:")
+	t.Setenv("APP_ENV", "dev")
+	t.Setenv(adminPasswordEnvVar, testAdminPassword)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+
+	expected := Config{
+		Addr: "127.0.0.1:9090", DB: ":memory:", Env: "dev",
+		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
+		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
+		AdminPassword: testAdminPassword, CookieSecure: false,
+		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
+		RetentionErrors: 720 * time.Hour, MaxOccurrences: 10000,
+		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
+	}
+
+	if cfg != expected {
+		t.Errorf("Load() = %+v, want %+v", cfg, expected)
+	}
+}

@@ -1,0 +1,53 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/touchgrass
+bin/
+dist/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Go workspace file
+go.work.sum
+
+# Dependency directories
+vendor/
+node_modules/
+
+# SPA build output, except the placeholder that keeps go:embed working
+# before the first web build (never served; see web/dist/README.txt).
+!web/dist/
+web/dist/*
+!web/dist/README.txt
+
+# SQLite state (single local file, volume-mounted in compose)
+*.db
+*.db-*
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+/tmp/
+tmp/
+
+# Air hot reload
+tmp/

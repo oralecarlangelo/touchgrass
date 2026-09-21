@@ -1,0 +1,28 @@
+services:
+  touchgrass:
+    build:
+      context: ..
+      dockerfile: ../Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      TOUCHGRASS_ADDR: ":8080"
+      TOUCHGRASS_DB: "/data/touchgrass.db"
+      TOUCHGRASS_ADMIN_PASSWORD: "${TOUCHGRASS_ADMIN_PASSWORD:?set TOUCHGRASS_ADMIN_PASSWORD first}"
+    volumes:
+      - demo-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  # Toy service under test: answers everything with 200 + logs the hit.
+  # Run with COMPOSE_PROJECT_NAME=demo so its compose labels match the
+  # service row in README.md (project "demo", service "demo-api").
+  demo-api:
+    image: hashicorp/http-echo:1.0.2
+    command: ["-listen=:5678", "-text=demo-ok"]
+    ports:
+      - "127.0.0.1:5678:5678"
+    restart: unless-stopped
+
+volumes:
+  demo-data:

@@ -1,0 +1,38 @@
+# GoReleaser: tags (v*) build release binaries with the embedded UI.
+version: 2
+
+before:
+  hooks:
+    - npm ci --prefix web
+    - npm run build --prefix web
+
+builds:
+  - id: touchgrass
+    main: ./cmd/touchgrass
+    binary: touchgrass
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }}
+
+archives:
+  - id: touchgrass
+    builds: [touchgrass]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - ^docs:
+      - ^test:

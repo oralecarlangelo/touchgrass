@@ -1,0 +1,11 @@
+.git
+bin/
+coverage.out
+coverage.html
+*.db
+*.db-*
+web/node_modules/
+web/dist/
+sdk/node/node_modules/
+tmp/
+.DS_Store

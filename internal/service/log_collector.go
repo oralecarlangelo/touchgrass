@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -37,10 +38,14 @@ type LogCollectorConfig struct {
 	Logger             *slog.Logger
 }
 
-// logCursor tracks one container's tail position plus its last kept
-// line, so an inclusive --since boundary never duplicates.
+// logCursor tracks one container's tail position: the newest kept
+// timestamp plus that line's identity, so an inclusive --since
+// boundary never duplicates. The daemon returns stdout-then-stderr
+// blocks (not chronological), so the cursor must be the max stamp,
+// never the last line.
 type logCursor struct {
 	since      string
+	maxTs      time.Time
 	lastTs     string
 	lastStream string
 	lastLine   string
@@ -221,11 +226,16 @@ func (c *LogCollector) collect(ctx context.Context) error {
 	return nil
 }
 
-// flush stores one collection batch, skipping empty cycles.
+// flush stores one collection batch, skipping empty cycles. Lines sort
+// oldest-first so row ids stay chronological across stream blocks.
 func (c *LogCollector) flush(ctx context.Context, batch []model.LogLine) error {
 	if len(batch) == 0 {
 		return nil
 	}
+
+	slices.SortStableFunc(batch, func(a, b model.LogLine) int {
+		return a.Ts.Compare(b.Ts)
+	})
 
 	if _, err := c.logs.InsertBatch(ctx, batch); err != nil {
 		return fmt.Errorf("storing log batch: %w", err)
@@ -326,10 +336,7 @@ func (c *LogCollector) tailOne(
 		return batch
 	}
 
-	now := time.Now()
-	skipped := false
-
-	var truncated int64
+	keep := newTailKeep(cursor, serviceID, container.Name, time.Now())
 
 	for i, line := range lines {
 		if i >= maxLinesPerPoll {
@@ -340,45 +347,100 @@ func (c *LogCollector) tailOne(
 			break
 		}
 
-		ts := line.Timestamp
-		if ts.IsZero() {
-			ts = now
-		}
-
-		stamp := ts.UTC().Format(time.RFC3339Nano)
-
-		if len(line.Message) > maxLogLineBytes {
-			truncated++
-		}
-
-		message := truncate(line.Message, maxLogLineBytes)
-
-		if !skipped && cursor.lastLine != "" &&
-			stamp == cursor.lastTs && line.Stream == cursor.lastStream && message == cursor.lastLine {
-			skipped = true
-
-			continue
-		}
-
-		batch = append(batch, model.LogLine{
-			ServiceID: serviceID, Container: container.Name, Stream: line.Stream,
-			Line: message, Ts: ts,
-		})
-
-		// Docker returns chronological order, so the last kept stamp
-		// advances the cursor without string comparison.
-		cursor.since = stamp
-		cursor.lastTs, cursor.lastStream, cursor.lastLine = stamp, line.Stream, message
+		batch = keep.line(batch, line)
 	}
 
-	if truncated > 0 {
-		c.addTruncations(serviceID, truncated)
-		c.logger.Info("log lines truncated", "container", container.Name, "rows", truncated)
+	if keep.truncated > 0 {
+		c.addTruncations(serviceID, keep.truncated)
+		c.logger.Info("log lines truncated", "container", container.Name, "rows", keep.truncated)
 	}
 
-	c.cursors[container.ID] = cursor
+	c.cursors[container.ID] = keep.advanced()
 
 	return batch
+}
+
+// tailKeep filters one poll's lines to the new ones, tracking the max
+// stamp as the next cursor.
+type tailKeep struct {
+	cursor    logCursor
+	serviceID string
+	container string
+	now       time.Time
+	maxTs     time.Time
+	maxStamp  string
+	maxStream string
+	maxMsg    string
+	truncated int64
+	skipped   bool
+}
+
+// newTailKeep builds a filter over the container's current cursor.
+func newTailKeep(cursor logCursor, serviceID, container string, now time.Time) *tailKeep {
+	return &tailKeep{
+		cursor: cursor, serviceID: serviceID, container: container, now: now,
+		maxTs:    cursor.maxTs,
+		maxStamp: cursor.lastTs, maxStream: cursor.lastStream, maxMsg: cursor.lastLine,
+	}
+}
+
+// line appends one daemon line when it is newer than the cursor.
+func (k *tailKeep) line(batch []model.LogLine, line docker.LogLine) []model.LogLine {
+	ts := line.Timestamp
+	if ts.IsZero() {
+		ts = k.now
+	}
+
+	// Older than the cursor means already kept: skip even if the
+	// daemon ignored since. Genuinely new lines with old stamps
+	// (late-flushed buffers) are the accepted trade-off.
+	if !k.cursor.maxTs.IsZero() && ts.Before(k.cursor.maxTs) {
+		return batch
+	}
+
+	stamp := ts.UTC().Format(time.RFC3339Nano)
+
+	if len(line.Message) > maxLogLineBytes {
+		k.truncated++
+	}
+
+	message := truncate(line.Message, maxLogLineBytes)
+	boundary := !k.skipped && k.isRecordedMax(stamp, line.Stream, message)
+
+	if boundary {
+		k.skipped = true
+
+		return batch
+	}
+
+	if k.maxTs.IsZero() || ts.After(k.maxTs) {
+		k.maxTs = ts
+		k.maxStamp, k.maxStream, k.maxMsg = stamp, line.Stream, message
+	}
+
+	return append(batch, model.LogLine{
+		ServiceID: k.serviceID, Container: k.container, Stream: line.Stream,
+		Line: message, Ts: ts,
+	})
+}
+
+// isRecordedMax reports whether a line is the cursor's recorded max.
+func (k *tailKeep) isRecordedMax(stamp, stream, message string) bool {
+	return k.cursor.lastLine != "" &&
+		stamp == k.cursor.lastTs && stream == k.cursor.lastStream && message == k.cursor.lastLine
+}
+
+// cursor returns the cursor advanced to this poll's max stamp.
+func (k *tailKeep) advanced() logCursor {
+	if k.maxTs.IsZero() {
+		return k.cursor
+	}
+
+	k.cursor.since = k.maxTs.UTC().Format(time.RFC3339Nano)
+	k.cursor.maxTs = k.maxTs
+	k.cursor.lastTs, k.cursor.lastStream, k.cursor.lastLine = k.maxStamp, k.maxStream, k.maxMsg
+
+	return k.cursor
 }
 
 // clampSearchLimit bounds search pages.

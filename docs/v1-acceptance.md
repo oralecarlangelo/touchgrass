@@ -48,7 +48,10 @@ Live steps:
 2. Force a breach (lower a rule threshold or spike the service) and
    confirm the notification center shows it.
 
-- [ ] Metrics match `docker stats` within tolerance; alert fired.
+- [x] Metrics match `docker stats` within tolerance; alert fired.
+  (2026-09-21: green 266.1 vs 263.9 MiB; docker-vs-docker jitter
+  exceeds touchgrass-vs-docker delta; mem tripwire rule fired to a
+  notification in 48s, rule deleted after.)
 
 ## AC-4 — forced staging exception grouped <60s; outage harmless
 
@@ -72,7 +75,10 @@ Live steps:
    `TOUCHGRASS_LOGS_MAX_LINES` with `drops`/`truncations` counted,
    and occurrences under `TOUCHGRASS_INGEST_MAX_OCCURRENCES`.
 
-- [ ] Issue view shows surrounding logs; error+log storage under caps.
+- [x] Issue view shows surrounding logs; error+log storage under caps.
+  (2026-09-21: synthetic issue's `/logs` returned 20 surrounding prod
+  lines; stats show tn-api/admin-fe at cap 50k, tn-fe 2.4k, zero
+  drops/truncations.)
 
 ## AC-6 — tool stopped → SSH/script path; SDK removed → app same
 

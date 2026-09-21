@@ -215,6 +215,96 @@ func TestCollectDedupesInclusiveBoundary(t *testing.T) {
 	}
 }
 
+func TestCollectNonChronologicalBatch(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	// The daemon merges stdout-then-stderr blocks: the oldest line
+	// arrives last. The cursor must still advance to the max stamp.
+	lister := &fakeLogLister{
+		containers: []docker.Container{testLogContainer()},
+		lines: map[string][]docker.LogLine{
+			testBlueContainerID: {
+				{Timestamp: base.Add(2 * time.Second), Stream: model.LogStdout, Message: "new2"},
+				{Timestamp: base.Add(time.Second), Stream: model.LogStdout, Message: "new1"},
+				{Timestamp: base.Add(-time.Hour), Stream: model.LogStderr, Message: "ancient"},
+			},
+		},
+	}
+
+	collector, db := testLogCollector(t, lister, 1000)
+	ctx := context.Background()
+
+	if err := collector.collect(ctx); err != nil {
+		t.Fatalf("collect() error = %v, want nil", err)
+	}
+
+	lister.lines[testBlueContainerID] = append(lister.lines[testBlueContainerID], docker.LogLine{
+		Timestamp: base.Add(3 * time.Second), Stream: model.LogStdout, Message: "new3",
+	})
+
+	if err := collector.collect(ctx); err != nil {
+		t.Fatalf("collect() error = %v, want nil", err)
+	}
+
+	count, err := store.NewLogStore(db).CountByService(ctx, testServiceAPI)
+	if err != nil {
+		t.Fatalf("CountByService() error = %v, want nil", err)
+	}
+
+	if count != 4 {
+		t.Errorf("CountByService() = %d, want 4 without re-ingestion", count)
+	}
+}
+
+// staticLogLister ignores since, emulating a daemon that returns the
+// full tail window on every poll.
+type staticLogLister struct {
+	inner *fakeLogLister
+}
+
+func (s *staticLogLister) List(ctx context.Context) ([]docker.Container, error) {
+	return s.inner.List(ctx)
+}
+
+func (s *staticLogLister) Logs(
+	_ context.Context,
+	containerID, _ string,
+	_ int,
+) ([]docker.LogLine, error) {
+	return s.inner.lines[containerID], nil
+}
+
+func TestCollectSkipsAlreadySeen(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	inner := &fakeLogLister{
+		containers: []docker.Container{testLogContainer()},
+		lines:      map[string][]docker.LogLine{testBlueContainerID: scriptLines(base, 5)},
+	}
+
+	collector, db := testLogCollector(t, &staticLogLister{inner: inner}, 1000)
+	ctx := context.Background()
+
+	if err := collector.collect(ctx); err != nil {
+		t.Fatalf("collect() error = %v, want nil", err)
+	}
+
+	if err := collector.collect(ctx); err != nil {
+		t.Fatalf("collect() error = %v, want nil", err)
+	}
+
+	count, err := store.NewLogStore(db).CountByService(ctx, testServiceAPI)
+	if err != nil {
+		t.Fatalf("CountByService() error = %v, want nil", err)
+	}
+
+	if count != 5 {
+		t.Errorf("CountByService() = %d, want 5 without duplicates", count)
+	}
+}
+
 func TestCollectDropsBeyondPollCap(t *testing.T) {
 	t.Parallel()
 

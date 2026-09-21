@@ -98,11 +98,15 @@ func (s *LogStore) Search(ctx context.Context, filter LogFilter) ([]model.LogLin
 	}
 
 	if match, ok := sanitizeFTS(filter.Query); ok {
+		// The MATCH lives in a subquery so the planner drives from the
+		// FTS index: the JOIN form scans log_lines and evaluates MATCH
+		// per row (5s+ at 100k rows; the subquery is ~10ms).
 		return queryRows(ctx, s.db.sql, rowQuery[model.LogLine]{
 			what: "log lines",
 			query: `SELECT l.id, l.service_id, l.container, l.stream, l.line, l.ts, l.created_at
-			 FROM log_lines l JOIN log_lines_fts f ON f.rowid = l.id
-			 WHERE log_lines_fts MATCH ? AND l.service_id = ? AND l.ts >= ? AND l.ts <= ?
+			 FROM log_lines l
+			 WHERE l.id IN (SELECT rowid FROM log_lines_fts WHERE log_lines_fts MATCH ?)
+			 AND l.service_id = ? AND l.ts >= ? AND l.ts <= ?
 			 ORDER BY l.id DESC LIMIT ?`,
 			args: []any{match, filter.ServiceID, since, until, limit},
 			scan: scanLogLine,

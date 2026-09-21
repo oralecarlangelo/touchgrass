@@ -8,8 +8,9 @@ staging compose stack.
 
 - touchgrass serving on the box (`touchgrass serve`, `TOUCHGRASS_DB`
   set, admin password in env, not on disk).
-- Admin session cookie for key minting:
-  `curl -c jar -X POST :8080/api/auth/login -d '{"password":"..."}'`.
+- Admin session cookie for key minting (use the full URL — this
+  box's curl rejects the `:8080` shorthand):
+  `curl -c jar -X POST http://127.0.0.1:8080/api/auth/login -d '{"password":"..."}'`.
 - `node -e "console.log(require('./package.json').type)"` in tn-api to
   pick the import style (SDK ships ESM `dist/index.js`).
 
@@ -97,15 +98,21 @@ traffic:
 
 ## 8. S10 log validation (EC2)
 
-1. Emit a known marker from tn-api staging
-   (`node -e "console.error('dogfood-log-probe-<ts>')"`, or a staging
-   debug route) and note the wall-clock time.
+No staging stack exists on the box (verified 2026-09-21), so emit
+the marker through prod traffic instead of a staging route — a 404
+hit is harmless (scanners do it constantly):
+
+1. `M="tgprobe-$(date +%s)"; curl -s -o /dev/null
+   "https://api.ticketnation.ph/$M"` and note the wall-clock time.
+   Confirm the marker landed: `docker logs --since 30s
+   ticketnation-api-green-1 | grep -c "$M"` (live color only).
 2. Within 30s, `GET
-   /api/logs?service_id=tn-api&q=dogfood-log-probe-<ts>` must return
-   the stderr line; the Logs view live-tail must show it without a
-   manual refresh.
+   http://127.0.0.1:8080/api/logs?service_id=tn-api&q=$M` must return
+   the lines (proven +5s on 2026-09-21); the Logs view live-tail must
+   show them without a manual refresh.
 3. Open the line's context (`GET /api/logs/{id}`): ±20 neighbors
    around the anchor, oldest-first.
-4. Confirm caps hold: `log_lines` per service stays under
-   `TOUCHGRASS_LOGS_MAX_LINES` and `TOUCHGRASS_RETENTION_LOGS`
-   trims on schedule (watch for `retention trimmed logs` in stdout).
+4. Confirm caps hold: `GET /api/logs/stats?service_id=tn-api` shows
+   `lines` at/under `TOUCHGRASS_LOGS_MAX_LINES` with `drops`/
+   `truncations` counted, and `TOUCHGRASS_RETENTION_LOGS` trims on
+   schedule (watch for `retention trimmed logs` in stdout).

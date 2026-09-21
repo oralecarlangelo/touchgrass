@@ -314,22 +314,28 @@ gates apply (docs only; runbook verified against the API by hand).
 
 ### Sprint 10 — Log aggregation (Phase 5a, ~4pd)
 
-**Status**: DONE (2026-09-21, code-complete). `LogCollector` tails every
-managed container on `TOUCHGRASS_LOG_POLL_INTERVAL` (5s), parsing the
-multiplexed Docker stream with per-poll cursors, dedupe of inclusive
-boundaries, and cursor pruning for dead containers. Backpressure is
-three-deep: 2k-line poll cap (drops counted + logged), 8KB line
-truncation, `TOUCHGRASS_LOGS_MAX_LINES` per-service cap (newest kept),
-plus `TOUCHGRASS_RETENTION_LOGS` in the sampler sweep. Storage is
-FTS5 (`log_lines_fts` + triggers, multiword AND, special chars as
-terms); `GET /api/logs` searches with service/text/time filters and
+**Status**: DONE (2026-09-21) + EC2-VALIDATED (2026-09-21).
+`LogCollector` tails every managed container on
+`TOUCHGRASS_LOG_POLL_INTERVAL` (5s), parsing the multiplexed Docker
+stream with max-stamp cursors, skip-already-seen filtering (correct
+even if the daemon ignores `since`), inclusive-boundary dedupe, and
+cursor pruning for dead containers. Backpressure is three-deep:
+2k-line poll cap (drops counted + logged), 8KB line truncation,
+`TOUCHGRASS_LOGS_MAX_LINES` per-service cap (newest kept), plus
+`TOUCHGRASS_RETENTION_LOGS` in the sampler sweep. Storage is FTS5
+(`log_lines_fts` + triggers, multiword AND, special chars as terms)
+with the MATCH in a planner-friendly subquery (57s → 0.27s at 100k
+rows); `GET /api/logs` searches with service/text/time filters and
 `GET /api/logs/{id}` returns ±20 surrounding lines. Web Logs view:
 service selector, text search, 5s live-tail (pauses while searching),
 stderr highlighting, click-to-context panel. Gated green
 (`lint`/`vet`/`test`/`test-race`/`test-int`/`audit`/`build`/web
-`verify`). EC2 validation pending: known staging line searchable <30s
-after emit (`docs/dogfood-runbook.md` §8); live-Docker tail proof needs
-the EC2 host (sandbox blocks the local socket).
+`verify`). Live proof (no staging exists on the box, so adapted):
+404-marker emitted into prod tn-api logs found via search +5s after
+emit, 3/3 lines (`docs/dogfood-runbook.md` §8). EC2 also caught two
+real bugs, both fixed + regression-tested: non-chronological
+stdout/stderr batch drove the cursor backward (re-ingestion churn) and
+the JOIN-form FTS query scanned per row.
 
 **Goal**: container logs collected and searchable.
 
@@ -355,7 +361,14 @@ and line truncations (5) are counted per service, logged
 logs`), and queryable via `GET /api/logs/stats`. `docs/v1-acceptance.md`
 maps BRD AC-1..6 to local proof + EC2 live steps. Gated green
 (`lint`/`vet`/`test`/`test-race`/`test-int`/`audit`/`build`/web
-`verify`). EC2 sweep pending: AC-1..6 live sign-off on the host.
+`verify`). EC2 sweep partial (2026-09-21): AC-3 PASS (samples match
+`docker stats` within source noise; tripwire rule fired to
+notification), AC-4 pipeline PASS (synthetic ingest → grouped in 5s
++ `new_issue` note; forced-exception + app-unaffected halves need the
+SDK in-app), AC-5 PASS (real issue shows 20 surrounding prod log
+lines; caps hold at/under max). AC-1/AC-2 (UI cutover + rollback +
+downtime) and AC-6 (SDK removal) need prod-traffic approval — asked,
+not yet run.
 **V1 milestone code-complete.**
 
 **Goal**: errors ↔ logs linked; v1 acceptance green.

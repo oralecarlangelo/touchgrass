@@ -620,7 +620,7 @@ live bundle + API verified against prod data.
 
 ### S20 — Structured logging SDK + OTel bridge (Sentry Logs-style)
 
-**Status**: IN PROGRESS. Goal: `logger.info/warn/error…` in
+**Status**: DONE (2026-09-22). Shipped end to end: `logger.info/warn/error…` in
 `@touchgrass/node` ships structured logs (levels, attributes, trace
 context) to a new batched ingest endpoint, stored per service and
 explorable in the Logs view; plus an OTel `LogRecordExporter` so
@@ -669,9 +669,13 @@ rows reuse level colors with attribute expansion + trace/span chips
 (trace chip filters by trace); empty state links `/docs/sdk-logging`.
 SCOPE GUARD: Activity timeline untouched in S20 (no SDK merge there).
 
-Validation: per-area gates green, full gate, deploy, live dogfood via a
-throwaway node script posting logger batches to prod ingest, SDK rows
-visible in UI, docs live.
+Validation: per-area gates green, full gate (vet, lint 0 issues, tests,
+race, web/SDK verify+build, redocly, govulncheck known-only), deploy,
+live dogfood (logger batch → 3 rows with severities 9/13/17 and
+`sentry.message.*` template attrs; OTel exporter + real span →
+trace-correlated row queried back by trace_id), docs live. Dogfood key
+revoked after the run. Docs note: span context flows from the record's
+context (NodeSDK async tracking or explicit `emit({…, context})`).
 
 ## Working agreements
 

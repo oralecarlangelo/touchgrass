@@ -152,6 +152,10 @@ provider.getLogger('shop').emit({ body: 'otel-native log' });
 Mapping: OTel severity numbers win for the level (text falls back, then
 `info`); `hrTime` becomes the unix-seconds timestamp; span context
 becomes `trace_id`/`span_id`; OTel attributes become typed attributes.
+Span context comes from each record's context: with async tracking
+enabled (the NodeSDK sets this up) the active span attaches
+automatically, otherwise pass it explicitly —
+`emit({ body, context: trace.setSpan(context.active(), span) })`.
 Records flow through the same `beforeSendLog`, sanitize, and scrub
 pipeline as `logger`, in ≤1000-item batches. Delivery trouble reports
 `FAILED` to the processor without throwing, and invalid options drop

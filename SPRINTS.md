@@ -692,7 +692,7 @@ containers (stop-before-rm). Full procedure + findings in
 
 ### S22 — Databases page: Postgres health + backup/restore (2026-09-22)
 
-**Status**: IN PROGRESS. Goal: a top-level Databases view showing
+**Status**: DONE (2026-09-22). Shipped end to end: a top-level Databases view showing
 PostgreSQL health (version, size, connections, uptime, last backup),
 one-click `pg_dump -Fc` backups to the existing
 `/opt/backups/ticketnation/<db>-<ts>.dump` + `.sha256` convention,
@@ -746,10 +746,14 @@ happens list), jobs history, Redis/SQLite chips, unconfigured +
 error + empty states. SCOPE GUARD: no backup delete, no scheduled
 backups, no multi-Postgres inventory in S22.
 
-Validation: per-area gates, full gate, deploy with box env set,
-live-verify health + list + trigger a real backup + verify it. NO
+Validation: per-area gates, full gate (vet, lint incl. GOOS=linux,
+tests, race, web/docs verify+build, redocly, govulncheck
+known-only), CI green, deploy with box env set, live-verify (all
+three health probes, backup list, real 431MB backup in 68s,
+verify ok:true, db_backup audit). Plus reviewer-added startup
+reconcile for orphaned job rows (store/service/main + tests). NO
 live restore test (prod data; restore proven by tests + review —
-first real restore is a planned drill).
+first real restore is a planned drill, see database-ops.md).
 
 ## Working agreements
 

@@ -893,6 +893,13 @@ runbook §7.
 SCOPE GUARD: no bulk delete, no container stop/remove on delete, no
 blue-green auto-bootstrap.
 
+Validation: full gate (vet, lint 0 issues, tests, -race, web/docs
+verify+build, redocly, govulncheck known-only), pushed 5882372,
+deployed, live-verified: canary create 201 → delete 204 → re-delete
+404 `not_found`; global `service_delete` audit id 75 (migration
+0014 live); inventory intact; new bundle `index-uJsc4pnq.js` serves
+the Fleet counts/filter/sort + delete dialog strings.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

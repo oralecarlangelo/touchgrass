@@ -7,10 +7,9 @@ import (
 
 const testAdminPassword = "secret"
 
-func TestLoad(t *testing.T) {
-	t.Parallel()
-
-	defaults := Config{
+// defaultTestConfig returns the expected config for a password-only environment.
+func defaultTestConfig() Config {
+	return Config{
 		Addr: "127.0.0.1:8080", DB: "./touchgrass.db", Env: "prod",
 		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
 		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
@@ -18,20 +17,24 @@ func TestLoad(t *testing.T) {
 		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
 		RetentionErrors: 720 * time.Hour, MaxOccurrences: 10000,
 		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
-		RetentionSDKLogs: 7 * 24 * time.Hour,
+		RetentionSDKLogs:  7 * 24 * time.Hour,
+		PostgresContainer: "", PostgresUser: defaultPostgresUser, PostgresDB: defaultPostgresDB,
+		BackupDir: defaultBackupDir, BackupKeep: 14, RedisContainer: "",
 	}
+}
+
+func TestLoad(t *testing.T) {
+	t.Parallel()
 
 	tests := []struct {
 		name        string
 		env         map[string]string
-		expected    Config
+		mutate      func(*Config)
 		expectedErr bool
 	}{
 		{
-			name:        "defaults with password",
-			env:         map[string]string{adminPasswordEnvVar: testAdminPassword},
-			expected:    defaults,
-			expectedErr: false,
+			name: "defaults with password",
+			env:  map[string]string{adminPasswordEnvVar: testAdminPassword},
 		},
 		{
 			name: "custom values from env",
@@ -42,53 +45,59 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_RETENTION_ERRORS": "24h", "TOUCHGRASS_INGEST_MAX_OCCURRENCES": "500",
 				"TOUCHGRASS_RETENTION_LOGS": "48h", "TOUCHGRASS_LOGS_MAX_LINES": "1000",
 				"TOUCHGRASS_LOG_POLL_INTERVAL": "2s", "TOUCHGRASS_RETENTION_SDK_LOGS": "3",
+				"TOUCHGRASS_POSTGRES_CONTAINER": "pg", "TOUCHGRASS_POSTGRES_USER": "app",
+				"TOUCHGRASS_POSTGRES_DB": "ticketnation", "TOUCHGRASS_DB_BACKUP_DIR": "/opt/backups",
+				"TOUCHGRASS_DB_BACKUP_KEEP": "30", "TOUCHGRASS_REDIS_CONTAINER": "redis",
 			},
-			expected: Config{
-				Addr: ":8080", DB: "/data/t.db", Env: "dev",
-				MetricsInterval: 10 * time.Second, RetentionMetrics: 168 * time.Hour,
-				RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
-				AdminPassword: testAdminPassword, CookieSecure: true,
-				WatchInterval: 2 * time.Second, CutoverTimeout: 10 * time.Minute,
-				RetentionErrors: 24 * time.Hour, MaxOccurrences: 500,
-				RetentionLogs: 48 * time.Hour, MaxLogLines: 1000, LogPollInterval: 2 * time.Second,
-				RetentionSDKLogs: 3 * 24 * time.Hour,
+			mutate: func(cfg *Config) {
+				cfg.Addr = ":8080"
+				cfg.DB = "/data/t.db"
+				cfg.Env = "dev"
+				cfg.MetricsInterval = 10 * time.Second
+				cfg.CookieSecure = true
+				cfg.WatchInterval = 2 * time.Second
+				cfg.RetentionErrors = 24 * time.Hour
+				cfg.MaxOccurrences = 500
+				cfg.RetentionLogs = 48 * time.Hour
+				cfg.MaxLogLines = 1000
+				cfg.LogPollInterval = 2 * time.Second
+				cfg.RetentionSDKLogs = 3 * 24 * time.Hour
+				cfg.PostgresContainer = "pg"
+				cfg.PostgresUser = "app"
+				cfg.PostgresDB = "ticketnation"
+				cfg.BackupDir = "/opt/backups"
+				cfg.BackupKeep = 30
+				cfg.RedisContainer = "redis"
 			},
-			expectedErr: false,
 		},
 		{
 			name:        "missing password",
 			env:         map[string]string{},
-			expected:    Config{},
 			expectedErr: true,
 		},
 		{
 			name:        "invalid addr",
 			env:         map[string]string{"TOUCHGRASS_ADDR": "not-an-addr", adminPasswordEnvVar: "s"},
-			expected:    Config{},
 			expectedErr: true,
 		},
 		{
 			name:        "invalid env",
 			env:         map[string]string{"APP_ENV": "staging", adminPasswordEnvVar: "s"},
-			expected:    Config{},
 			expectedErr: true,
 		},
 		{
 			name:        "invalid interval",
 			env:         map[string]string{"TOUCHGRASS_METRICS_INTERVAL": "soon", adminPasswordEnvVar: "s"},
-			expected:    Config{},
 			expectedErr: true,
 		},
 		{
 			name:        "non-positive retention",
 			env:         map[string]string{"TOUCHGRASS_RETENTION_METRICS": "0s", adminPasswordEnvVar: "s"},
-			expected:    Config{},
 			expectedErr: true,
 		},
 		{
 			name:        "non-boolean cookie flag",
 			env:         map[string]string{"TOUCHGRASS_COOKIE_SECURE": "maybe", adminPasswordEnvVar: "s"},
-			expected:    Config{},
 			expectedErr: true,
 		},
 	}
@@ -113,8 +122,13 @@ func TestLoad(t *testing.T) {
 				t.Fatalf("load() error = %v, want nil", err)
 			}
 
-			if cfg != tt.expected {
-				t.Errorf("load() = %+v, want %+v", cfg, tt.expected)
+			expected := defaultTestConfig()
+			if tt.mutate != nil {
+				tt.mutate(&expected)
+			}
+
+			if cfg != expected {
+				t.Errorf("load() = %+v, want %+v", cfg, expected)
 			}
 		})
 	}
@@ -158,6 +172,14 @@ func TestLoadIngest(t *testing.T) {
 		{
 			name: "non-positive sdk logs retention",
 			env:  map[string]string{"TOUCHGRASS_RETENTION_SDK_LOGS": "0", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "non-positive backup keep",
+			env:  map[string]string{"TOUCHGRASS_DB_BACKUP_KEEP": "0", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "non-numeric backup keep",
+			env:  map[string]string{"TOUCHGRASS_DB_BACKUP_KEEP": "many", adminPasswordEnvVar: "s"},
 		},
 	}
 
@@ -221,16 +243,10 @@ func TestLoadReadsProcessEnv(t *testing.T) {
 		t.Fatalf("Load() error = %v, want nil", err)
 	}
 
-	expected := Config{
-		Addr: "127.0.0.1:9090", DB: ":memory:", Env: "dev",
-		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
-		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
-		AdminPassword: testAdminPassword, CookieSecure: false,
-		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
-		RetentionErrors: 720 * time.Hour, MaxOccurrences: 10000,
-		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
-		RetentionSDKLogs: 7 * 24 * time.Hour,
-	}
+	expected := defaultTestConfig()
+	expected.Addr = "127.0.0.1:9090"
+	expected.DB = ":memory:"
+	expected.Env = "dev"
 
 	if cfg != expected {
 		t.Errorf("Load() = %+v, want %+v", cfg, expected)

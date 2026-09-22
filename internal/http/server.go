@@ -37,6 +37,7 @@ type Config struct {
 	Logs      *service.LogCollector
 	SDKLogs   *service.LogIngestor
 	System    *service.System
+	Database  *service.Database
 	Dist      fs.FS
 	Docs      fs.FS
 	DevProxy  string
@@ -58,6 +59,7 @@ type Server struct {
 	logs      *service.LogCollector
 	sdkLogs   *service.LogIngestor
 	system    *service.System
+	database  *service.Database
 	handler   nethttp.Handler
 }
 
@@ -79,6 +81,7 @@ func New(cfg Config) *Server {
 		logs:      cfg.Logs,
 		sdkLogs:   cfg.SDKLogs,
 		system:    cfg.System,
+		database:  cfg.Database,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)
@@ -117,6 +120,13 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/docker/images", server.handleDockerImages)
 	mux.HandleFunc("POST /api/docker/images/prune", server.handlePruneImages)
 	mux.HandleFunc("GET /api/system", server.handleSystem)
+	mux.HandleFunc("GET /api/databases", server.handleDatabases)
+	mux.HandleFunc("GET /api/databases/backups", server.handleBackups)
+	mux.HandleFunc("POST /api/databases/backups", server.handleStartBackup)
+	mux.HandleFunc("GET /api/databases/jobs", server.handleJobs)
+	mux.HandleFunc("GET /api/databases/jobs/{id}", server.handleJob)
+	mux.HandleFunc("POST /api/databases/backups/{name}/verify", server.handleVerifyBackup)
+	mux.HandleFunc("POST /api/databases/restore", server.handleRestore)
 
 	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Redirect(w, r, "/docs/", nethttp.StatusFound)

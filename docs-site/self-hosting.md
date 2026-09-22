@@ -38,6 +38,12 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 | `TOUCHGRASS_RETENTION_LOGS`        | `168h`             | Log line age trim                                    |
 | `TOUCHGRASS_LOGS_MAX_LINES`        | `50000`            | Log line count cap per service                       |
 | `TOUCHGRASS_RETENTION_SDK_LOGS`    | `7`                | SDK (application) log age trim, in whole days        |
+| `TOUCHGRASS_POSTGRES_CONTAINER`    | (empty)            | Postgres container for health + jobs; empty disables |
+| `TOUCHGRASS_POSTGRES_USER`         | `postgres`         | Local-trust postgres role for health and jobs        |
+| `TOUCHGRASS_POSTGRES_DB`           | `postgres`         | Database health checks and backups target            |
+| `TOUCHGRASS_DB_BACKUP_DIR`         | `./backups`        | pg_dump artifacts plus `.sha256` sidecars            |
+| `TOUCHGRASS_DB_BACKUP_KEEP`        | `14`               | Newest backups retained after each backup            |
+| `TOUCHGRASS_REDIS_CONTAINER`       | (empty)            | Redis container for the health chip; empty hides it  |
 
 Durations parse Go syntax (`30s`, `10m`, `168h`).
 `TOUCHGRASS_RETENTION_SDK_LOGS` is the exception: a whole-day count.

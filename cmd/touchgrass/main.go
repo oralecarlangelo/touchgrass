@@ -124,6 +124,7 @@ type serveServices struct {
 	logs      *service.LogCollector
 	sdkLogs   *service.LogIngestor
 	system    *service.System
+	database  *service.Database
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -163,6 +164,7 @@ func newServeServer(
 		Logs:      services.logs,
 		SDKLogs:   services.sdkLogs,
 		System:    services.system,
+		Database:  services.database,
 		Dist:      dist,
 		Docs:      docs,
 		DevProxy:  devProxy,
@@ -233,6 +235,8 @@ func runServe(args []string) error {
 		StartedAt: time.Now(),
 		Logger:    logger,
 	})
+	databases := newDatabase(db, cfg, logger)
+	reconcileDatabases(databases, logger)
 
 	passwordHash, err := http.HashPassword(cfg.AdminPassword)
 	if err != nil {
@@ -271,6 +275,7 @@ func runServe(args []string) error {
 		inventory: inv, sampler: sampler, deploys: deploys,
 		cutover: cutover, audit: audit, auth: auth, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
+		database: databases,
 	}, version)
 	if err != nil {
 		return err
@@ -348,6 +353,31 @@ func newLogCollector(wiring serveWiring) *service.LogCollector {
 		MaxLinesPerService: wiring.cfg.MaxLogLines,
 		Logger:             wiring.logger,
 	})
+}
+
+// newDatabase wires postgres health, backup, and restore jobs.
+func newDatabase(db *store.DB, cfg config.Config, logger *slog.Logger) *service.Database {
+	return service.NewDatabase(service.DatabaseConfig{
+		Container:      cfg.PostgresContainer,
+		User:           cfg.PostgresUser,
+		DBName:         cfg.PostgresDB,
+		BackupDir:      cfg.BackupDir,
+		BackupKeep:     cfg.BackupKeep,
+		RedisContainer: cfg.RedisContainer,
+		DBPath:         cfg.DB,
+		Jobs:           store.NewDBJobStore(db),
+		Audit:          store.NewAuditStore(db),
+		SQLite:         db,
+		Logger:         logger,
+	})
+}
+
+// reconcileDatabases fails jobs orphaned by a restart. Best effort: a
+// reconcile error must never fail boot.
+func reconcileDatabases(databases *service.Database, logger *slog.Logger) {
+	if err := databases.Reconcile(context.Background()); err != nil {
+		logger.Warn("database job reconcile failed", "error", err)
+	}
 }
 
 // newLogIngestor wires structured-log ingestion on the shared key store.

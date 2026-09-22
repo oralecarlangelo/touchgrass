@@ -25,6 +25,10 @@ const (
 	defaultMaxLogLines            = "50000"
 	defaultLogPollInterval        = "5s"
 	defaultRetentionSDKLogs       = "7"
+	defaultPostgresUser           = "postgres"
+	defaultPostgresDB             = "postgres"
+	defaultBackupDir              = "./backups"
+	defaultBackupKeep             = "14"
 	addrEnvVar                    = "TOUCHGRASS_ADDR"
 	dbEnvVar                      = "TOUCHGRASS_DB"
 	envEnvVar                     = "APP_ENV"
@@ -42,6 +46,12 @@ const (
 	maxLogLinesEnvVar             = "TOUCHGRASS_LOGS_MAX_LINES"
 	logPollIntervalEnvVar         = "TOUCHGRASS_LOG_POLL_INTERVAL"
 	retentionSDKLogsEnvVar        = "TOUCHGRASS_RETENTION_SDK_LOGS"
+	postgresContainerEnvVar       = "TOUCHGRASS_POSTGRES_CONTAINER"
+	postgresUserEnvVar            = "TOUCHGRASS_POSTGRES_USER"
+	postgresDBEnvVar              = "TOUCHGRASS_POSTGRES_DB"
+	backupDirEnvVar               = "TOUCHGRASS_DB_BACKUP_DIR"
+	backupKeepEnvVar              = "TOUCHGRASS_DB_BACKUP_KEEP"
+	redisContainerEnvVar          = "TOUCHGRASS_REDIS_CONTAINER"
 	envDev                        = "dev"
 	envProd                       = "prod"
 )
@@ -80,6 +90,18 @@ type Config struct {
 	MaxLogLines int
 	// LogPollInterval paces container log polling.
 	LogPollInterval time.Duration
+	// PostgresContainer is the postgres container name; empty disables postgres.
+	PostgresContainer string
+	// PostgresUser is the local-trust postgres role for health and jobs.
+	PostgresUser string
+	// PostgresDB is the database health checks and backups target.
+	PostgresDB string
+	// BackupDir holds pg_dump artifacts plus sha256 sidecars.
+	BackupDir string
+	// BackupKeep bounds newest backups retained after each backup.
+	BackupKeep int
+	// RedisContainer is the redis container name; empty hides redis.
+	RedisContainer string
 }
 
 // Load reads configuration from the environment.
@@ -120,6 +142,16 @@ type adminConfig struct {
 	secure   bool
 }
 
+// databaseConfig groups validated database health and backup settings.
+type databaseConfig struct {
+	container      string
+	user           string
+	dbName         string
+	backupDir      string
+	backupKeep     int
+	redisContainer string
+}
+
 // load resolves configuration using getenv so tests can stub the environment.
 func load(getenv func(string) string) (Config, error) {
 	listen, err := loadListen(getenv)
@@ -142,6 +174,11 @@ func load(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
+	database, err := loadDatabase(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Addr:                   listen.addr,
 		DB:                     listen.db,
@@ -160,6 +197,12 @@ func load(getenv func(string) string) (Config, error) {
 		RetentionSDKLogs:       schedule.retentionSDKLogs,
 		MaxLogLines:            ingest.maxLogLines,
 		LogPollInterval:        schedule.logPoll,
+		PostgresContainer:      database.container,
+		PostgresUser:           database.user,
+		PostgresDB:             database.dbName,
+		BackupDir:              database.backupDir,
+		BackupKeep:             database.backupKeep,
+		RedisContainer:         database.redisContainer,
 	}, nil
 }
 
@@ -270,6 +313,39 @@ func loadIngest(getenv func(string) string) (ingestConfig, error) {
 	}
 
 	return ingestConfig{maxOccurrences: maxOccurrences, maxLogLines: maxLogLines}, nil
+}
+
+// loadDatabase validates postgres health, backup, and redis settings.
+// Empty container names are valid: they disable that probe.
+func loadDatabase(getenv func(string) string) (databaseConfig, error) {
+	user := getenv(postgresUserEnvVar)
+	if user == "" {
+		user = defaultPostgresUser
+	}
+
+	dbName := getenv(postgresDBEnvVar)
+	if dbName == "" {
+		dbName = defaultPostgresDB
+	}
+
+	backupDir := getenv(backupDirEnvVar)
+	if backupDir == "" {
+		backupDir = defaultBackupDir
+	}
+
+	backupKeep, err := parsePositiveInt(getenv, backupKeepEnvVar, defaultBackupKeep)
+	if err != nil {
+		return databaseConfig{}, err
+	}
+
+	return databaseConfig{
+		container:      getenv(postgresContainerEnvVar),
+		user:           user,
+		dbName:         dbName,
+		backupDir:      backupDir,
+		backupKeep:     backupKeep,
+		redisContainer: getenv(redisContainerEnvVar),
+	}, nil
 }
 
 // parsePositiveInt resolves a required positive integer setting.

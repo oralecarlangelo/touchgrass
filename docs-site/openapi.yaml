@@ -32,6 +32,8 @@ tags:
     description: Container and SDK log ingest, search, and context
   - name: system
     description: Host snapshot and image management
+  - name: databases
+    description: Postgres health, backups, and restores
 paths:
   /health:
     get:
@@ -818,6 +820,150 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SystemSnapshot' }
+  /databases:
+    get:
+      operationId: listDatabases
+      tags: [databases]
+      summary: Postgres, redis, and sqlite health
+      description: |
+        Always returns all three entries in postgres/redis/sqlite order.
+        Unconfigured entries report configured false; failed probes degrade
+        to reachable false with null stats instead of erroring.
+      responses:
+        '200':
+          description: Health entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [databases]
+                properties:
+                  databases:
+                    type: array
+                    items: { $ref: '#/components/schemas/Database' }
+  /databases/backups:
+    get:
+      operationId: listBackups
+      tags: [databases]
+      summary: Backup artifacts, newest first
+      responses:
+        '200':
+          description: Backups
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [backups]
+                properties:
+                  backups:
+                    type: array
+                    items: { $ref: '#/components/schemas/BackupInfo' }
+    post:
+      operationId: startBackup
+      tags: [databases]
+      summary: Start an async pg_dump backup (202 + poll jobs)
+      description: |
+        Streams pg_dump -Fc to <db>-<UTC>.dump at 0600 plus a .sha256
+        sidecar, then trims to TOUCHGRASS_DB_BACKUP_KEEP newest.
+        One database job runs at a time across backup and restore.
+      responses:
+        '202':
+          description: Backup started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: integer }
+                  status: { type: string, enum: [running] }
+        '409': { description: A database job is already running }
+        '503': { description: Postgres is not configured }
+  /databases/backups/{name}/verify:
+    post:
+      operationId: verifyBackup
+      tags: [databases]
+      summary: Verify one backup (sha256 + pg_restore --list)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_.-]+\.dump$' }
+      responses:
+        '200':
+          description: Verdict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupVerify' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { description: Postgres is not configured }
+  /databases/restore:
+    post:
+      operationId: startRestore
+      tags: [databases]
+      summary: Start an async restore of one backup (202 + poll jobs)
+      description: |
+        Takes a <db>-pre-restore-<UTC>.dump safety backup first, terminates
+        other backends, then pg_restore --clean --if-exists with the dump on
+        stdin (never DROP DATABASE), verified by SELECT 1 plus a public
+        table count. One database job runs at a time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, pattern: '^[A-Za-z0-9_.-]+\.dump$' }
+      responses:
+        '202':
+          description: Restore started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                properties:
+                  id: { type: integer }
+                  status: { type: string, enum: [running] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: A database job is already running }
+        '503': { description: Postgres is not configured }
+  /databases/jobs:
+    get:
+      operationId: listDatabaseJobs
+      tags: [databases]
+      summary: Job history, newest first (last 20)
+      responses:
+        '200':
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs]
+                properties:
+                  jobs:
+                    type: array
+                    items: { $ref: '#/components/schemas/DBJob' }
+  /databases/jobs/{id}:
+    get:
+      operationId: getDatabaseJob
+      tags: [databases]
+      summary: One database job by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DBJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     cookieAuth:
@@ -1025,7 +1171,7 @@ components:
         id: { type: integer }
         service_id: { type: ['string', 'null'] }
         actor: { type: string }
-        action: { type: string, enum: [cutover, rollback, login, deploy] }
+        action: { type: string, enum: [cutover, rollback, login, deploy, db_backup, db_restore] }
         result: { type: string, enum: [success, failure] }
         detail: { type: string }
         created_at: { type: string, format: date-time }
@@ -1143,6 +1289,47 @@ components:
         created_at: { type: string, format: date-time }
         containers: { type: integer }
         dangling: { type: boolean }
+    Database:
+      type: object
+      required: [id, label, configured, reachable]
+      properties:
+        id: { type: string, enum: [postgres, redis, sqlite] }
+        label: { type: string }
+        configured: { type: boolean }
+        reachable: { type: boolean }
+        version: { type: string }
+        size_bytes: { type: integer }
+        connections_used: { type: integer }
+        connections_max: { type: integer }
+        uptime_secs: { type: integer }
+        used_memory_bytes: { type: integer }
+        integrity: { type: string }
+        last_backup_at: { type: string, format: date-time }
+    BackupInfo:
+      type: object
+      required: [name, size_bytes, created_at, sha256]
+      properties:
+        name: { type: string }
+        size_bytes: { type: integer }
+        created_at: { type: string, format: date-time }
+        sha256: { type: string, enum: [present, missing] }
+    DBJob:
+      type: object
+      required: [id, kind, target, status, detail, started_at]
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [backup, restore] }
+        target: { type: string }
+        status: { type: string, enum: [running, success, failed] }
+        detail: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: ['string', 'null'], format: date-time }
+    BackupVerify:
+      type: object
+      required: [name, ok]
+      properties:
+        name: { type: string }
+        ok: { type: boolean }
     SystemSnapshot:
       type: object
       required: [hostname, os, arch, self]

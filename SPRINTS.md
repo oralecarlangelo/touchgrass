@@ -690,6 +690,67 @@ Found + fixed in the forks: `compose rm -f` skips running
 containers (stop-before-rm). Full procedure + findings in
 `docs/service-graduation.md` §6.
 
+### S22 — Databases page: Postgres health + backup/restore (2026-09-22)
+
+**Status**: IN PROGRESS. Goal: a top-level Databases view showing
+PostgreSQL health (version, size, connections, uptime, last backup),
+one-click `pg_dump -Fc` backups to the existing
+`/opt/backups/ticketnation/<db>-<ts>.dump` + `.sha256` convention,
+a backup list with verify, and restore-behind-type-to-confirm with
+an automatic pre-restore safety backup; plus read-only health chips
+for Redis and touchgrass's own SQLite. All Postgres access via
+`docker exec` + `local trust` auth (no new secrets). FROZEN CONTRACT:
+
+Env (`internal/config`): `TOUCHGRASS_POSTGRES_CONTAINER` ("",
+empty = postgres card unconfigured), `TOUCHGRASS_POSTGRES_USER`
+("postgres"), `TOUCHGRASS_POSTGRES_DB` ("postgres"),
+`TOUCHGRASS_DB_BACKUP_DIR` ("./backups"),
+`TOUCHGRASS_DB_BACKUP_KEEP` (14),
+`TOUCHGRASS_REDIS_CONTAINER` ("" = chip hidden). Prod box sets the
+real values in `touchgrass.env` at deploy time.
+
+API (all admin-session): `GET /api/databases` →
+`{"databases":[{id,label,configured,reachable,version?,size_bytes?,
+connections_used?,connections_max?,uptime_secs?,used_memory_bytes?,
+integrity?,last_backup_at?}]}` with ids `postgres|redis|sqlite`;
+`GET /api/databases/backups` →
+`{"backups":[{name,size_bytes,created_at,sha256:
+"present"|"missing"}]}` newest first;
+`POST /api/databases/backups` → 202 `{"id","status":"running"}`
+(409 `busy` when a job runs, 503 unconfigured);
+`GET /api/databases/jobs/{id}` →
+`{"id",kind:"backup"|"restore",target,status:"running"|"success"|
+"failed",detail,started_at,finished_at?}`;
+`GET /api/databases/jobs` → last 20, newest first;
+`POST /api/databases/backups/{name}/verify` → 200 `{"name",ok}`;
+`POST /api/databases/restore {"name"}` → 202 job (400 bad/missing
+name, 409 busy, 503 unconfigured). Names must match
+`^[A-Za-z0-9_.-]+\.dump$` and exist in the backup dir (no traversal).
+
+Backend behavior: backup = `docker exec $CTR pg_dump -U $U -d $D
+-Fc` streamed to host file `<db>-<UTC>.dump` (0600) + `.sha256`
+sidecar, then trim to KEEP newest; restore = safety backup
+`<db>-pre-restore-<ts>.dump`, terminate other backends, `docker
+exec -i $CTR pg_restore -U $U -d $D --clean --if-exists` with the
+dump on stdin (never `DROP DATABASE`), verify `SELECT 1` + public
+table count; every job audited (`db_backup`/`db_restore` actions).
+Jobs in new `db_jobs` migration (keep last 50). Exec behind an
+injectable runner — no real docker in unit tests. OpenAPI +
+self-hosting env table updated, redocly clean.
+
+UI (`databases` view in `lib/views.ts` + nav): Postgres health
+card (stats grid, last backup, Backup button with 2s-polled job
+progress), backups table (name/size/age/sha badge/Verify/Restore),
+restore modal (type filename to confirm + off-peak warning + what
+happens list), jobs history, Redis/SQLite chips, unconfigured +
+error + empty states. SCOPE GUARD: no backup delete, no scheduled
+backups, no multi-Postgres inventory in S22.
+
+Validation: per-area gates, full gate, deploy with box env set,
+live-verify health + list + trigger a real backup + verify it. NO
+live restore test (prod data; restore proven by tests + review —
+first real restore is a planned drill).
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

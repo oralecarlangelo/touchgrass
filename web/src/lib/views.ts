@@ -8,7 +8,8 @@ export type ViewId =
   | 'system'
   | 'audit'
   | 'rules'
-  | 'keys';
+  | 'keys'
+  | 'databases';
 
 export interface NavTab {
   id: ViewId;
@@ -23,6 +24,7 @@ export const primaryTabs: NavTab[] = [
   { id: 'notifications', label: 'Notifications' },
   { id: 'images', label: 'Images' },
   { id: 'system', label: 'System' },
+  { id: 'databases', label: 'Databases' },
   { id: 'audit', label: 'Audit' },
 ];
 

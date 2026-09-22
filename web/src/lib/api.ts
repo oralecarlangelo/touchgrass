@@ -756,3 +756,89 @@ export interface SystemSnapshot {
 export async function fetchSystem(): Promise<SystemSnapshot> {
   return request<SystemSnapshot>('/api/system');
 }
+
+export interface DatabaseView {
+  id: string;
+  label: string;
+  configured: boolean;
+  reachable: boolean;
+  version?: string | null;
+  size_bytes?: number | null;
+  connections_used?: number | null;
+  connections_max?: number | null;
+  uptime_secs?: number | null;
+  used_memory_bytes?: number | null;
+  integrity?: string | null;
+  last_backup_at?: string | null;
+}
+
+interface DatabasesResponse {
+  databases: DatabaseView[];
+}
+
+export interface DatabaseBackup {
+  name: string;
+  size_bytes: number;
+  created_at: string;
+  sha256: string;
+}
+
+interface DatabaseBackupsResponse {
+  backups: DatabaseBackup[];
+}
+
+export interface DatabaseJob {
+  id: number | string;
+  kind: string;
+  target: string;
+  status: string;
+  detail: string;
+  started_at: string;
+  finished_at?: string | null;
+}
+
+interface DatabaseJobsResponse {
+  jobs: DatabaseJob[];
+}
+
+interface DatabaseJobStartResponse {
+  id: number | string;
+  status: string;
+}
+
+export async function fetchDatabases(): Promise<DatabaseView[]> {
+  const body = await request<DatabasesResponse>('/api/databases');
+
+  return body.databases ?? [];
+}
+
+export async function fetchDatabaseBackups(): Promise<DatabaseBackup[]> {
+  const body = await request<DatabaseBackupsResponse>('/api/databases/backups');
+
+  return body.backups ?? [];
+}
+
+export async function startDatabaseBackup(): Promise<DatabaseJobStartResponse> {
+  return request<DatabaseJobStartResponse>('/api/databases/backups', { method: 'POST' });
+}
+
+export async function fetchDatabaseJobs(): Promise<DatabaseJob[]> {
+  const body = await request<DatabaseJobsResponse>('/api/databases/jobs');
+
+  return body.jobs ?? [];
+}
+
+export async function fetchDatabaseJob(id: number | string): Promise<DatabaseJob> {
+  return request<DatabaseJob>(`/api/databases/jobs/${encodeURIComponent(String(id))}`);
+}
+
+export async function verifyDatabaseBackup(name: string): Promise<{ name: string; ok: boolean }> {
+  return request<{ name: string; ok: boolean }>(
+    `/api/databases/backups/${encodeURIComponent(name)}/verify`,
+    { method: 'POST' },
+  );
+}
+
+export async function startDatabaseRestore(name: string): Promise<DatabaseJobStartResponse> {
+  return request<DatabaseJobStartResponse>('/api/databases/restore', jsonBody({ name }));
+}

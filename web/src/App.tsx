@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import EmptyState from './components/EmptyState.tsx';
 import ErrorState from './components/ErrorState.tsx';
 import Dashboard from './components/Dashboard.tsx';
+import DatabasesScreen from './components/DatabasesScreen.tsx';
 import HistoryScreen from './components/HistoryScreen.tsx';
 import ImagesScreen from './components/ImagesScreen.tsx';
 import IssuesScreen from './components/IssuesScreen.tsx';
@@ -236,6 +237,8 @@ export default function App() {
           <ImagesScreen onUnauthorized={handleUnauthorized} />
         ) : view === 'system' ? (
           <SystemScreen onUnauthorized={handleUnauthorized} />
+        ) : view === 'databases' ? (
+          <DatabasesScreen onUnauthorized={handleUnauthorized} />
         ) : view === 'rules' ? (
           <RulesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'keys' ? (

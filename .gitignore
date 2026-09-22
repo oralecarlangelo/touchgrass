@@ -7,6 +7,7 @@
 /touchgrass
 bin/
 dist/
+dist-cjs/
 
 # Test binary, built with `go test -c`
 *.test

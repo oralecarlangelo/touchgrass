@@ -304,8 +304,12 @@ blue, forced manual + uncaught probes grouped into issues with
 image without probe routes rebuilt and cut to prod (deploy id 8,
 downtime 0, no new issues after cutover). Runbook §2 corrected along
 the way: containerized apps must use the public base URL
-(`https://infra.ticketnation.ph`), never loopback. Remaining: S9.2
-tuning after a week of real volume (sampling, scrub, thresholds).
+(`https://infra.ticketnation.ph`), never loopback. Later the same day
+CI redeployed tn-api (builds 275/276) and pruned the dogfood image, so
+the SDK is no longer in prod — permanent wiring needs a tn-api repo PR
+(working diff backed up at `~/tn-api-sdk-dogfood-20260922.patch` on the
+box). Remaining: S9.2 tuning after a week of real volume (sampling,
+scrub, thresholds).
 
 **Goal**: touchgrass watches real production traffic.
 
@@ -558,6 +562,21 @@ for the screens the API can't serve yet (images, system, keys UI).
 - **Backlog (Phase 8, needs a new plan to start)**: one-click container
   actions, multi-host agents, RBAC, secrets management, tracing/APM,
   browser/mobile SDKs, PR previews.
+
+### S16 — Prod verification + flip detection (unplanned hardening, 2026-09-22)
+
+**Status**: DONE (2026-09-22). A prod-version audit found live tn-api
+one build behind (green 274 vs idle blue 275) plus an out-of-band nginx
+flip (10:14Z) with no touchgrass audit trail; before acting, CI shipped
+build 276 to live green and started an FE rebuild, so all prod
+mutations stood down. FE/admin versions are indeterminate from the box
+(no baked version trail; on-box FE sources stale since May, rebuild
+unsafe) — needs a repo-CI comparison. Hardening shipped: the watch
+loop now records a notification + audit entry (actor `system`) when
+the live target moves with no active touchgrass run (`SetFlipReporter`,
+`Cutover.Active`; own runs stay event-only). Gated green (vet/lint/
+unit/race), deployed, verified healthy with no false alert on boot;
+live-fire verification awaits the next external flip.
 
 ## Working agreements
 

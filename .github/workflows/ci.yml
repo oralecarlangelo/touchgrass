@@ -82,15 +82,6 @@ jobs:
         with:
           go-version: stable
 
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          args: --timeout 5m
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -98,11 +89,25 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Verify web UI and docs site
+      - name: Build web UI and docs site
         run: |
           npm ci --prefix web
-          npm run verify --prefix web
+          npm run build --prefix web
           npm ci --prefix docs-site
+          npm run build --prefix docs-site
+
+      - name: Run go vet
+        run: make vet
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --timeout 5m ./cmd/... ./internal/... ./migrations/... ./web ./docs-site
+
+      - name: Verify web UI and docs site
+        run: |
+          npm run verify --prefix web
           npm run verify --prefix docs-site
 
   vuln:

@@ -619,6 +619,34 @@ func TestBeginRecreateRollbackRejects(t *testing.T) {
 	})
 }
 
+func TestActive(t *testing.T) {
+	t.Parallel()
+
+	cutover, _, _ := testCutover(t, nil, nil, stubProber{})
+
+	if cutover.Active(testServiceAPI) {
+		t.Fatal("Active() = true, want false before claim")
+	}
+
+	if err := cutover.claimRun(testServiceAPI); err != nil {
+		t.Fatalf("claimRun() error = %v, want nil", err)
+	}
+
+	if !cutover.Active(testServiceAPI) {
+		t.Error("Active() = false, want true while claimed")
+	}
+
+	if cutover.Active("other") {
+		t.Error("Active(other) = true, want false")
+	}
+
+	cutover.releaseRun(testServiceAPI)
+
+	if cutover.Active(testServiceAPI) {
+		t.Error("Active() = true, want false after release")
+	}
+}
+
 func TestExecuteSuccess(t *testing.T) {
 	t.Parallel()
 

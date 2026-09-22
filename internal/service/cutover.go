@@ -337,6 +337,14 @@ func (c *Cutover) claimRun(serviceID string) error {
 	return nil
 }
 
+// Active reports whether a deploy run is in flight for a service.
+func (c *Cutover) Active(serviceID string) bool {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	return c.runs[serviceID]
+}
+
 // releaseRun clears a service's running mark.
 func (c *Cutover) releaseRun(serviceID string) {
 	c.mutex.Lock()

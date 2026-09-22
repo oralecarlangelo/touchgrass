@@ -36,6 +36,10 @@ type Inventory struct {
 	docker   docker.Lister
 	prober   Prober
 	logger   *slog.Logger
+
+	notifications *store.NotificationStore
+	audit         *Audit
+	activeRun     func(serviceID string) bool
 }
 
 // NewInventory builds an Inventory.

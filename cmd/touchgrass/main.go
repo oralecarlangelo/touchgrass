@@ -243,6 +243,7 @@ func runServe(args []string) error {
 		Timeout:       cfg.CutoverTimeout,
 		Logger:        logger,
 	})
+	inv.SetFlipReporter(notificationStore, audit, cutover.Active)
 
 	var group sync.WaitGroup
 

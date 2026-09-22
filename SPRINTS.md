@@ -580,15 +580,17 @@ live-fire verification awaits the next external flip.
 
 ### S17 — Logs level color-coding + filters (2026-09-22)
 
-**Status**: API DONE, UI pending. `GET /api/logs` now stamps every
-line with a parsed `level` (error/warn/info/debug — substring markers,
+**Status**: DONE (2026-09-22). `GET /api/logs` stamps every line
+with a parsed `level` (error/warn/info/debug — substring markers,
 stderr defaults to warn) and accepts `stream=` + `level=` (comma set)
 filters; level filtering pages newest-first in bounded 1k chunks so
 limits stay exact for rare levels. Same stamping on issue-linked logs
-and line context. No migration (levels computed at read). Gated green,
-deployed, verified on prod data (200-line window: 147 info / 42 warn /
-8 debug / 3 error; NestJS + Prisma markers caught through ANSI codes).
-UI half next: per-level colors + filter dropdown in the Logs view.
+and line context. No migration (levels computed at read). UI: shared
+`LogLineRow` (level badge colors, ANSI stripped) in Logs view, context
+sheet, and issue-linked logs; stream + level selects apply instantly
+server-side. Gated green (go vet/lint/tests/race, web verify/build),
+deployed, live bundle hash-verified; prod window splits 147 info /
+42 warn / 8 debug / 3 error.
 
 ## Working agreements
 

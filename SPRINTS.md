@@ -757,7 +757,7 @@ first real restore is a planned drill, see database-ops.md).
 
 ### S23 — Fleet monitoring: all containers + host history (2026-09-22)
 
-**Status**: IN PROGRESS. Goal: every container on the daemon observed
+**Status**: DONE (2026-09-22). Shipped end to end: every container on the daemon observed
 (metrics-only, no service rows) and server-side host history, surfaced
 on a reworked fleet page. FROZEN CONTRACT:
 
@@ -794,9 +794,11 @@ when managed, state, cpu, mem, restarts, sampled age) in server
 order. SCOPE GUARD: no alert rules on unmanaged containers, no
 per-container history drill-down, no client column sorting in S23.
 
-Validation: per-area gates, full gate, deploy, live-verify
-(~20-container fleet incl. unmanaged projects, history points for
-all three metrics, UI renders with charts + table).
+Validation: per-area gates, full gate (vet, lint incl. GOOS=linux,
+tests, race, web/docs verify+build, redocly, govulncheck
+known-only), CI green, deploy, live-verify (20-container fleet: 3
+managed + 17 unmanaged across 15 projects incl. the project's own
+db/redis; cpu/mem/load history accumulating; Fleet bundle live).
 
 ## Working agreements
 

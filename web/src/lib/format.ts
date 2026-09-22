@@ -85,3 +85,11 @@ export function timeAgo(value: string): string {
 export function shortId(id: string): string {
   return id.replace(/^sha256:/, '').slice(0, 12);
 }
+
+// eslint-disable-next-line no-control-regex -- ANSI parsing inherently matches ESC.
+const ansiPattern = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+export function stripAnsi(line: string): string {
+  ansiPattern.lastIndex = 0;
+  return line.replace(ansiPattern, '');
+}

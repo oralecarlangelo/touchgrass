@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -29,59 +28,28 @@ import {
   type LogLine,
   type LogStats,
 } from '@/lib/api.ts';
-import { formatTime } from '@/lib/format.ts';
+import LogLineRow from './LogLineRow.tsx';
 
 const limitOptions = ['50', '100', '200', '500'] as const;
 
-function LogLineRow({
-  line,
-  anchor,
-  onSelect,
-}: {
-  line: LogLine;
-  anchor: boolean;
-  onSelect?: (line: LogLine) => void;
-}) {
-  const content = (
-    <>
-      <span className="shrink-0 text-[11px]">{formatTime(line.ts)}</span>
-      <Badge variant="outline" className="shrink-0 font-mono text-[10px]">
-        {line.container}
-      </Badge>
-      <Badge
-        variant={line.stream === 'stderr' ? 'destructive' : 'secondary'}
-        className="shrink-0 text-[10px]"
-      >
-        {line.stream}
-      </Badge>
-      <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{line.line}</span>
-    </>
-  );
+const levelOptions = [
+  { value: 'all', label: 'all levels' },
+  { value: 'error', label: 'errors' },
+  { value: 'error,warn', label: 'errors + warnings' },
+  { value: 'warn', label: 'warnings' },
+  { value: 'info', label: 'info' },
+  { value: 'debug', label: 'debug' },
+] as const;
 
-  if (onSelect === undefined) {
-    return (
-      <li
-        className={`flex items-start gap-2 px-3 py-1.5 font-mono text-xs ${
-          anchor ? 'bg-accent' : ''
-        }`}
-      >
-        {content}
-      </li>
-    );
-  }
+type LevelFilter = (typeof levelOptions)[number]['value'];
 
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={() => onSelect(line)}
-        title="Show surrounding context"
-        className="hover:bg-muted/60 flex w-full items-start gap-2 px-3 py-1.5 text-left font-mono text-xs"
-      >
-        {content}
-      </button>
-    </li>
-  );
+interface SearchParams {
+  q: string;
+  after: string;
+  before: string;
+  limit: string;
+  stream: string;
+  level: string;
 }
 
 export default function LogSearch({
@@ -96,6 +64,7 @@ export default function LogSearch({
   const [before, setBefore] = useState('');
   const [limit, setLimit] = useState<(typeof limitOptions)[number]>('100');
   const [stream, setStream] = useState<'all' | 'stdout' | 'stderr'>('all');
+  const [level, setLevel] = useState<LevelFilter>('all');
   const [lines, setLines] = useState<LogLine[] | null>(null);
   const [stats, setStats] = useState<LogStats | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,33 +75,75 @@ export default function LogSearch({
   const [contextOpen, setContextOpen] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
 
-  const search = useCallback(async () => {
-    setSearching(true);
-    setError(null);
+  const executeSearch = useCallback(
+    async (params: SearchParams) => {
+      setSearching(true);
+      setError(null);
 
-    try {
-      const [fetched, fetchedStats] = await Promise.all([
-        fetchLogs(serviceId, {
-          q: query.trim(),
-          after: after.trim(),
-          before: before.trim(),
-          limit: Number(limit),
-        }),
-        fetchLogStats(serviceId),
-      ]);
-      setLines(fetched);
-      setStats(fetchedStats);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
+      try {
+        const [fetched, fetchedStats] = await Promise.all([
+          fetchLogs(serviceId, {
+            q: params.q,
+            after: params.after,
+            before: params.before,
+            stream: params.stream === 'all' ? '' : params.stream,
+            level: params.level === 'all' ? '' : params.level,
+            limit: Number(params.limit),
+          }),
+          fetchLogStats(serviceId),
+        ]);
+        setLines(fetched);
+        setStats(fetchedStats);
+      } catch (err) {
+        if (isUnauthorized(err)) {
+          onUnauthorized();
+          return;
+        }
+
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSearching(false);
       }
+    },
+    [serviceId, onUnauthorized],
+  );
 
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSearching(false);
-    }
-  }, [serviceId, query, after, before, limit, onUnauthorized]);
+  const search = useCallback(async () => {
+    await executeSearch({
+      q: query.trim(),
+      after: after.trim(),
+      before: before.trim(),
+      limit,
+      stream,
+      level,
+    });
+  }, [executeSearch, query, after, before, limit, stream, level]);
+
+  // Stream/level selects apply instantly (server-side); text inputs wait
+  // for Search/Enter so typing never refires the query.
+  const applyStream = (value: typeof stream) => {
+    setStream(value);
+    void executeSearch({
+      q: query.trim(),
+      after: after.trim(),
+      before: before.trim(),
+      limit,
+      stream: value,
+      level,
+    });
+  };
+
+  const applyLevel = (value: LevelFilter) => {
+    setLevel(value);
+    void executeSearch({
+      q: query.trim(),
+      after: after.trim(),
+      before: before.trim(),
+      limit,
+      stream,
+      level: value,
+    });
+  };
 
   // Initial load per service only — typing in the filters must not
   // refire the search (the ref holds the latest closure instead).
@@ -157,6 +168,8 @@ export default function LogSearch({
         q: query.trim(),
         after: after.trim(),
         before: oldest,
+        stream: stream === 'all' ? '' : stream,
+        level: level === 'all' ? '' : level,
         limit: Number(limit),
       });
       const seen = new Set(lines.map((line) => line.id));
@@ -176,7 +189,7 @@ export default function LogSearch({
     } finally {
       setLoadingOlder(false);
     }
-  }, [lines, serviceId, query, after, limit, onUnauthorized]);
+  }, [lines, serviceId, query, after, limit, stream, level, onUnauthorized]);
 
   const openContext = useCallback(
     async (line: LogLine) => {
@@ -200,8 +213,6 @@ export default function LogSearch({
     },
     [onUnauthorized],
   );
-
-  const visible = (lines ?? []).filter((line) => stream === 'all' || line.stream === stream);
 
   return (
     <div className="space-y-4">
@@ -248,7 +259,7 @@ export default function LogSearch({
                 ))}
               </SelectContent>
             </Select>
-            <Select value={stream} onValueChange={(value) => setStream(value as typeof stream)}>
+            <Select value={stream} onValueChange={(value) => applyStream(value as typeof stream)}>
               <SelectTrigger className="w-32" aria-label="Stream filter">
                 <SelectValue />
               </SelectTrigger>
@@ -256,6 +267,18 @@ export default function LogSearch({
                 <SelectItem value="all">all streams</SelectItem>
                 <SelectItem value="stdout">stdout</SelectItem>
                 <SelectItem value="stderr">stderr</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={level} onValueChange={(value) => applyLevel(value as LevelFilter)}>
+              <SelectTrigger className="w-40" aria-label="Level filter">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {levelOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Button onClick={() => void search()} disabled={searching}>
@@ -287,18 +310,18 @@ export default function LogSearch({
       {lines !== null && (
         <Card>
           <CardContent className="px-0 py-2">
-            {visible.length === 0 ? (
+            {lines.length === 0 ? (
               <p className="text-muted-foreground px-4 py-6 text-center text-sm">
                 No lines match. Loosen the filters or widen the window.
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {visible.map((line) => (
+                {lines.map((line) => (
                   <LogLineRow key={line.id} line={line} anchor={false} onSelect={openContext} />
                 ))}
               </ul>
             )}
-            {visible.length > 0 && (
+            {lines.length > 0 && (
               <div className="flex justify-center border-t px-4 py-3">
                 <Button
                   variant="outline"

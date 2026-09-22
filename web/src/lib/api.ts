@@ -420,6 +420,7 @@ export interface LogLine {
   service_id: string;
   container: string;
   stream: string;
+  level: string;
   line: string;
   ts: string;
   created_at: string;
@@ -439,6 +440,8 @@ export interface LogSearch {
   q?: string;
   after?: string;
   before?: string;
+  stream?: string;
+  level?: string;
   limit?: number;
 }
 
@@ -455,6 +458,14 @@ export async function fetchLogs(serviceId: string, search: LogSearch = {}): Prom
 
   if (search.before !== undefined && search.before !== '') {
     params.set('before', search.before);
+  }
+
+  if (search.stream !== undefined && search.stream !== '') {
+    params.set('stream', search.stream);
+  }
+
+  if (search.level !== undefined && search.level !== '') {
+    params.set('level', search.level);
   }
 
   if (search.limit !== undefined) {

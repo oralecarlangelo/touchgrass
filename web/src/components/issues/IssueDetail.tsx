@@ -21,6 +21,7 @@ import {
   type Occurrence,
 } from '@/lib/api.ts';
 import { formatTime } from '@/lib/format.ts';
+import LogLineRow from '../logs/LogLineRow.tsx';
 
 const windowOptions = [
   { value: '60', label: '±1 minute' },
@@ -267,20 +268,9 @@ export default function IssueDetail({
             </p>
           )}
           {logs !== null && logs.length > 0 && (
-            <ul className="divide-y divide-border rounded-md border font-mono text-xs">
+            <ul className="divide-y divide-border rounded-md border">
               {logs.map((line) => (
-                <li key={line.id} className="flex items-start gap-2 px-3 py-1.5">
-                  <span className="text-muted-foreground shrink-0 text-[11px]">
-                    {formatTime(line.ts)}
-                  </span>
-                  <Badge
-                    variant={line.stream === 'stderr' ? 'destructive' : 'secondary'}
-                    className="shrink-0 text-[10px]"
-                  >
-                    {line.stream}
-                  </Badge>
-                  <span className="min-w-0 flex-1 break-words whitespace-pre-wrap">{line.line}</span>
-                </li>
+                <LogLineRow key={line.id} line={line} anchor={false} />
               ))}
             </ul>
           )}

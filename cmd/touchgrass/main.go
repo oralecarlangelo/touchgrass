@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	docssite "github.com/oralecarlangelo/touchgrass/docs-site"
 	"github.com/oralecarlangelo/touchgrass/internal/config"
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/http"
@@ -136,6 +137,11 @@ func newServeServer(
 		return nil, fmt.Errorf("resolving embedded UI: %w", err)
 	}
 
+	docs, err := fs.Sub(docssite.Dist, "dist")
+	if err != nil {
+		return nil, fmt.Errorf("resolving embedded docs: %w", err)
+	}
+
 	devProxy := ""
 	if cfg.Env == "dev" {
 		devProxy = http.DefaultDevProxy
@@ -156,6 +162,7 @@ func newServeServer(
 		Logs:      services.logs,
 		System:    services.system,
 		Dist:      dist,
+		Docs:      docs,
 		DevProxy:  devProxy,
 	}), nil
 }

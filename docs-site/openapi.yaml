@@ -1,0 +1,1035 @@
+openapi: 3.1.0
+info:
+  title: touchgrass API
+  version: 1.0.0
+  description: |
+    Self-hosted blue-green deploys, metrics, and error tracking.
+    Mirrors `internal/http/server.go` — update both together.
+
+    All routes except `/api/health`, `/api/auth/login`, and
+    `/api/ingest` require the admin session cookie from login.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: /api
+    description: Same origin as the console
+security:
+  - cookieAuth: []
+tags:
+  - name: auth
+    description: Admin session management
+  - name: ingest
+    description: SDK report intake and key management
+  - name: services
+    description: Inventory, metrics, deploys, and audit
+  - name: alerts
+    description: Metric rules and the notification center
+  - name: issues
+    description: Grouped errors and issue alert rules
+  - name: logs
+    description: Container log search and context
+  - name: system
+    description: Host snapshot and image management
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [auth]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Server is up
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Start an admin session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        '204': { description: Session cookie set }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End the admin session
+      responses:
+        '204': { description: Session cleared }
+  /auth/me:
+    get:
+      operationId: getSession
+      tags: [auth]
+      summary: Session state
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authenticated]
+                properties:
+                  authenticated: { type: boolean }
+  /ingest:
+    post:
+      operationId: ingestReport
+      tags: [ingest]
+      summary: Submit one SDK report
+      security: [{ keyAuth: [] }]
+      description: |
+        Public by design; the per-service key is the credential.
+        Bodies cap at 1MB. Payloads are never logged.
+      parameters:
+        - $ref: '#/components/parameters/KeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngestReport'
+      responses:
+        '202':
+          description: Report evaluated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sampled]
+                properties:
+                  sampled:
+                    type: boolean
+                    description: False when the key's sampling rate dropped this report
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { description: Report exceeds 1MB }
+  /keys:
+    get:
+      operationId: listKeys
+      tags: [ingest]
+      summary: List a service's keys (prefixes only)
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: Keys
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+    post:
+      operationId: createKey
+      tags: [ingest]
+      summary: Mint a key (plaintext returned once)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id, sample_rate]
+              properties:
+                service_id: { type: string }
+                sample_rate: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        '201':
+          description: Key minted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, service_id, key, key_prefix, sample_rate]
+                properties:
+                  id: { type: integer }
+                  service_id: { type: string }
+                  key: { type: string, description: 'Plaintext, shown once' }
+                  key_prefix: { type: string }
+                  sample_rate: { type: number }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /keys/{id}/revoke:
+    post:
+      operationId: revokeKey
+      tags: [ingest]
+      summary: Revoke a key (immediate)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Revoked }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services:
+    get:
+      operationId: listServices
+      tags: [services]
+      summary: Managed services with live state
+      responses:
+        '200':
+          description: Services
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [services]
+                properties:
+                  services:
+                    type: array
+                    items: { $ref: '#/components/schemas/ServiceView' }
+  /services/{id}/metrics:
+    get:
+      operationId: listMetrics
+      tags: [services]
+      summary: Container samples, oldest first
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Samples
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [metrics]
+                properties:
+                  metrics:
+                    type: array
+                    items: { $ref: '#/components/schemas/Metric' }
+  /services/{id}/deploys:
+    get:
+      operationId: listDeploys
+      tags: [services]
+      summary: Deploy history, newest first
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deploys]
+                properties:
+                  deploys:
+                    type: array
+                    items: { $ref: '#/components/schemas/Deploy' }
+    post:
+      operationId: recordDeploy
+      tags: [services]
+      summary: Record a manually-run deploy
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sha, actor, outcome]
+              properties:
+                sha: { type: string }
+                actor: { type: string }
+                type:
+                  type: string
+                  enum: [cutover, rollback, manual, deploy]
+                  default: manual
+                outcome:
+                  type: string
+                  enum: [success, failure]
+                notes: { type: string }
+                started_at: { type: string, format: date-time }
+                finished_at: { type: string, format: date-time }
+      responses:
+        '201':
+          description: Recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: integer }
+  /services/{id}/cutover:
+    post:
+      operationId: startCutover
+      tags: [services]
+      summary: Start an async blue-green cutover (202 + poll history)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target:
+                  type: string
+                  enum: [auto, blue, green]
+                  default: auto
+                  description: Empty means auto (the idle color)
+      responses:
+        '202':
+          description: Cutover started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target]
+                properties:
+                  target: { type: string }
+        '409': { description: A run is already in flight for this service }
+  /services/{id}/rollback:
+    post:
+      operationId: startRollback
+      tags: [services]
+      summary: Start an async rollback to the opposite live color
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '202':
+          description: Rollback started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target]
+                properties:
+                  target: { type: string }
+        '409': { description: A run is already in flight for this service }
+  /services/{id}/deploy:
+    post:
+      operationId: startDeploy
+      tags: [services]
+      summary: Start an async recreate deploy
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '202':
+          description: Deploy started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target]
+                properties:
+                  target: { type: string, description: Compose service name }
+        '409': { description: A run is already in flight for this service }
+  /alerts/rules:
+    get:
+      operationId: listAlertRules
+      tags: [alerts]
+      summary: List a service's metric alert rules
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: '#/components/schemas/AlertRule' }
+    post:
+      operationId: createAlertRule
+      tags: [alerts]
+      summary: Create a metric alert rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id, metric, threshold, duration_secs]
+              properties:
+                service_id: { type: string }
+                metric: { type: string, enum: [cpu, mem, disk] }
+                threshold: { type: number }
+                duration_secs: { type: integer }
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertRule' }
+  /alerts/rules/{id}:
+    delete:
+      operationId: deleteAlertRule
+      tags: [alerts]
+      summary: Delete a metric alert rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [alerts]
+      summary: Notifications newest first, with unread count
+      parameters:
+        - name: service_id
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications, unread]
+                properties:
+                  notifications:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  unread: { type: integer }
+  /notifications/{id}/read:
+    post:
+      operationId: markNotificationRead
+      tags: [alerts]
+      summary: Mark one notification read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Marked read }
+  /notifications/read:
+    post:
+      operationId: markNotificationsRead
+      tags: [alerts]
+      summary: Mark every unread notification read (optionally one service)
+      parameters:
+        - name: service_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Marked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [marked]
+                properties:
+                  marked: { type: integer }
+  /audit:
+    get:
+      operationId: listAudit
+      tags: [services]
+      summary: Audit entries newest first
+      parameters:
+        - name: service_id
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [audit]
+                properties:
+                  audit:
+                    type: array
+                    items: { $ref: '#/components/schemas/Audit' }
+  /events:
+    get:
+      operationId: streamEvents
+      tags: [services]
+      summary: Server-sent live event stream
+      responses:
+        '200':
+          description: text/event-stream of deploy, nginx, and issue events
+          content:
+            text/event-stream:
+              schema: { type: string }
+  /issues:
+    get:
+      operationId: listIssues
+      tags: [issues]
+      summary: A service's issues, newest activity first
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: Issues
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issues]
+                properties:
+                  issues:
+                    type: array
+                    items: { $ref: '#/components/schemas/Issue' }
+  /issues/{id}:
+    get:
+      operationId: getIssue
+      tags: [issues]
+      summary: One issue with recent occurrences
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Issue detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issue, occurrences]
+                properties:
+                  issue: { $ref: '#/components/schemas/Issue' }
+                  occurrences:
+                    type: array
+                    items: { $ref: '#/components/schemas/Occurrence' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /issues/{id}/logs:
+    get:
+      operationId: listIssueLogs
+      tags: [issues]
+      summary: Log lines around the newest occurrence, newest first
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: window_secs
+          in: query
+          description: ±window, 1-3600 (default 60)
+          schema: { type: integer }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Linked lines
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [logs]
+                properties:
+                  logs:
+                    type: array
+                    items: { $ref: '#/components/schemas/LogLine' }
+  /issues/rules:
+    get:
+      operationId: listIssueRules
+      tags: [issues]
+      summary: List a service's issue alert rules
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: '#/components/schemas/IssueRule' }
+    post:
+      operationId: createIssueRule
+      tags: [issues]
+      summary: Create an issue alert rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service_id, kind, threshold, window_secs]
+              properties:
+                service_id: { type: string }
+                kind: { type: string, enum: [new_issue, spike] }
+                threshold: { type: integer, description: Positive for spike; ignored for new_issue }
+                window_secs: { type: integer }
+      responses:
+        '201':
+          description: Rule created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueRule' }
+  /issues/rules/{id}:
+    delete:
+      operationId: deleteIssueRule
+      tags: [issues]
+      summary: Delete an issue alert rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /logs:
+    get:
+      operationId: searchLogs
+      tags: [logs]
+      summary: Search collected lines, newest first
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+        - name: q
+          in: query
+          description: Full-text AND query
+          schema: { type: string }
+        - name: after
+          in: query
+          schema: { type: string, format: date-time }
+        - name: before
+          in: query
+          schema: { type: string, format: date-time }
+        - name: stream
+          in: query
+          schema: { type: string, enum: [stdout, stderr] }
+        - name: level
+          in: query
+          description: Comma-separated set
+          schema: { type: string, example: 'error,warn' }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Lines (levels parsed at read time)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lines]
+                properties:
+                  lines:
+                    type: array
+                    items: { $ref: '#/components/schemas/LogLine' }
+  /logs/stats:
+    get:
+      operationId: getLogStats
+      tags: [logs]
+      summary: Stored lines plus backpressure losses
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [service_id, lines, drops, truncations]
+                properties:
+                  service_id: { type: string }
+                  lines: { type: integer }
+                  drops: { type: integer }
+                  truncations: { type: integer }
+  /logs/{id}:
+    get:
+      operationId: getLogContext
+      tags: [logs]
+      summary: One line with ±neighbors, oldest first
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+        - name: before
+          in: query
+          description: Older neighbors, 0-100 (default 20)
+          schema: { type: integer }
+        - name: after
+          in: query
+          description: Newer neighbors, 0-100 (default 20)
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Context
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [anchor, before, after]
+                properties:
+                  anchor: { $ref: '#/components/schemas/LogLine' }
+                  before:
+                    type: array
+                    items: { $ref: '#/components/schemas/LogLine' }
+                  after:
+                    type: array
+                    items: { $ref: '#/components/schemas/LogLine' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /docker/images:
+    get:
+      operationId: listImages
+      tags: [system]
+      summary: Local daemon images, newest first
+      responses:
+        '200':
+          description: Images
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [images]
+                properties:
+                  images:
+                    type: array
+                    items: { $ref: '#/components/schemas/Image' }
+  /docker/images/prune:
+    post:
+      operationId: pruneImages
+      tags: [system]
+      summary: Remove dangling images only
+      responses:
+        '200':
+          description: Prune report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted, reclaimed_bytes]
+                properties:
+                  deleted: { type: integer }
+                  reclaimed_bytes: { type: integer }
+  /system:
+    get:
+      operationId: getSystem
+      tags: [system]
+      summary: Host + daemon + self snapshot (nulls where unavailable)
+      responses:
+        '200':
+          description: Snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SystemSnapshot' }
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: touchgrass_session
+      description: Admin session from POST /api/auth/login
+    keyAuth:
+      type: apiKey
+      in: header
+      name: X-Touchgrass-Key
+      description: Per-service tg_ ingestion key
+  parameters:
+    ServiceId:
+      name: service_id
+      in: query
+      required: true
+      schema: { type: string }
+    ServicePath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000 }
+    KeyHeader:
+      name: X-Touchgrass-Key
+      in: header
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or bad credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown id
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error, code]
+      properties:
+        error: { type: string }
+        code: { type: string }
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status: { type: string, example: ok }
+        version: { type: string }
+    StackFrame:
+      type: object
+      required: [function, file, line, column]
+      properties:
+        function: { type: string }
+        file: { type: string }
+        line: { type: integer }
+        column: { type: integer }
+    Breadcrumb:
+      type: object
+      required: [at, category, message]
+      properties:
+        at: { type: string }
+        category: { type: string }
+        message: { type: string }
+    IngestReport:
+      type: object
+      required: [type, message]
+      properties:
+        type: { type: string, enum: [exception, message] }
+        message: { type: string }
+        stack:
+          type: array
+          items: { $ref: '#/components/schemas/StackFrame' }
+        breadcrumbs:
+          type: array
+          items: { $ref: '#/components/schemas/Breadcrumb' }
+        release: { type: string }
+    Occurrence:
+      allOf:
+        - $ref: '#/components/schemas/IngestReport'
+        - type: object
+          required: [id, service_id, created_at]
+          properties:
+            id: { type: integer }
+            service_id: { type: string }
+            issue_id: { type: ['integer', 'null'] }
+            created_at: { type: string, format: date-time }
+    APIKey:
+      type: object
+      required: [id, service_id, key_prefix, sample_rate, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        key_prefix: { type: string }
+        sample_rate: { type: number }
+        revoked_at: { type: ['string', 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    ServiceView:
+      type: object
+      required: [id, name, strategy, live_color, health, colors, containers]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        strategy: { type: string, enum: [bluegreen, recreate, unknown] }
+        live_color: { type: string }
+        health: { type: string, enum: [healthy, unhealthy, unknown] }
+        colors:
+          type: array
+          items:
+            type: object
+            required: [name, live, health, target, health_url]
+            properties:
+              name: { type: string }
+              live: { type: boolean }
+              health: { type: string }
+              target: { type: string }
+              health_url: { type: string }
+        containers:
+          type: array
+          items:
+            type: object
+            required: [id, name, image, sha, state, status, ports]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              image: { type: string }
+              sha: { type: string }
+              state: { type: string }
+              status: { type: string }
+              ports:
+                type: array
+                items: { type: string }
+    Metric:
+      type: object
+      required: [id, service_id, container_name, sampled_at, cpu_percent, mem_bytes, mem_limit, disk_bytes, restarts, uptime_secs]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        container_name: { type: string }
+        sampled_at: { type: string, format: date-time }
+        cpu_percent: { type: number }
+        mem_bytes: { type: integer }
+        mem_limit: { type: integer }
+        disk_bytes: { type: integer }
+        restarts: { type: integer }
+        uptime_secs: { type: integer }
+    Deploy:
+      type: object
+      required: [id, service_id, sha, actor, type, outcome, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        sha: { type: string }
+        actor: { type: string }
+        type: { type: string, enum: [cutover, rollback, manual, deploy] }
+        outcome: { type: string, enum: [success, failure] }
+        started_at: { type: ['string', 'null'], format: date-time }
+        finished_at: { type: ['string', 'null'], format: date-time }
+        duration_secs: { type: ['integer', 'null'] }
+        downtime_secs: { type: ['number', 'null'] }
+        notes: { type: string }
+        created_at: { type: string, format: date-time }
+    AlertRule:
+      type: object
+      required: [id, service_id, metric, threshold, duration_secs, enabled, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        metric: { type: string, enum: [cpu, mem, disk] }
+        threshold: { type: number }
+        duration_secs: { type: integer }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+    Notification:
+      type: object
+      required: [id, service_id, kind, title, body, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        kind: { type: string, enum: [alert_breach, deploy, issue] }
+        title: { type: string }
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        read_at: { type: ['string', 'null'], format: date-time }
+    Audit:
+      type: object
+      required: [id, actor, action, result, detail, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: ['string', 'null'] }
+        actor: { type: string }
+        action: { type: string, enum: [cutover, rollback, login, deploy] }
+        result: { type: string, enum: [success, failure] }
+        detail: { type: string }
+        created_at: { type: string, format: date-time }
+    Issue:
+      type: object
+      required: [id, service_id, fingerprint, title, first_seen, last_seen, count, releases, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        fingerprint: { type: string }
+        title: { type: string }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        count: { type: integer }
+        releases:
+          type: array
+          items: { type: string }
+        notified_at: { type: ['string', 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    IssueRule:
+      type: object
+      required: [id, service_id, kind, threshold, window_secs, enabled, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        kind: { type: string, enum: [new_issue, spike] }
+        threshold: { type: integer }
+        window_secs: { type: integer }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+    LogLine:
+      type: object
+      required: [id, service_id, container, stream, level, line, ts, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        container: { type: string }
+        stream: { type: string, enum: [stdout, stderr] }
+        level: { type: string, enum: [error, warn, info, debug] }
+        line: { type: string }
+        ts: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    Image:
+      type: object
+      required: [id, repo_tags, size_bytes, created_at, containers, dangling]
+      properties:
+        id: { type: string }
+        repo_tags:
+          type: array
+          items: { type: string }
+        size_bytes: { type: integer }
+        created_at: { type: string, format: date-time }
+        containers: { type: integer }
+        dangling: { type: boolean }
+    SystemSnapshot:
+      type: object
+      required: [hostname, os, arch, self]
+      properties:
+        hostname: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        uptime_secs: { type: ['integer', 'null'] }
+        load_1: { type: ['number', 'null'] }
+        cpu_percent: { type: ['number', 'null'] }
+        mem_used_bytes: { type: ['integer', 'null'] }
+        mem_total_bytes: { type: ['integer', 'null'] }
+        disk_used_bytes: { type: ['integer', 'null'] }
+        disk_total_bytes: { type: ['integer', 'null'] }
+        docker:
+          type: ['object', 'null']
+          required: [server_version, architecture, operating_system, kernel_version, ncpu, mem_total_bytes, containers_running, containers_stopped, images]
+          properties:
+            server_version: { type: string }
+            architecture: { type: string }
+            operating_system: { type: string }
+            kernel_version: { type: string }
+            ncpu: { type: integer }
+            mem_total_bytes: { type: integer }
+            containers_running: { type: integer }
+            containers_stopped: { type: integer }
+            images: { type: integer }
+        self:
+          type: object
+          required: [version, uptime_secs, database_bytes]
+          properties:
+            version: { type: string }
+            uptime_secs: { type: integer }
+            database_bytes: { type: integer }

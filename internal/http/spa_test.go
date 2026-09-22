@@ -37,14 +37,14 @@ func TestSPA(t *testing.T) {
 			target:          "/",
 			expectedStatus:  nethttp.StatusOK,
 			expectedBody:    "<p>app</p>",
-			expectedContent: "text/html",
+			expectedContent: testContentHTML,
 		},
 		{
 			name:            "deep route falls back to index",
 			target:          "/services/tn-api",
 			expectedStatus:  nethttp.StatusOK,
 			expectedBody:    "<p>app</p>",
-			expectedContent: "text/html",
+			expectedContent: testContentHTML,
 		},
 		{
 			name:            "asset served with js content type",

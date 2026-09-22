@@ -18,6 +18,18 @@ func testDist() fs.FS {
 	}
 }
 
+// testContentHTML is the expected docs/SPA page content type.
+const testContentHTML = "text/html"
+
+func testDocs() fs.FS {
+	return fstest.MapFS{
+		"index.html":     {Data: []byte("<p>test docs</p>")},
+		"guide.html":     {Data: []byte("<p>test guide</p>")},
+		"api/index.html": {Data: []byte("<p>test api ref</p>")},
+		"404.html":       {Data: []byte("<p>test docs 404</p>")},
+	}
+}
+
 func testServer(t *testing.T) *Server {
 	t.Helper()
 

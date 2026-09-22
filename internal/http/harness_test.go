@@ -180,6 +180,7 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 			Logger:    logger,
 		}),
 		Dist: testDist(),
+		Docs: testDocs(),
 	})
 
 	return server, db

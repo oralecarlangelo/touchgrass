@@ -1,0 +1,15 @@
+{
+  "name": "touchgrass-docs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build && npx @redocly/cli build-docs openapi.yaml --output dist/api/index.html && cp openapi.yaml dist/openapi.yaml",
+    "verify": "npx @redocly/cli lint openapi.yaml"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.4.0",
+    "vitepress": "^1.6.0"
+  }
+}

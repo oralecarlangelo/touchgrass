@@ -1,0 +1,53 @@
+# Troubleshooting
+
+## No issues appearing
+
+1. Check the SDK is initialized: `init` with a bad endpoint or key
+   yields a disabled client and never throws — exactly backwards from
+   what you want while debugging. Log the return or call `flush()`
+   and check the boolean.
+2. From the app's network, not yours: containerized apps cannot reach
+   `127.0.0.1` on the host. Use the public base URL.
+3. Check the key: revoked or mistyped keys get silent `401`s by
+   design. Mint a fresh key and retry.
+4. Check sampling: at `sample_rate` below 1 most reports drop. The
+   ingest response's `sampled` flag tells you per report.
+
+## Issues appear but group wrong
+
+Two bugs in one issue means the fingerprint templates match too
+aggressively for your messages; one bug in many issues means a high-
+cardinality token (a hash, a path) survived normalization. Open an
+issue upstream with both messages — fingerprint rules are shared
+code, not config.
+
+## Counts dropped after a deploy
+
+You probably shipped a release tag change with a message change: same
+bug, new fingerprint, new issue. The old issue's releases list shows
+where it stopped. This is working as designed — releases exist to
+draw exactly that line.
+
+## 413 from ingest
+
+One report exceeded 1MB — usually a giant breadcrumb trail or a
+stringified object in the message. Trim client-side; the cap is not
+configurable.
+
+## 401 from ingest
+
+Unknown, mistyped, or revoked key. The server logs the key prefix
+only, so compare prefixes in the Keys screen.
+
+## PII in occurrences
+
+Add the pattern to the SDK `scrub` list, redeploy the app, and
+confirm on the next occurrence. Scrubbing is client-side and
+forward-only — already-stored payloads need retention to age out
+(`TOUCHGRASS_RETENTION_ERRORS`).
+
+## The console shows stale data
+
+Metrics sample every 30s, logs tail every 5s. If the gap is longer
+than that, check the server log: Docker socket errors and SQLite
+locks announce themselves loudly.

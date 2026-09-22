@@ -1,23 +1,27 @@
 BINARY_NAME := touchgrass
 GO := go
 # Scoped explicitly: ./... would also match Go files inside web/node_modules.
-GO_PACKAGES := ./cmd/... ./internal/... ./migrations/... ./web
+GO_PACKAGES := ./cmd/... ./internal/... ./migrations/... ./web ./docs-site
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: all build build-web test test-race test-int lint lint-fix fmt vet audit run dev migrate clean help
+.PHONY: all build build-web build-docs test test-race test-int lint lint-fix fmt vet audit run dev migrate clean help
 
 ## all: Vet, lint, test, and build
 all: vet lint test build
 
-## build: Build the web UI and the binary into bin/
-build: build-web
+## build: Build the web UI, the docs site, and the binary into bin/
+build: build-web build-docs
 	$(GO) build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/touchgrass
 
 ## build-web: Install web deps and build the SPA into web/dist
 build-web:
 	npm ci --prefix web && npm run build --prefix web
+
+## build-docs: Install docs-site deps and build the guides + API reference into docs-site/dist
+build-docs:
+	npm ci --prefix docs-site && npm run build --prefix docs-site
 
 ## test: Run unit tests
 test:

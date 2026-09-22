@@ -5,6 +5,8 @@ before:
   hooks:
     - npm ci --prefix web
     - npm run build --prefix web
+    - npm ci --prefix docs-site
+    - npm run build --prefix docs-site
 
 builds:
   - id: touchgrass

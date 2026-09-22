@@ -37,6 +37,7 @@ type Config struct {
 	Logs      *service.LogCollector
 	System    *service.System
 	Dist      fs.FS
+	Docs      fs.FS
 	DevProxy  string
 }
 
@@ -111,6 +112,11 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/docker/images", server.handleDockerImages)
 	mux.HandleFunc("POST /api/docker/images/prune", server.handlePruneImages)
 	mux.HandleFunc("GET /api/system", server.handleSystem)
+
+	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		nethttp.Redirect(w, r, "/docs/", nethttp.StatusFound)
+	})
+	mux.Handle("GET /docs/", Docs(cfg.Logger, cfg.Docs))
 
 	if cfg.DevProxy != "" {
 		mux.Handle("GET /", DevProxy(cfg.Logger, cfg.DevProxy))

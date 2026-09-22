@@ -49,16 +49,18 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Build web UI
+      - name: Build web UI and docs site
         run: |
           npm ci --prefix web
           npm run build --prefix web
+          npm ci --prefix docs-site
+          npm run build --prefix docs-site
 
       - name: Build
         run: make build
 
       - name: Run tests
-        run: go test -race -shuffle=on -coverprofile=coverage.out ./cmd/... ./internal/... ./migrations/... ./web
+        run: go test -race -shuffle=on -coverprofile=coverage.out ./cmd/... ./internal/... ./migrations/... ./web ./docs-site
 
       - name: Upload coverage
         if: matrix.go == 'stable'
@@ -96,10 +98,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Verify web UI
+      - name: Verify web UI and docs site
         run: |
           npm ci --prefix web
           npm run verify --prefix web
+          npm ci --prefix docs-site
+          npm run verify --prefix docs-site
 
   vuln:
     name: Vulnerability scan

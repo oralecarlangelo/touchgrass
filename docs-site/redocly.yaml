@@ -1,0 +1,12 @@
+# Redocly lint config. Two recommended rules stay off:
+# - operation-4xx-response: the error shape ({error, code}) is uniform
+#   and documented per op where it varies; stamping 4xx on all 35 ops
+#   adds noise, not signal.
+# - no-ambiguous-paths: /issues/{id}/logs vs /issues/rules/{id} is a
+#   false positive — Go 1.22 ServeMux prefers the literal segment.
+apis:
+  main:
+    root: openapi.yaml
+    rules:
+      operation-4xx-response: off
+      no-ambiguous-paths: off

@@ -37,6 +37,14 @@ Uncaught exceptions and rejections are captured automatically. Reports
 flush in the background every second; call `flush()` before short-lived
 exits and `close()` on shutdown.
 
+CommonJS hosts use `require` (a CJS build ships alongside the ESM one):
+
+```js
+const { init, captureException } = require('@touchgrass/node');
+
+init({ endpoint: 'https://tg.internal', key: 'tg_...' });
+```
+
 ## Fail-open contract (FR-L2)
 
 - Every export is guarded: invalid options yield a disabled client,

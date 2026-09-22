@@ -13,10 +13,19 @@
     }
   },
   "files": ["dist", "dist-cjs", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oralecarlangelo/touchgrass.git",
+    "directory": "sdk/node"
+  },
+  "homepage": "https://github.com/oralecarlangelo/touchgrass/tree/develop/sdk/node",
+  "bugs": "https://github.com/oralecarlangelo/touchgrass/issues",
+  "keywords": ["touchgrass", "error-tracking", "sentry-alternative", "monitoring", "self-hosted"],
   "scripts": {
     "build": "tsc && tsc -p tsconfig.cjs.json && printf '{\"type\":\"commonjs\"}' > dist-cjs/package.json",
     "test": "vitest run",
-    "verify": "tsc --noEmit -p tsconfig.check.json && tsc --noEmit -p tsconfig.cjs.json && eslint . && vitest run"
+    "verify": "tsc --noEmit -p tsconfig.check.json && tsc --noEmit -p tsconfig.cjs.json && eslint . && vitest run",
+    "prepublishOnly": "npm run verify && npm run build"
   },
   "dependencies": {},
   "devDependencies": {

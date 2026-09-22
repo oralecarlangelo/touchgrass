@@ -37,7 +37,10 @@ Earliest in the entrypoint (before routes boot):
 import { init, addBreadcrumb } from '@touchgrass/node';
 
 init({
-  endpoint: 'http://127.0.0.1:8080', // touchgrass on the same box
+  // Base URL only — the SDK appends /api/ingest. Must be reachable
+  // FROM the app: containerized apps cannot use loopback (each
+  // container has its own 127.0.0.1), so use the public base URL.
+  endpoint: 'https://infra.ticketnation.ph',
   key: process.env.TOUCHGRASS_KEY!, // staging key, env only
   release: process.env.APP_VERSION ?? 'staging',
   scrub: [/token=[^&\s]+/g], // team-reviewed PII patterns (step 5)
@@ -91,7 +94,10 @@ traffic:
 
 ## 7. AC-4 sign-off
 
-- [ ] Forced staging exception grouped in UI < 60s.
+- [x] Forced staging exception grouped in UI < 60s.
+  (2026-09-22, adapted: no staging stack exists, so idle blue stood
+  in — forced manual + uncaught probes grouped into issues with
+  `new_issue` notifications under release v1.0.0+274.42309b86.)
 - [ ] Ingestion outage leaves tn-api unaffected (stop touchgrass,
       exercise staging, compare latency/behavior; SDK suite already
       proves the mechanism).

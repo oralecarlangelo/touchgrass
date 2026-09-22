@@ -196,10 +196,15 @@ downtime. `ServiceStore.UpdateConfig` is the ADR-0006 "edit these rows"
 path. S6.4 proof: `TestRecreateProofAdminFE` drives seeded admin-fe
 deploy → rollback → history through the public API. Gated green
 (`lint`/`vet`/`test`/`test-race`/`test-int`/`audit`/`build`/web `verify`).
-EC2 validation pending (S6.3): AC-1 (UI cutover + rollback + audit), AC-2
-(recorded downtime vs independent probe ±1s), AC-6 (tool stopped →
-SSH/script path works); live admin-fe recreate run with real scripts.
-**MVP milestone code-complete.**
+EC2-VALIDATED (2026-09-22, S6.3). AC-1: deploy rows 1–3
+(cutover/cutover/rollback, all success, downtime 0) plus clean-image
+cutover id 8 (09:40:22–09:42:25Z, green→blue, downtime 0), every run
+with a matching audit entry (actor admin). AC-2: recorded 0s vs an
+independent 0.2s public-URL prober — 798 samples, 0 non-200 across
+the cutover window. AC-6 script path: with touchgrass stopped, the
+cutover script flipped blue↔green over SSH (public 200 throughout,
+120 probe samples, 0 non-200); the SDK-removal half is still pending.
+**MVP milestone validated on EC2.**
 
 **Goal**: every cutover proves its own downtime; team gets notified.
 
@@ -291,14 +296,16 @@ Gated green (`lint`/`vet`/`test`/`test-race`/`test-int`/`audit`/`build`/web
 
 ### Sprint 9 — Dogfood tn-api (Phase 4c, 2–4pd)
 
-**Status**: PREPARED (2026-09-21) — EC2-gated. `docs/dogfood-runbook.md`
-covers staging-first wiring (key minting, SDK install + init snippet,
-breadcrumb guidance), AC-4 verification (forced staging exception
-grouped in UI < 60s), prod promotion criteria, week-one tuning
-(sampling/scrub/thresholds/caps), and rollback (SDK removal, key
-revoke). Live work needs the EC2 host + tn-api deploys: wire staging,
-verify AC-4, promote to prod, tune over a week of real volume. No code
-gates apply (docs only; runbook verified against the API by hand).
+**Status**: S9.1 LIVE (2026-09-22); S9.2 pending a week of volume.
+No staging stack exists on the box, so idle blue stood in for staging:
+dual ESM/CJS SDK build (CommonJS `require` fix) instrumented on idle
+blue, forced manual + uncaught probes grouped into issues with
+`new_issue` notifications (release v1.0.0+274.42309b86), then a clean
+image without probe routes rebuilt and cut to prod (deploy id 8,
+downtime 0, no new issues after cutover). Runbook §2 corrected along
+the way: containerized apps must use the public base URL
+(`https://infra.ticketnation.ph`), never loopback. Remaining: S9.2
+tuning after a week of real volume (sampling, scrub, thresholds).
 
 **Goal**: touchgrass watches real production traffic.
 
@@ -361,14 +368,15 @@ and line truncations (5) are counted per service, logged
 logs`), and queryable via `GET /api/logs/stats`. `docs/v1-acceptance.md`
 maps BRD AC-1..6 to local proof + EC2 live steps. Gated green
 (`lint`/`vet`/`test`/`test-race`/`test-int`/`audit`/`build`/web
-`verify`). EC2 sweep partial (2026-09-21): AC-3 PASS (samples match
-`docker stats` within source noise; tripwire rule fired to
-notification), AC-4 pipeline PASS (synthetic ingest → grouped in 5s
-+ `new_issue` note; forced-exception + app-unaffected halves need the
-SDK in-app), AC-5 PASS (real issue shows 20 surrounding prod log
-lines; caps hold at/under max). AC-1/AC-2 (UI cutover + rollback +
-downtime) and AC-6 (SDK removal) need prod-traffic approval — asked,
-not yet run.
+`verify`). EC2 sweep (2026-09-22): AC-1 PASS (rows 1–3 + 8, all
+success, audit complete), AC-2 PASS (recorded 0s vs 798-sample
+independent probe, 0 non-200), AC-3 PASS (tn-api within source noise;
+tn-fe/admin-fe exact after the S12 mem-accounting fix), AC-4 grouping
+PASS (forced manual + uncaught from the in-app SDK grouped with
+`new_issue` notes; outage-harmless half still needs a dedicated run),
+AC-5 PASS (real issue shows 20 surrounding prod log lines; caps hold
+at/under max), AC-6 script-path PASS (tool-stopped SSH flip, 120
+samples 0 non-200; SDK-removal half pending).
 **V1 milestone code-complete.**
 
 **Goal**: errors ↔ logs linked; v1 acceptance green.
@@ -386,13 +394,19 @@ not yet run.
 
 ### S12–S13 — Graduate tn-fe + admin-fe (Phase 6, 4–8pd)
 
-**Status**: PREPARED (2026-09-21) — EC2-gated. Graduation is data, not
-code: both services already run the generic recreate engine (proven
-live-twin by `TestRecreateProofAdminFE`), so the remaining work is the
-per-service live checklist in `docs/service-graduation.md` (service
-row → health → metrics/history → deploy+rollback live run → logs/
-errors opt-in → runbook + sign-off). One service per sprint, both
-need their EC2 compose stacks. No gates apply (docs only).
+**Status**: GRADUATED (2026-09-22, both services). Live runs on the
+EC2 compose stacks: tn-fe deploy id 4 (downtime 5s) + rollback id 5
+(downtime 3s), admin-fe deploy id 6 (downtime 2s) + rollback id 7
+(downtime 2s) — all success with audit entries; recreate downtime is
+expected (single container, 502s during the swap). Metrics flow for
+both, history survived the 09:47Z touchgrass restart, logs collected
+(tn-fe 8.8k lines, admin-fe at 50k cap, zero drops), health green.
+Graduation caught one real bug: touchgrass reported raw cgroup memory
+`usage` while `docker stats` subtracts inactive file cache (tn-fe
+169.8 vs 144.7 MiB) — fixed in `internal/docker/stats.go` (`memUsage`,
+v1+v2 keys, clamped) with unit tests, deployed, re-verified exact
+(148.8 vs 148.8 MiB). Checklist + sign-off: `docs/service-graduation.md`.
+Gated green (`vet`/`lint`/`test` incl. `-race` on the touched package).
 
 **Goal**: full onboarding (health endpoints, metrics, history,
 runbooks) on the proven generic engine. One service per sprint.

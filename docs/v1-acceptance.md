@@ -18,7 +18,9 @@ Live steps:
 2. `GET /api/audit?service_id=tn-api` shows cutover + rollback
    entries with actor + timestamps.
 
-- [ ] Cutover + rollback completed from UI; audit entries present.
+- [x] Cutover + rollback completed from UI; audit entries present.
+  (2026-09-22: rows 1–3 cutover/cutover/rollback success + clean-image
+  cutover id 8 green→blue, all downtime 0; every run audited as admin.)
 
 ## AC-2 — recorded downtime matches an independent probe (±1s)
 
@@ -33,7 +35,9 @@ Live steps:
 2. Compare the deploy row's `downtime_secs` against the gap in
    `probe.log`; delta must be ≤1s.
 
-- [ ] Recorded downtime within ±1s of the independent probe log.
+- [x] Recorded downtime within ±1s of the independent probe log.
+  (2026-09-22: recorded 0s for cutover id 8; independent 0.2s prober
+  logged 798 samples 09:39:00–09:42:46Z with 0 non-200.)
 
 ## AC-3 — metrics match `docker stats`; alerts fire
 
@@ -52,12 +56,17 @@ Live steps:
   (2026-09-21: green 266.1 vs 263.9 MiB; docker-vs-docker jitter
   exceeds touchgrass-vs-docker delta; mem tripwire rule fired to a
   notification in 48s, rule deleted after.)
+  (2026-09-22: tn-fe exposed a cache-accounting gap — raw `usage`
+  vs `docker stats`' cache-subtracted figure — fixed in
+  `internal/docker/stats.go`, re-verified exact at 148.8 MiB.)
 
 ## AC-4 — forced staging exception grouped <60s; outage harmless
 
 Covered by `docs/dogfood-runbook.md` §3 + §7. Live steps live there.
 
-- [ ] Runbook §7 signed off.
+- [ ] Runbook §7 signed off. (2026-09-22: grouping half PASS — forced
+  manual + uncaught from the in-app SDK grouped with `new_issue`
+  notes; outage-harmless half still needs a dedicated run.)
 
 ## AC-5 — errors link to logs; storage under caps
 
@@ -93,3 +102,6 @@ Live steps:
    app: behavior and latency match the instrumented build.
 
 - [ ] SSH/script path works with the tool stopped; SDK removal is a no-op.
+  (2026-09-22: script-path half PASS — tool-stopped SSH flip
+  blue↔green, public 200, 120 probe samples 0 non-200; SDK-removal
+  half pending.)

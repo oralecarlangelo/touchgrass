@@ -111,6 +111,33 @@ func TestHandleIssue(t *testing.T) {
 	}
 }
 
+func TestHandleOccurrences(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+	seedIssue(t, server, testIssueReportBody)
+
+	status, body := doRequest(t, server, nethttp.MethodGet, "/api/issues/occurrences?service_id="+testServiceAPI, "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
+	}
+
+	var got occurrencesResponse
+
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decoding occurrences: %v", err)
+	}
+
+	if len(got.Occurrences) != 1 {
+		t.Fatalf("occurrences = %+v, want the seeded report", got.Occurrences)
+	}
+
+	status, _ = doRequest(t, server, nethttp.MethodGet, "/api/issues/occurrences", "")
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("missing service_id status = %d, want 400", status)
+	}
+}
+
 func TestHandleIssueLogs(t *testing.T) {
 	t.Parallel()
 

@@ -36,6 +36,20 @@ func (in *Ingestor) IssueOccurrences(
 	return in.occurrences.ListByIssue(ctx, id, clampLimit(limit))
 }
 
+// RecentOccurrences returns a service's occurrences newest first,
+// across all issues, for timeline views.
+func (in *Ingestor) RecentOccurrences(
+	ctx context.Context,
+	serviceID string,
+	limit int,
+) ([]model.Occurrence, error) {
+	if _, err := in.services.Get(ctx, serviceID); err != nil {
+		return nil, err
+	}
+
+	return in.occurrences.ListByService(ctx, serviceID, clampLimit(limit))
+}
+
 // Issue log-linking bounds: default ±60s around the newest occurrence,
 // at most ±1h, newest lines first.
 const (

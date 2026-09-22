@@ -101,6 +101,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/keys", server.handleKeys)
 	mux.HandleFunc("POST /api/keys/{id}/revoke", server.handleRevokeKey)
 	mux.HandleFunc("GET /api/issues", server.handleIssues)
+	mux.HandleFunc("GET /api/issues/occurrences", server.handleOccurrences)
 	mux.HandleFunc("GET /api/issues/{id}", server.handleIssue)
 	mux.HandleFunc("GET /api/issues/{id}/logs", server.handleIssueLogs)
 	mux.HandleFunc("POST /api/issues/rules", server.handleCreateIssueRule)

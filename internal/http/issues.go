@@ -90,6 +90,37 @@ type issueLogsResponse struct {
 	Logs []model.LogLine `json:"logs"`
 }
 
+// occurrencesResponse is the recent-occurrences payload.
+type occurrencesResponse struct {
+	Occurrences []model.Occurrence `json:"occurrences"`
+}
+
+// handleOccurrences lists a service's occurrences newest first.
+func (s *Server) handleOccurrences(w nethttp.ResponseWriter, r *nethttp.Request) {
+	serviceID := r.URL.Query().Get("service_id")
+	if serviceID == "" {
+		writeError(w, s.logger, errMissingService, "service_id is required", "invalid_request", nethttp.StatusBadRequest)
+
+		return
+	}
+
+	limit, err := parseLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeError(w, s.logger, err, "invalid limit (want 1-1000)", "invalid_request", nethttp.StatusBadRequest)
+
+		return
+	}
+
+	occurrences, err := s.ingestor.RecentOccurrences(r.Context(), serviceID, limit)
+	if err != nil {
+		writeServiceError(w, s.logger, err, "failed to load occurrences")
+
+		return
+	}
+
+	writeJSON(w, s.logger, nethttp.StatusOK, occurrencesResponse{Occurrences: occurrences})
+}
+
 // handleIssueLogs returns log lines around an issue's newest occurrence.
 func (s *Server) handleIssueLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

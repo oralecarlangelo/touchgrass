@@ -172,6 +172,39 @@ func TestIssueReadsReject(t *testing.T) {
 	if _, err := ingestor.IssueOccurrences(ctx, 9999, 10); !errors.Is(err, store.ErrIssueNotFound) {
 		t.Errorf("IssueOccurrences() error = %v, want ErrIssueNotFound", err)
 	}
+
+	if _, err := ingestor.RecentOccurrences(ctx, testUnknownServiceID, 10); err == nil {
+		t.Error("RecentOccurrences() error = nil, want unknown service error")
+	}
+}
+
+func TestRecentOccurrences(t *testing.T) {
+	t.Parallel()
+
+	ingestor, _ := testIngestor(t, 1000)
+	ctx := context.Background()
+	plaintext := mintKey(t, ingestor, testServiceAPI, 1)
+
+	ingestReport(t, ingestor, plaintext, "first boom", "v1")
+	ingestReport(t, ingestor, plaintext, "second boom", "v1")
+
+	got, err := ingestor.RecentOccurrences(ctx, testServiceAPI, 10)
+	if err != nil {
+		t.Fatalf("RecentOccurrences() error = %v, want nil", err)
+	}
+
+	if len(got) != 2 || got[0].Message != "second boom" || got[1].Message != "first boom" {
+		t.Fatalf("RecentOccurrences() = %+v, want newest first", got)
+	}
+
+	one, err := ingestor.RecentOccurrences(ctx, testServiceAPI, 1)
+	if err != nil {
+		t.Fatalf("RecentOccurrences() error = %v, want nil", err)
+	}
+
+	if len(one) != 1 || one[0].Message != "second boom" {
+		t.Errorf("limited = %+v, want newest one", one)
+	}
 }
 
 func TestIssueRulesRoundTrip(t *testing.T) {

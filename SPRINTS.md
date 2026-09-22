@@ -677,6 +677,19 @@ trace-correlated row queried back by trace_id), docs live. Dogfood key
 revoked after the run. Docs note: span context flows from the record's
 context (NodeSDK async tracking or explicit `emit({…, context})`).
 
+### S21 — Blue-green for tn-fe + admin-fe (2026-09-22)
+
+**Status**: DONE (2026-09-22). Both FE services migrated from
+recreate (5s/3s and 2s/2s 502 downtime) to blue-green, following
+tn-api's legacy-migration path: compose colors (fe on 4201/4202,
+app on 4301/4302), nginx active-upstream bootstrap, per-stack
+cutover-script forks + touchgrass adapters, DB row flips, live
+migration cutovers + rollback drills, legacy cleanup. All four runs
+success with `downtime_secs: 0`; 225/225 public probes 200.
+Found + fixed in the forks: `compose rm -f` skips running
+containers (stop-before-rm). Full procedure + findings in
+`docs/service-graduation.md` §6.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

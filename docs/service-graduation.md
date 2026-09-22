@@ -89,13 +89,55 @@ recreate path in `TestRecreateProofAdminFE`; this is the live twin):
 
 Service notes:
 
-- `tn-fe`: recreate strategy, single `fe` container
-  (`ticketnation-fe-fe-1`, Next.js ~150 MiB). Deploys carry brief
-  502 downtime (5s deploy / 3s rollback observed) — schedule
-  off-peak. Health: `http://127.0.0.1:3000`. No SDK. Deploys via
-  `recreate-deploy.sh`; on-call: standard FE rotation.
-- `admin-fe`: recreate strategy, single `app` container
-  (`ticketnation-admin-app-1`, tiny ~1.5 MiB static serve). Same
-  brief-downtime caveat (2s/2s observed). Health:
-  `http://127.0.0.1:3002/health`. No SDK. Same deploy script +
+- `tn-fe`: **bluegreen** since 2026-09-22 (S21; was recreate with
+  5s/3s 502 downtime). Colors `fe-blue`/`fe-green` on
+  `127.0.0.1:4201/4202` (container `:3000`); nginx
+  `tn_fe_active` over `/` + `/_next/static/`; health is `/` (root
+  200). Cutover: `/opt/ticketnation-fe/deploy/bluegreen-cutover.sh`
+  via `~/touchgrass/scripts/tn-fe-cutover.sh`. No SDK.
+  On-call: standard FE rotation.
+- `admin-fe`: **bluegreen** since 2026-09-22 (S21; was recreate
+  with 2s/2s 502 downtime). Colors `app-blue`/`app-green` on
+  `127.0.0.1:4301/4302` (container `:8080`); nginx
+  `tn_admin_active`. Cutover:
+  `/opt/ticketnation-admin/deploy/bluegreen-cutover.sh` via
+  `~/touchgrass/scripts/admin-fe-cutover.sh`. No SDK. Same
   on-call as `tn-fe`.
+
+## 6. Blue-green migration (S21, 2026-09-22)
+
+Both FE services migrated recreate → bluegreen following tn-api's
+legacy path. Per service, in order (admin-fe first): back up nginx
+conf + compose file + `touchgrass.db` (online backup); add color
+services to compose (mirrors except host port); bootstrap nginx
+upstreams with `# BLUEGREEN-ACTIVE` on the legacy backend and
+repoint all `proxy_pass` refs (`nginx -t`, reload, verify public);
+fork the team cutover script per stack (service prefix, ports,
+URLs, per-service lock dir) + thin touchgrass adapter; pre-boot
+the idle color and check direct health; `UPDATE services` to
+`bluegreen` (no API for this — direct DB write); cutover to blue
+(explicit target; touchgrass refuses auto from legacy), probe
+public throughout; rollback drill to green; stop/remove the legacy
+container, drop the legacy compose service + nginx block, reload,
+verify.
+
+Results: admin-fe cutover id 9 + rollback id 10, tn-fe cutover id
+11 + rollback id 12 — all success, `downtime_secs: 0`, 225/225
+public probes 200 across both migrations. Backups:
+`*.bak-bg-20260922T175326Z` (admin) / `*.bak-bg-20260922T180212Z`
+(fe) + matching `config-backup-*.db`.
+
+Findings:
+
+- The team script hardcodes `api-$TARGET`, so each stack carries a
+  fork. A future `--service-prefix` flag could reunite them; the
+  tn-api original was left untouched.
+- `docker compose rm -f` does NOT stop running containers (newer
+  compose) — step 5/5 leaked the old color. Both forks now `stop`
+  before `rm`. The tn-api original still has this bug (leak
+  self-heals on the next flip to that color, at the cost of one
+  stale running container); fix it the same way when convenient.
+- touchgrass refuses `--target auto` from a legacy live target;
+  pass blue/green explicitly for migrations.
+- Per-service lock dirs (`/var/tmp/bluegreen-cutover-<svc>.lock`)
+  — the default lock would serialize cutovers across services.

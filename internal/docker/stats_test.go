@@ -57,6 +57,59 @@ func TestCPUPercent(t *testing.T) {
 	}
 }
 
+func TestMemUsage(t *testing.T) {
+	t.Parallel()
+
+	const mib = 1048576
+
+	tests := []struct {
+		name     string
+		usage    uint64
+		stats    map[string]uint64
+		expected uint64
+	}{
+		{
+			name:     "cgroup v2 subtracts inactive file",
+			usage:    170 * mib,
+			stats:    map[string]uint64{"inactive_file": 25 * mib},
+			expected: 145 * mib,
+		},
+		{
+			name:     "cgroup v1 falls back to total",
+			usage:    170 * mib,
+			stats:    map[string]uint64{"total_inactive_file": 25 * mib},
+			expected: 145 * mib,
+		},
+		{
+			name:     "no cache reports raw usage",
+			usage:    170 * mib,
+			stats:    map[string]uint64{},
+			expected: 170 * mib,
+		},
+		{
+			name:     "oversized cache clamps to zero",
+			usage:    10 * mib,
+			stats:    map[string]uint64{"inactive_file": 25 * mib},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var stats container.StatsResponse
+
+			stats.MemoryStats.Usage = tt.usage
+			stats.MemoryStats.Stats = tt.stats
+
+			if got := memUsage(stats); got != tt.expected {
+				t.Errorf("memUsage() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestStartedAt(t *testing.T) {
 	t.Parallel()
 

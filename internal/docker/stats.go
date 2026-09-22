@@ -33,7 +33,7 @@ func (c *Client) Stats(ctx context.Context, id string) (Stats, error) {
 
 	return Stats{
 		CPUPercent: cpuPercent(stats),
-		MemBytes:   stats.MemoryStats.Usage,
+		MemBytes:   memUsage(stats),
 		MemLimit:   stats.MemoryStats.Limit,
 		Restarts:   info.RestartCount,
 		StartedAt:  startedAt(info),
@@ -97,6 +97,24 @@ func cpuPercent(stats container.StatsResponse) float64 {
 	}
 
 	return cpuDelta / systemDelta * cpus * 100
+}
+
+// memUsage replicates docker stats MEM USAGE: raw usage minus inactive
+// file cache (cgroup v2 `inactive_file`, cgroup v1
+// `total_inactive_file`), clamped at zero.
+func memUsage(stats container.StatsResponse) uint64 {
+	usage := stats.MemoryStats.Usage
+	cache := stats.MemoryStats.Stats["inactive_file"]
+
+	if cache == 0 {
+		cache = stats.MemoryStats.Stats["total_inactive_file"]
+	}
+
+	if cache >= usage {
+		return 0
+	}
+
+	return usage - cache
 }
 
 // startedAt parses the container start time, tolerating garbage.

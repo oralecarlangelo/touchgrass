@@ -70,9 +70,14 @@ func (in *Ingestor) IssueLogs(
 	since := center.Add(-window)
 	until := center.Add(window)
 
-	return in.logs.Search(ctx, store.LogFilter{
+	lines, err := in.logs.Search(ctx, store.LogFilter{
 		ServiceID: issue.ServiceID, Since: &since, Until: &until, Limit: clampLimit(limit),
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	return withLevels(lines), nil
 }
 
 // clampIssueLogWindow bounds the ±window around an occurrence.

@@ -8,12 +8,22 @@ const (
 	LogStderr = "stderr"
 )
 
+// Log levels, parsed from stream + message at read time (never stored:
+// the rules evolve faster than the data, and backfills would lie).
+const (
+	LogLevelError = "error"
+	LogLevelWarn  = "warn"
+	LogLevelInfo  = "info"
+	LogLevelDebug = "debug"
+)
+
 // LogLine is one collected container log line.
 type LogLine struct {
 	ID        int64     `json:"id"`
 	ServiceID string    `json:"service_id"`
 	Container string    `json:"container"`
 	Stream    string    `json:"stream"`
+	Level     string    `json:"level"`
 	Line      string    `json:"line"`
 	Ts        time.Time `json:"ts"`
 	CreatedAt time.Time `json:"created_at"`

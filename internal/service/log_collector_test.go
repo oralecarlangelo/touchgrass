@@ -123,7 +123,7 @@ func TestCollectStoresLines(t *testing.T) {
 		t.Fatalf("collect() error = %v, want nil", err)
 	}
 
-	found, err := collector.Search(ctx, testServiceAPI, "boom", nil, nil, 10)
+	found, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Query: "boom", Limit: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v, want nil", err)
 	}
@@ -141,7 +141,7 @@ func TestCollectStoresLines(t *testing.T) {
 		t.Fatalf("collect() error = %v, want nil", err)
 	}
 
-	all, err := collector.Search(ctx, testServiceAPI, "", nil, nil, 10)
+	all, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Limit: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v, want nil", err)
 	}
@@ -436,7 +436,7 @@ func TestCollectTruncatesLongLines(t *testing.T) {
 		t.Fatalf("collect() error = %v, want nil", err)
 	}
 
-	found, err := collector.Search(ctx, testServiceAPI, "", nil, nil, 10)
+	found, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Limit: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v, want nil", err)
 	}
@@ -452,12 +452,129 @@ func TestLogSearchRejects(t *testing.T) {
 	collector, _ := testLogCollector(t, &fakeLogLister{}, 1000)
 	ctx := context.Background()
 
-	if _, err := collector.Search(ctx, testUnknownServiceID, "", nil, nil, 10); err == nil {
+	if _, err := collector.Search(ctx, LogSearch{ServiceID: testUnknownServiceID, Limit: 10}); err == nil {
 		t.Error("Search() error = nil, want unknown service error")
+	}
+
+	if _, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Stream: "bogus", Limit: 10}); err == nil {
+		t.Error("Search() error = nil, want bad stream error")
+	}
+
+	if _, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Level: "bogus", Limit: 10}); err == nil {
+		t.Error("Search() error = nil, want bad level error")
 	}
 
 	if _, err := collector.Context(ctx, 9999, 5, 5); err == nil {
 		t.Error("Context() error = nil, want unknown line error")
+	}
+}
+
+// testLevelLines is the mixed-level corpus, oldest first.
+var testLevelLines = []struct {
+	stream string
+	line   string
+}{
+	{model.LogStdout, "boot ok"},
+	{model.LogStderr, "ERROR disk full"},
+	{model.LogStdout, "WARN slow query"},
+	{model.LogStdout, "ERROR retry failed"},
+	{model.LogStdout, "shutdown ok"},
+}
+
+// seedLevelLines stores the mixed-level corpus one second apart.
+func seedLevelLines(t *testing.T, db *store.DB, base time.Time) {
+	t.Helper()
+
+	lines := make([]model.LogLine, 0, len(testLevelLines))
+
+	for i, entry := range testLevelLines {
+		lines = append(lines, model.LogLine{
+			ServiceID: testServiceAPI, Container: "c", Stream: entry.stream,
+			Line: entry.line, Ts: base.Add(time.Duration(i) * time.Second),
+		})
+	}
+
+	if _, err := store.NewLogStore(db).InsertBatch(context.Background(), lines); err != nil {
+		t.Fatalf("InsertBatch() error = %v, want nil", err)
+	}
+}
+
+func TestLogSearchLevels(t *testing.T) {
+	t.Parallel()
+
+	collector, db := testLogCollector(t, &fakeLogLister{}, 1000)
+	ctx := context.Background()
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+
+	seedLevelLines(t, db, base)
+
+	errors, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Level: "error", Limit: 10})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	if len(errors) != 2 || errors[0].Line != "ERROR retry failed" || errors[1].Line != "ERROR disk full" {
+		t.Fatalf("level filter = %+v, want newest-first errors", errors)
+	}
+
+	if errors[0].Level != model.LogLevelError || errors[1].Level != model.LogLevelError {
+		t.Errorf("levels = %q/%q, want error stamped", errors[0].Level, errors[1].Level)
+	}
+
+	multi, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Level: "error,warn", Limit: 2})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	if len(multi) != 2 || multi[0].Line != "ERROR retry failed" || multi[1].Line != "WARN slow query" {
+		t.Fatalf("level set = %+v, want newest two of error+warn", multi)
+	}
+}
+
+func TestLogSearchStream(t *testing.T) {
+	t.Parallel()
+
+	collector, db := testLogCollector(t, &fakeLogLister{}, 1000)
+	ctx := context.Background()
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+
+	seedLevelLines(t, db, base)
+
+	stderr, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Stream: model.LogStderr, Limit: 10})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	if len(stderr) != 1 || stderr[0].Line != "ERROR disk full" {
+		t.Fatalf("stream filter = %+v, want the stderr line", stderr)
+	}
+}
+
+func TestLogContextLevels(t *testing.T) {
+	t.Parallel()
+
+	collector, db := testLogCollector(t, &fakeLogLister{}, 1000)
+	ctx := context.Background()
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+
+	seedLevelLines(t, db, base)
+
+	errors, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Level: "error", Limit: 1})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	got, err := collector.Context(ctx, errors[0].ID, 1, 1)
+	if err != nil {
+		t.Fatalf("Context() error = %v, want nil", err)
+	}
+
+	if got.Anchor.Level != model.LogLevelError || len(got.Before) != 1 || len(got.After) != 1 {
+		t.Fatalf("context = %+v, want stamped anchor with neighbors", got)
+	}
+
+	if got.Before[0].Level == "" || got.After[0].Level == "" {
+		t.Error("context neighbors lack stamped levels")
 	}
 }
 
@@ -477,7 +594,7 @@ func TestLogContextClamps(t *testing.T) {
 		t.Fatalf("collect() error = %v, want nil", err)
 	}
 
-	all, err := collector.Search(ctx, testServiceAPI, "", nil, nil, 10)
+	all, err := collector.Search(ctx, LogSearch{ServiceID: testServiceAPI, Limit: 10})
 	if err != nil {
 		t.Fatalf("Search() error = %v, want nil", err)
 	}

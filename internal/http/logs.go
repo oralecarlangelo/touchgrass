@@ -7,6 +7,7 @@ import (
 	nethttp "net/http"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
+	"github.com/oralecarlangelo/touchgrass/internal/service"
 )
 
 const (
@@ -54,7 +55,11 @@ func (s *Server) handleLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 		limit = defaultLogLimit
 	}
 
-	lines, err := s.logs.Search(r.Context(), serviceID, r.URL.Query().Get("q"), after, before, limit)
+	lines, err := s.logs.Search(r.Context(), service.LogSearch{
+		ServiceID: serviceID, Query: r.URL.Query().Get("q"),
+		Stream: r.URL.Query().Get("stream"), Level: r.URL.Query().Get("level"),
+		Since: after, Until: before, Limit: limit,
+	})
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to load logs")
 

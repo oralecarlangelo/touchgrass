@@ -172,30 +172,123 @@ func (c *LogCollector) addTruncations(serviceID string, rows int64) {
 	counters.truncations += rows
 }
 
-// Search validates the service and searches its lines newest first.
-func (c *LogCollector) Search(
-	ctx context.Context,
-	serviceID, query string,
-	since, until *time.Time,
-	limit int,
-) ([]model.LogLine, error) {
-	if _, err := c.services.Get(ctx, serviceID); err != nil {
+// LogSearch carries log search options. Empty Stream selects all
+// streams; empty Level selects all levels, otherwise a comma-separated
+// set (error, warn, info, debug).
+type LogSearch struct {
+	ServiceID string
+	Query     string
+	Stream    string
+	Level     string
+	Since     *time.Time
+	Until     *time.Time
+	Limit     int
+}
+
+// Level-scan bounds: chunked newest-first pages until the limit fills or
+// the budget runs out, so rare levels cannot scan the whole table.
+const (
+	levelScanChunk     = 1000
+	levelScanMaxChunks = 20
+)
+
+// Search validates the service and searches its lines newest first,
+// stamping the parsed level on every line.
+func (c *LogCollector) Search(ctx context.Context, search LogSearch) ([]model.LogLine, error) {
+	if _, err := c.services.Get(ctx, search.ServiceID); err != nil {
 		return nil, err
 	}
 
-	return c.logs.Search(ctx, store.LogFilter{
-		ServiceID: serviceID, Query: query,
-		Since: since, Until: until, Limit: clampSearchLimit(limit),
-	})
+	if search.Stream != "" && search.Stream != model.LogStdout && search.Stream != model.LogStderr {
+		return nil, fmt.Errorf("%w: stream %q (want stdout or stderr)", ErrInvalidInput, search.Stream)
+	}
+
+	levels, err := NormalizeLogLevels(search.Level)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := clampSearchLimit(search.Limit)
+
+	if len(levels) == 0 {
+		lines, err := c.logs.Search(ctx, store.LogFilter{
+			ServiceID: search.ServiceID, Query: search.Query, Stream: search.Stream,
+			Since: search.Since, Until: search.Until, Limit: limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		return withLevels(lines), nil
+	}
+
+	return c.searchLevels(ctx, search, levels, limit)
 }
 
-// Context returns a line with its surroundings.
+// searchLevels pages newest-first until the level set fills the limit or
+// the scan budget runs out, keeping limits exact for rare levels.
+func (c *LogCollector) searchLevels(
+	ctx context.Context,
+	search LogSearch,
+	levels map[string]bool,
+	limit int,
+) ([]model.LogLine, error) {
+	matched := []model.LogLine{}
+	beforeID := int64(0)
+
+	for chunk := 0; chunk < levelScanMaxChunks && len(matched) < limit; chunk++ {
+		page, err := c.logs.Search(ctx, store.LogFilter{
+			ServiceID: search.ServiceID, Query: search.Query, Stream: search.Stream,
+			Since: search.Since, Until: search.Until, BeforeID: beforeID, Limit: levelScanChunk,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		if len(page) == 0 {
+			break
+		}
+
+		for _, line := range page {
+			line.Level = ParseLogLevel(line.Stream, line.Line)
+
+			if levels[line.Level] {
+				matched = append(matched, line)
+
+				if len(matched) >= limit {
+					break
+				}
+			}
+		}
+
+		beforeID = page[len(page)-1].ID
+
+		if len(page) < levelScanChunk {
+			break
+		}
+	}
+
+	return matched, nil
+}
+
+// Context returns a line with its surroundings, levels stamped.
 func (c *LogCollector) Context(
 	ctx context.Context,
 	id int64,
 	before, after int,
 ) (model.LogContext, error) {
-	return c.logs.Context(ctx, id, clampContextLines(before), clampContextLines(after))
+	got, err := c.logs.Context(ctx, id, clampContextLines(before), clampContextLines(after))
+	if err != nil {
+		return model.LogContext{}, err
+	}
+
+	got.Anchor.Level = ParseLogLevel(got.Anchor.Stream, got.Anchor.Line)
+
+	return model.LogContext{
+		Anchor: got.Anchor,
+		Before: withLevels(got.Before),
+		After:  withLevels(got.After),
+	}, nil
 }
 
 // collect tails every managed container once.

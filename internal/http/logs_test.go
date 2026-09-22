@@ -101,6 +101,58 @@ func TestHandleLogs(t *testing.T) {
 	}
 }
 
+func TestHandleLogsFilters(t *testing.T) {
+	t.Parallel()
+
+	server, db := fullTestServer(t)
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	seedLogLines(t, db, base, "boot ok", "request failed boom", "shutdown ok")
+
+	status, body := doRequest(t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&level=error", "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("level status = %d, want 200 (body: %s)", status, body)
+	}
+
+	var got logsResponse
+
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decoding level filter: %v", err)
+	}
+
+	if len(got.Lines) != 1 || got.Lines[0].Level != model.LogLevelError {
+		t.Fatalf("level filter = %+v, want the stamped error line", got.Lines)
+	}
+
+	status, body = doRequest(t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&stream=stderr", "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("stream status = %d, want 200 (body: %s)", status, body)
+	}
+
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decoding stream filter: %v", err)
+	}
+
+	if len(got.Lines) != 0 {
+		t.Errorf("stream filter = %d lines, want 0 (all stdout)", len(got.Lines))
+	}
+}
+
+func TestHandleLogsRejects(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+
+	status, _ := doRequest(t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&level=bogus", "")
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("bad level status = %d, want 400", status)
+	}
+
+	status, _ = doRequest(t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&stream=bogus", "")
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("bad stream status = %d, want 400", status)
+	}
+}
+
 func TestHandleLogStats(t *testing.T) {
 	t.Parallel()
 

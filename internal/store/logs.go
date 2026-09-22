@@ -14,12 +14,16 @@ import (
 // ErrLogLineNotFound reports an unknown log line id.
 var ErrLogLineNotFound = errors.New("store: log line not found")
 
-// LogFilter bounds a log search. Nil Since/Until select open ends.
+// LogFilter bounds a log search. Nil Since/Until select open ends; empty
+// Stream selects all streams; positive BeforeID selects only older rows
+// (newest-first paging cursor).
 type LogFilter struct {
 	ServiceID string
 	Query     string
+	Stream    string
 	Since     *time.Time
 	Until     *time.Time
+	BeforeID  int64
 	Limit     int
 }
 
@@ -101,27 +105,53 @@ func (s *LogStore) Search(ctx context.Context, filter LogFilter) ([]model.LogLin
 		// The MATCH lives in a subquery so the planner drives from the
 		// FTS index: the JOIN form scans log_lines and evaluates MATCH
 		// per row (5s+ at 100k rows; the subquery is ~10ms).
+		extra, extraArgs := logFilterClauses("l.", filter)
+
 		return queryRows(ctx, s.db.sql, rowQuery[model.LogLine]{
 			what: "log lines",
 			query: `SELECT l.id, l.service_id, l.container, l.stream, l.line, l.ts, l.created_at
 			 FROM log_lines l
 			 WHERE l.id IN (SELECT rowid FROM log_lines_fts WHERE log_lines_fts MATCH ?)
-			 AND l.service_id = ? AND l.ts >= ? AND l.ts <= ?
+			 AND l.service_id = ? AND l.ts >= ? AND l.ts <= ?` + extra + `
 			 ORDER BY l.id DESC LIMIT ?`,
-			args: []any{match, filter.ServiceID, since, until, limit},
+			args: append([]any{match, filter.ServiceID, since, until}, append(extraArgs, limit)...),
 			scan: scanLogLine,
 		})
 	}
+
+	extra, extraArgs := logFilterClauses("", filter)
 
 	return queryRows(ctx, s.db.sql, rowQuery[model.LogLine]{
 		what: "log lines",
 		query: `SELECT id, service_id, container, stream, line, ts, created_at
 		 FROM log_lines
-		 WHERE service_id = ? AND ts >= ? AND ts <= ?
+		 WHERE service_id = ? AND ts >= ? AND ts <= ?` + extra + `
 		 ORDER BY id DESC LIMIT ?`,
-		args: []any{filter.ServiceID, since, until, limit},
+		args: append([]any{filter.ServiceID, since, until}, append(extraArgs, limit)...),
 		scan: scanLogLine,
 	})
+}
+
+// logFilterClauses renders optional stream/id predicates against the
+// given table prefix ("" for unaliased). Fragments are constant; values
+// ride as args, never interpolated.
+func logFilterClauses(prefix string, filter LogFilter) (string, []any) {
+	clauses := ""
+	args := []any{}
+
+	if filter.Stream != "" {
+		clauses += " AND " + prefix + "stream = ?"
+
+		args = append(args, filter.Stream)
+	}
+
+	if filter.BeforeID > 0 {
+		clauses += " AND " + prefix + "id < ?"
+
+		args = append(args, filter.BeforeID)
+	}
+
+	return clauses, args
 }
 
 // Get returns one log line.

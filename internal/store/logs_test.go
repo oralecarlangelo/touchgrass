@@ -108,6 +108,103 @@ func TestLogStoreSearch(t *testing.T) {
 	}
 }
 
+// testFilterLines is the mixed-stream corpus: ok, stderr failed, ok.
+var testFilterLines = []string{"one ok", "two failed", "three ok"}
+
+// seedFilterLines stores the mixed-stream corpus one second apart.
+func seedFilterLines(t *testing.T, logs *LogStore, base time.Time) {
+	t.Helper()
+
+	lines := make([]model.LogLine, 0, len(testFilterLines))
+
+	for i, line := range testFilterLines {
+		stream := model.LogStdout
+		if i == 1 {
+			stream = model.LogStderr
+		}
+
+		lines = append(lines, model.LogLine{
+			ServiceID: testServiceAPI, Container: "c", Stream: stream,
+			Line: line, Ts: base.Add(time.Duration(i) * time.Second),
+		})
+	}
+
+	if _, err := logs.InsertBatch(context.Background(), lines); err != nil {
+		t.Fatalf("InsertBatch() error = %v, want nil", err)
+	}
+}
+
+func TestLogStoreSearchStream(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	logs := NewLogStore(db)
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+
+	seedFilterLines(t, logs, base)
+
+	stderr, err := logs.Search(ctx, LogFilter{ServiceID: testServiceAPI, Stream: model.LogStderr, Limit: 10})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	if len(stderr) != 1 || stderr[0].Line != testFilterLines[1] {
+		t.Fatalf("stream filter = %+v, want the stderr line", stderr)
+	}
+}
+
+func TestLogStoreSearchBeforeID(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	logs := NewLogStore(db)
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+
+	seedFilterLines(t, logs, base)
+
+	page, err := logs.Search(ctx, LogFilter{ServiceID: testServiceAPI, Limit: 2})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	if len(page) != 2 || page[0].Line != testFilterLines[2] || page[1].Line != testFilterLines[1] {
+		t.Fatalf("first page = %+v, want newest two", page)
+	}
+
+	older, err := logs.Search(ctx, LogFilter{ServiceID: testServiceAPI, BeforeID: page[1].ID, Limit: 2})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	if len(older) != 1 || older[0].Line != testFilterLines[0] {
+		t.Fatalf("second page = %+v, want the oldest line", older)
+	}
+}
+
+func TestLogStoreSearchFTSStream(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	logs := NewLogStore(db)
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+
+	seedFilterLines(t, logs, base)
+
+	matched, err := logs.Search(ctx, LogFilter{
+		ServiceID: testServiceAPI, Query: "failed", Stream: model.LogStderr, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("Search() error = %v, want nil", err)
+	}
+
+	if len(matched) != 1 || matched[0].Line != testFilterLines[1] {
+		t.Fatalf("fts + stream = %+v, want the stderr match", matched)
+	}
+}
+
 func TestLogStoreContext(t *testing.T) {
 	t.Parallel()
 

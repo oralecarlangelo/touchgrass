@@ -802,7 +802,7 @@ db/redis; cpu/mem/load history accumulating; Fleet bundle live).
 
 ### S24 — Promote to managed: suggest + create (2026-09-22)
 
-**Status**: IN PROGRESS. Goal: one-click promotion of an observed
+**Status**: DONE (2026-09-22). Shipped end to end: one-click promotion of an observed
 fleet container to a managed service: a suggest endpoint that drafts
 the row from labels + port probes, and a create endpoint with
 validation. FROZEN CONTRACT:
@@ -855,10 +855,14 @@ errors inline. SCOPE GUARD: no auto blue-green bootstrap (compose
 colors + nginx edits stay manual per graduation §6), no bulk
 promote, no delete-service in S24.
 
-Validation: per-area gates, full gate, deploy with scripts-dir env
-set, live-verify suggest on a real unmanaged container (read-only),
-then promote ONE real container end to end and confirm it appears
-managed with health + passing dry checks (no deploy triggered).
+Validation: per-area gates (backend child failed late; parent took
+over, fixed the migration-count tests, reviewed the slice
+directly), full gate (vet, lint incl. GOOS=linux, tests, race,
+web/docs verify+build, redocly, govulncheck known-only), deploy
+with scripts-dir env set, live-verify (suggest on job-portal: high
+confidence, probed health; 409 on managed tn-api; created
+job-portal for real — healthy, fleet row flipped, service_create
+audited; no deploy triggered).
 
 ## Working agreements
 

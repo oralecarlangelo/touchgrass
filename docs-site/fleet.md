@@ -29,12 +29,25 @@ charts with 1h–7d ranges below them, then the fleet table: name,
 compose project, managed/observed badge, state, CPU, memory,
 restarts, sampled age — hottest CPU first.
 
+## Promoting to managed
+
+Observed rows have a Manage button. It drafts the service row from
+the container's labels (project, service, compose dir) and probes
+its published ports for a health URL, with confidence, reasons, and
+warnings — blue-green pairs are detected and prefilled, including
+the nginx marker file. Review the draft, create, and the stack is
+managed: health tracking, metrics history, and deploys. Blue-green
+promotion still needs its compose colors and cutover-script fork
+first (the manual bootstrap); recreate promotion is one click.
+
 ## API
 
 - `GET /api/system/containers` — latest sample per container.
 - `GET /api/system/history?metric=cpu|mem|load&hours=N` — host
   history, bucket-averaged to at most 1500 points (default 24h,
   max 168h).
+- `GET /api/onboarding/suggest?container=<name>` — promotion draft.
+- `POST /api/services` — create a managed service row.
 
 Shapes are in the [REST API reference](/api/).
 

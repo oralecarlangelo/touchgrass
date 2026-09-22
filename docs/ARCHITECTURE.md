@@ -70,6 +70,7 @@ POSTs webhooks / sends email.
   - `/api/deploys`, `/api/resources`, `/api/issues`, `/api/logs` — later
     pillar resources
   - `POST /api/ingest` — SDK error reports (per-project API key header)
+  - `POST /api/ingest/logs` — SDK structured-log batches, same key model
   - `GET /api/events` — SSE stream (metrics ticks, deploy progress, alerts)
   - `/*` — embedded SPA fallback
 - Errors: internal chain with `%w`; boundary translates to
@@ -89,6 +90,7 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 | metrics | container rollups (CPU/RAM/disk, restarts, uptime samples) |
 | issues | fingerprinted error groups + occurrences |
 | logs | collected container log lines (short retention) |
+| sdk_logs | SDK structured logs: level, severity, attrs, trace/span, release |
 | audit | append-only cutover/rollback/login log |
 | settings | alert rules, notification targets, retention caps, keys |
 

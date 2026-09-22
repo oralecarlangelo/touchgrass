@@ -1,8 +1,10 @@
 # Ingest API
 
-`POST /api/ingest` is the only endpoint SDKs need. It is public by
-design — the per-service key in the header is the credential — so app
-servers never need admin sessions.
+Two public endpoints, one credential model: the per-service key in the
+header, so app servers never need admin sessions. `POST /api/ingest`
+takes error reports; `POST /api/ingest/logs` takes structured log
+batches (see [SDK logging](sdk-logging.md)). Unknown or revoked keys
+get `401` on either.
 
 ## Request
 
@@ -44,8 +46,36 @@ rejections log the key prefix at most.
 ```
 
 `sampled: false` means the key's sampling rate dropped this report —
-normal at rates below 1, not an error. Unknown or revoked keys get
-`401` without a body that says which.
+normal at rates below 1, not an error.
+
+## Log batches
+
+```http
+POST /api/ingest/logs
+X-Touchgrass-Key: tg_...
+Content-Type: application/json
+
+{
+  "release": "v1.2.3",
+  "items": [
+    {
+      "timestamp": 1758560100.123,
+      "level": "info",
+      "body": "checkout started",
+      "trace_id": "5b8efff798038103d269b633813fc60c",
+      "span_id": "b0e6f15b45c36b12",
+      "attributes": { "cart": { "value": 3, "type": "integer" } }
+    }
+  ]
+}
+```
+
+Levels are `trace`/`debug`/`info`/`warn`/`error`/`fatal` with OTel
+severity numbers (inferred when omitted). Bodies cap at 8KB, batches
+at 1000 items and 10MB (`413` past it); one invalid item rejects the
+whole batch with `400 {"error", "index"}`. Success is
+`202 {"accepted": n}`. Rows trim by `TOUCHGRASS_RETENTION_SDK_LOGS`
+(whole days, default 7).
 
 ## Keys
 

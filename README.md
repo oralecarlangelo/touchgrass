@@ -74,6 +74,7 @@ Environment only (no config file):
 | `TOUCHGRASS_INGEST_MAX_OCCURRENCES`  | `10000`            | Stored occurrences per service (newest kept)           |
 | `TOUCHGRASS_RETENTION_LOGS`          | `168h`             | Log line max age                                       |
 | `TOUCHGRASS_LOGS_MAX_LINES`          | `50000`            | Stored log lines per service (newest kept)             |
+| `TOUCHGRASS_RETENTION_SDK_LOGS`      | `7`                | SDK log max age, in whole days                         |
 | `TOUCHGRASS_LOG_POLL_INTERVAL`       | `5s`               | Container log poll cadence                             |
 
 New knobs land in this table in the same PR that introduces them.

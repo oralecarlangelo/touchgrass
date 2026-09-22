@@ -37,8 +37,10 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 | `TOUCHGRASS_INGEST_MAX_OCCURRENCES` | `10000`           | Occurrence count cap per service                     |
 | `TOUCHGRASS_RETENTION_LOGS`        | `168h`             | Log line age trim                                    |
 | `TOUCHGRASS_LOGS_MAX_LINES`        | `50000`            | Log line count cap per service                       |
+| `TOUCHGRASS_RETENTION_SDK_LOGS`    | `7`                | SDK (application) log age trim, in whole days        |
 
 Durations parse Go syntax (`30s`, `10m`, `168h`).
+`TOUCHGRASS_RETENTION_SDK_LOGS` is the exception: a whole-day count.
 
 ## Data and backups
 

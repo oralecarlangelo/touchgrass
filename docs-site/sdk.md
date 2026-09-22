@@ -66,6 +66,10 @@ has its own `uncaughtException` listener, it owns the outcome; as the
 sole listener the SDK prints the error, flushes bounded (2s), and
 exits 1 — exactly what node would do without it.
 
+Structured application logs go through a separate API —
+`logger.info(...)` and friends, plus an OpenTelemetry exporter — all
+covered in [SDK logging](sdk-logging.md).
+
 ## Lifecycle
 
 Reports flush in the background every second over HTTPS with a 5s

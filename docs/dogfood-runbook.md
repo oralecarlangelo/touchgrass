@@ -122,3 +122,26 @@ hit is harmless (scanners do it constantly):
    `lines` at/under `TOUCHGRASS_LOGS_MAX_LINES` with `drops`/
    `truncations` counted, and `TOUCHGRASS_RETENTION_LOGS` trims on
    schedule (watch for `retention trimmed logs` in stdout).
+
+## 9. S20 log-ingest validation (EC2)
+
+Run remotely (admin session + throwaway scripts in `/tmp`, nothing on
+the box). Proven 2026-09-22; key id 4, revoked after the run.
+
+1. Mint a key: `POST /api/keys {"service_id":"tn-api",
+   "sample_rate":1}`; record the id + plaintext.
+2. Logger path: init the built SDK (`sdk/node/dist`) against
+   `https://infra.ticketnation.ph` with the key, emit one
+   info/warn/error batch with a `s20probe-<ts>` marker, `flush()`.
+   `GET /api/logs?service_id=tn-api&source=sdk&q=<marker>` must
+   return all three with severities 9/13/17 and typed attributes
+   (printf templates land as `sentry.message.*`).
+3. OTel path: `LoggerProvider` + `BatchLogRecordProcessor({ exporter:
+   new TouchgrassLogRecordExporter({endpoint, key, release}) })`
+   (options object, not positional — 0.222+), emit inside a span with
+   explicit `context` (bare providers lack async tracking; the
+   NodeSDK attaches the active span automatically). Query back by
+   `trace_id` — ids must match exactly.
+4. Revoke the key: `POST /api/keys/{id}/revoke`. Rows remain as
+   history; `TOUCHGRASS_RETENTION_SDK_LOGS` (whole days, default 7)
+   trims them.

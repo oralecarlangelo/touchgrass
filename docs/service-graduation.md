@@ -134,9 +134,8 @@ Findings:
   tn-api original was left untouched.
 - `docker compose rm -f` does NOT stop running containers (newer
   compose) — step 5/5 leaked the old color. Both forks now `stop`
-  before `rm`. The tn-api original still has this bug (leak
-  self-heals on the next flip to that color, at the cost of one
-  stale running container); fix it the same way when convenient.
+  before `rm`, and the tn-api original + restore script got the
+  same fix on 2026-09-22 (backups `.bak-stopfix-20260922T182226Z`).
 - touchgrass refuses `--target auto` from a legacy live target;
   pass blue/green explicitly for migrations.
 - Per-service lock dirs (`/var/tmp/bluegreen-cutover-<svc>.lock`)

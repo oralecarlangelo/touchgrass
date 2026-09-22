@@ -33,6 +33,7 @@ export default defineConfig({
       {
         text: 'Operate',
         items: [
+          { text: 'Fleet monitoring', link: '/fleet' },
           { text: 'Self-hosting', link: '/self-hosting' },
           { text: 'Troubleshooting', link: '/troubleshooting' },
         ],

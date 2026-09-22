@@ -24,4 +24,6 @@ features:
     details: Every issue opens with ±60s of surrounding container logs. No more correlating by timestamp.
   - title: Structured app logs
     details: logger.info with levels, attributes, and trace IDs — or point your OpenTelemetry LoggerProvider at us. Queryable beside container logs.
+  - title: Fleet monitoring
+    details: Every container on the box observed, host CPU/memory/load history, zero enrollment. The Fleet page answers "who is eating CPU?".
 ---

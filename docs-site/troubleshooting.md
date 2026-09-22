@@ -76,6 +76,13 @@ confirm on the next occurrence. Scrubbing is client-side and
 forward-only — already-stored payloads need retention to age out
 (`TOUCHGRASS_RETENTION_ERRORS`).
 
+## A container is missing from the fleet table
+
+Sampling runs every 30 seconds, so containers living under one
+interval may never appear. Anything running longer than a minute
+shows up — if it doesn't, check the sampler errors in the server
+log (`metric collection failed` lines name the cause).
+
 ## The console shows stale data
 
 Metrics sample every 30s, logs tail every 5s. If the gap is longer

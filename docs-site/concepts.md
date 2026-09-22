@@ -1,6 +1,6 @@
 # Concepts
 
-The four ideas the whole system hangs on.
+The five ideas the whole system hangs on.
 
 ## Services are data
 
@@ -36,3 +36,11 @@ Oldest data trims on schedule; drops and truncations are counted and
 queryable (`GET /api/logs/stats`) instead of failing silently. The
 database cannot grow without bound no matter how loud your services
 get.
+
+## Not everything needs managing
+
+Managed services get deploys, alerts, and log collection — but the
+sampler observes every container on the daemon regardless, plus host
+CPU/memory/load history. Visibility is free and total from second
+one; management stays a conscious promotion. See [Fleet
+monitoring](/fleet).

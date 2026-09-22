@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vitepress dev",
-    "build": "vitepress build && npx @redocly/cli build-docs openapi.yaml --output dist/api/index.html && cp openapi.yaml dist/openapi.yaml",
+    "build": "vitepress build && npx @redocly/cli build-docs openapi.yaml --output dist/api/index.html && cp openapi.yaml dist/openapi.yaml && node scripts/selfhost-redoc.mjs",
     "verify": "npx @redocly/cli lint openapi.yaml"
   },
   "devDependencies": {

@@ -1,4 +1,17 @@
 import { useCallback, useState } from 'react';
+
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useOperationEvents } from '../hooks/useOperationEvents.ts';
 import { startCutover, type ServiceView } from '../lib/api.ts';
 
@@ -49,87 +62,90 @@ export default function CutoverPanel({
   }
 
   return (
-    <section aria-label="cutover" className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm">
-      <h2 className="text-lg font-semibold text-gray-900">Cutover</h2>
-      <p className="mt-1 text-sm text-gray-600">
-        Live color: {service.live_color === '' ? 'unknown' : service.live_color}. The configured
-        cutover script runs its preflight checks before traffic moves.
-      </p>
+    <Card>
+      <CardHeader>
+        <CardTitle>Cutover</CardTitle>
+        <CardDescription>
+          Live color: {service.live_color === '' ? 'unknown' : service.live_color}. The configured
+          cutover script runs its preflight checks before traffic moves.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {startError !== null && (
+          <Alert variant="destructive">
+            <AlertTitle>Cutover rejected</AlertTitle>
+            <AlertDescription>{startError}</AlertDescription>
+          </Alert>
+        )}
 
-      {startError !== null && (
-        <div role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-          <p className="text-sm text-red-700">{startError}</p>
-        </div>
-      )}
+        {streamError !== null && (
+          <Alert variant="destructive">
+            <AlertTitle>Stream interrupted</AlertTitle>
+            <AlertDescription>{streamError}</AlertDescription>
+          </Alert>
+        )}
 
-      {streamError !== null && (
-        <div role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-          <p className="text-sm text-red-700">{streamError}</p>
-        </div>
-      )}
-
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <label className="text-sm text-gray-700">
-          Target{' '}
-          <select
-            value={target}
-            onChange={(event) => setTarget(event.target.value)}
-            disabled={streaming}
-            className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900"
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1">
+            <Label htmlFor={`cutover-target-${service.id}`}>Target</Label>
+            <Select value={target} onValueChange={setTarget} disabled={streaming}>
+              <SelectTrigger id={`cutover-target-${service.id}`} className="w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">auto (idle color)</SelectItem>
+                <SelectItem value="blue">blue</SelectItem>
+                <SelectItem value="green">green</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            type="button"
+            onClick={() => void handleStart()}
+            disabled={!confirmed || streaming}
+            aria-label="Start cutover"
           >
-            <option value="auto">auto (idle color)</option>
-            <option value="blue">blue</option>
-            <option value="green">green</option>
-          </select>
-        </label>
-        <button
-          type="button"
-          onClick={() => void handleStart()}
-          disabled={!confirmed || streaming}
-          aria-label="Start cutover"
-          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-        >
-          {streaming ? 'Cutover running…' : 'Start cutover'}
-        </button>
-      </div>
+            {streaming ? 'Cutover running…' : 'Start cutover'}
+          </Button>
+        </div>
 
-      <label className="mt-3 flex items-start gap-2 text-sm text-gray-700">
-        <input
-          type="checkbox"
-          checked={confirmed}
-          disabled={streaming}
-          onChange={(event) => setConfirmed(event.target.checked)}
-          className="mt-1"
-        />
-        <span>
-          I confirm flipping live traffic for {service.name}
-          {target === 'auto' ? ' to the idle color' : ` to ${target}`}.
-        </span>
-      </label>
+        <div className="flex items-start gap-2">
+          <Checkbox
+            id={`cutover-confirm-${service.id}`}
+            checked={confirmed}
+            disabled={streaming}
+            onCheckedChange={(checked) => setConfirmed(checked === true)}
+          />
+          <Label htmlFor={`cutover-confirm-${service.id}`} className="font-normal">
+            I confirm flipping live traffic for {service.name}
+            {target === 'auto' ? ' to the idle color' : ` to ${target}`}.
+          </Label>
+        </div>
 
-      {target !== 'auto' && target === service.live_color && (
-        <p className="mt-2 text-sm text-amber-700">
-          Target is already live. Starting will re-run the cutover against the same color.
-        </p>
-      )}
+        {target !== 'auto' && target === service.live_color && (
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            Target is already live. Starting will re-run the cutover against the same color.
+          </p>
+        )}
 
-      {resolvedTarget !== null && (
-        <p className="mt-2 text-sm text-gray-700">
-          Accepted: flipping {service.name} to {resolvedTarget}.
-        </p>
-      )}
+        {resolvedTarget !== null && (
+          <p className="text-muted-foreground text-sm">
+            Accepted: flipping {service.name} to {resolvedTarget}.
+          </p>
+        )}
 
-      {lines.length > 0 && (
-        <ul
-          aria-label="cutover progress"
-          aria-live="polite"
-          className="mt-3 max-h-56 space-y-1 overflow-y-auto rounded-md bg-gray-900 p-3 font-mono text-xs text-gray-100"
-        >
-          {lines.map((line, index) => (
-            <li key={`${index}-${line}`}>{line}</li>
-          ))}
-        </ul>
-      )}
-    </section>
+        {lines.length > 0 && (
+          <ul
+            aria-label="cutover progress"
+            aria-live="polite"
+            className="max-h-56 space-y-1 overflow-y-auto rounded-md bg-zinc-950 p-3 font-mono text-xs text-zinc-100 dark:bg-zinc-900"
+          >
+            {lines.map((line, index) => (
+              <li key={`${index}-${line}`}>{line}</li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }

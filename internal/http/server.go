@@ -35,6 +35,7 @@ type Config struct {
 	Events    *Hub
 	Ingestor  *service.Ingestor
 	Logs      *service.LogCollector
+	System    *service.System
 	Dist      fs.FS
 	DevProxy  string
 }
@@ -53,6 +54,7 @@ type Server struct {
 	events    *Hub
 	ingestor  *service.Ingestor
 	logs      *service.LogCollector
+	system    *service.System
 	handler   nethttp.Handler
 }
 
@@ -72,6 +74,7 @@ func New(cfg Config) *Server {
 		events:    cfg.Events,
 		ingestor:  cfg.Ingestor,
 		logs:      cfg.Logs,
+		system:    cfg.System,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)
@@ -105,6 +108,9 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/logs", server.handleLogs)
 	mux.HandleFunc("GET /api/logs/stats", server.handleLogStats)
 	mux.HandleFunc("GET /api/logs/{id}", server.handleLogContext)
+	mux.HandleFunc("GET /api/docker/images", server.handleDockerImages)
+	mux.HandleFunc("POST /api/docker/images/prune", server.handlePruneImages)
+	mux.HandleFunc("GET /api/system", server.handleSystem)
 
 	if cfg.DevProxy != "" {
 		mux.Handle("GET /", DevProxy(cfg.Logger, cfg.DevProxy))

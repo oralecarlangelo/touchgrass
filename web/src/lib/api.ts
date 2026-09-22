@@ -466,6 +466,17 @@ export async function fetchLogs(serviceId: string, search: LogSearch = {}): Prom
   return body.lines ?? [];
 }
 
+export interface LogStats {
+  service_id: string;
+  lines: number;
+  drops: number;
+  truncations: number;
+}
+
+export async function fetchLogStats(serviceId: string): Promise<LogStats> {
+  return request<LogStats>(`/api/logs/stats?service_id=${encodeURIComponent(serviceId)}`);
+}
+
 export async function fetchLogContext(
   id: number,
   before = 20,
@@ -484,4 +495,110 @@ export async function fetchAudit(serviceId: string, limit = 100): Promise<AuditE
   const body = await request<AuditResponse>(`/api/audit?${params.toString()}`);
 
   return body.audit ?? [];
+}
+
+export interface ApiKey {
+  id: number;
+  service_id: string;
+  key_prefix: string;
+  sample_rate: number;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+interface KeysResponse {
+  keys: ApiKey[];
+}
+
+export interface CreatedApiKey {
+  id: number;
+  service_id: string;
+  key: string;
+  key_prefix: string;
+  sample_rate: number;
+}
+
+export async function fetchKeys(serviceId: string): Promise<ApiKey[]> {
+  const body = await request<KeysResponse>(
+    `/api/keys?service_id=${encodeURIComponent(serviceId)}`,
+  );
+
+  return body.keys ?? [];
+}
+
+export async function createKey(serviceId: string, sampleRate: number): Promise<CreatedApiKey> {
+  return request<CreatedApiKey>('/api/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ service_id: serviceId, sample_rate: sampleRate }),
+  });
+}
+
+export async function revokeKey(id: number): Promise<void> {
+  await request<void>(`/api/keys/${id}/revoke`, { method: 'POST' });
+}
+
+export interface ImageView {
+  id: string;
+  repo_tags: string[];
+  size_bytes: number;
+  created_at: string;
+  containers: number;
+  dangling: boolean;
+}
+
+interface ImagesResponse {
+  images: ImageView[];
+}
+
+export interface ImagePruneResult {
+  deleted: number;
+  reclaimed_bytes: number;
+}
+
+export async function fetchImages(): Promise<ImageView[]> {
+  const body = await request<ImagesResponse>('/api/docker/images');
+
+  return body.images ?? [];
+}
+
+export async function pruneImages(): Promise<ImagePruneResult> {
+  return request<ImagePruneResult>('/api/docker/images/prune', { method: 'POST' });
+}
+
+export interface DaemonSnapshot {
+  server_version: string;
+  architecture: string;
+  operating_system: string;
+  kernel_version: string;
+  ncpu: number;
+  mem_total_bytes: number;
+  containers_running: number;
+  containers_stopped: number;
+  images: number;
+}
+
+export interface SelfSnapshot {
+  version: string;
+  uptime_secs: number;
+  database_bytes: number;
+}
+
+export interface SystemSnapshot {
+  hostname: string;
+  os: string;
+  arch: string;
+  uptime_secs: number | null;
+  load_1: number | null;
+  cpu_percent: number | null;
+  mem_used_bytes: number | null;
+  mem_total_bytes: number | null;
+  disk_used_bytes: number | null;
+  disk_total_bytes: number | null;
+  docker: DaemonSnapshot | null;
+  self: SelfSnapshot;
+}
+
+export async function fetchSystem(): Promise<SystemSnapshot> {
+  return request<SystemSnapshot>('/api/system');
 }

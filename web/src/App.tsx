@@ -1,11 +1,23 @@
-import { useCallback, useEffect, useState } from 'react';
-import AuditLog from './components/AuditLog.tsx';
-import Issues from './components/Issues.tsx';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import EmptyState from './components/EmptyState.tsx';
+import ErrorState from './components/ErrorState.tsx';
+import Dashboard from './components/Dashboard.tsx';
+import HistoryScreen from './components/HistoryScreen.tsx';
+import ImagesScreen from './components/ImagesScreen.tsx';
+import IssuesScreen from './components/IssuesScreen.tsx';
+import KeysScreen from './components/KeysScreen.tsx';
 import LoginForm from './components/LoginForm.tsx';
-import Logs from './components/Logs.tsx';
-import NotificationCenter from './components/NotificationCenter.tsx';
-import ServiceCard from './components/ServiceCard.tsx';
-import ServiceDetail from './components/ServiceDetail.tsx';
+import LogsScreen from './components/LogsScreen.tsx';
+import NotificationsScreen from './components/NotificationsScreen.tsx';
+import RulesScreen from './components/RulesScreen.tsx';
+import ServicesList from './components/ServicesList.tsx';
+import ServiceWorkspace from './components/service/ServiceWorkspace.tsx';
+import SystemScreen from './components/SystemScreen.tsx';
+import AppShell from './components/layout/AppShell.tsx';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Toaster } from '@/components/ui/sonner';
 import {
   fetchServices,
   fetchSession,
@@ -14,6 +26,8 @@ import {
   logout,
   type ServiceView,
 } from './lib/api.ts';
+import type { ViewId } from './lib/views.ts';
+import { parseHash, writeHash } from './lib/hash.ts';
 
 const refreshIntervalMs = 30_000;
 
@@ -27,9 +41,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<ServiceView | null>(null);
-  const [view, setView] = useState<'services' | 'audit' | 'notifications' | 'issues' | 'logs'>(
-    'services',
-  );
+  const [view, setView] = useState<ViewId>(() => parseHash(window.location.hash).view);
+
+  // Deep-link: the hash mirrors the view + selected service both ways.
+  // A linked service resolves once the inventory loads.
+  const pendingServiceRef = useRef<string | null>(parseHash(window.location.hash).serviceId);
+
+  useEffect(() => {
+    writeHash(view, selected?.id ?? null);
+  }, [view, selected]);
 
   const refreshSession = useCallback(async () => {
     setSessionError(null);
@@ -49,7 +69,7 @@ export default function App() {
     setSession(false);
     setServices(null);
     setSelected(null);
-    setView('services');
+    setView('dashboard');
     setLoginError('Session expired. Log in again to continue.');
   }, []);
 
@@ -60,9 +80,19 @@ export default function App() {
     try {
       const fetched = await fetchServices();
       setServices(fetched);
-      setSelected((current) =>
-        current === null ? null : (fetched.find((service) => service.id === current.id) ?? current),
-      );
+
+      const pending = pendingServiceRef.current;
+
+      if (pending !== null) {
+        pendingServiceRef.current = null;
+        setSelected(fetched.find((service) => service.id === pending) ?? null);
+      } else {
+        setSelected((current) =>
+          current === null
+            ? null
+            : (fetched.find((service) => service.id === current.id) ?? current),
+        );
+      }
     } catch (err) {
       if (isUnauthorized(err)) {
         handleUnauthorized();
@@ -116,30 +146,43 @@ export default function App() {
     setSession(false);
     setServices(null);
     setSelected(null);
-    setView('services');
+    setView('dashboard');
     setPassword('');
   }, []);
 
+  const handleView = useCallback((next: ViewId) => {
+    if (next !== 'services') {
+      setSelected(null);
+    }
+
+    setView(next);
+  }, []);
+
+  const handleSelectService = useCallback(
+    (id: string | null) => {
+      setSelected(id === null ? null : (services?.find((service) => service.id === id) ?? null));
+      setView('services');
+    },
+    [services],
+  );
+
   if (session === null) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <main className="mx-auto max-w-md px-4 py-16">
-          {sessionError !== null ? (
-            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
-              <p className="text-sm font-medium text-red-800">Couldn&apos;t check the session</p>
-              <p className="mt-1 text-sm text-red-700">{sessionError}</p>
-              <button
-                type="button"
-                onClick={() => void refreshSession()}
-                className="mt-2 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100"
-              >
-                Retry
-              </button>
-            </div>
-          ) : (
-            <p className="text-sm text-gray-500">Checking the admin session…</p>
-          )}
-        </main>
+      <div className="bg-background flex min-h-screen items-center justify-center px-4">
+        {sessionError !== null ? (
+          <div className="w-full max-w-sm">
+            <ErrorState
+              title="Couldn't check the session"
+              message={sessionError}
+              onRetry={() => void refreshSession()}
+            />
+          </div>
+        ) : (
+          <div className="w-full max-w-sm space-y-2" aria-label="Checking the admin session">
+            <Skeleton className="h-8 w-40" />
+            <Skeleton className="h-4 w-full" />
+          </div>
+        )}
       </div>
     );
   }
@@ -157,134 +200,82 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-4">
-          <h1 className="text-xl font-bold text-gray-900">touchgrass</h1>
-          <p className="text-sm text-gray-500">go touch grass — prod is covered.</p>
-          <button
-            type="button"
-            onClick={() => setView('services')}
-            aria-label="Show services"
-            aria-current={view === 'services' ? 'page' : undefined}
-            className="ml-auto rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Services
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSelected(null);
-              setView('audit');
-            }}
-            aria-label="Show audit log"
-            aria-current={view === 'audit' ? 'page' : undefined}
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Audit
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSelected(null);
-              setView('notifications');
-            }}
-            aria-label="Show notifications"
-            aria-current={view === 'notifications' ? 'page' : undefined}
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Notifications
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSelected(null);
-              setView('issues');
-            }}
-            aria-label="Show issues"
-            aria-current={view === 'issues' ? 'page' : undefined}
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Issues
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setSelected(null);
-              setView('logs');
-            }}
-            aria-label="Show logs"
-            aria-current={view === 'logs' ? 'page' : undefined}
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Logs
-          </button>
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={refreshing || view !== 'services'}
-            aria-label="Refresh services"
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {refreshing ? 'Checking…' : 'Refresh'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleLogout()}
-            aria-label="Log out"
-            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Log out
-          </button>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl space-y-4 px-4 py-6">
+    <>
+      <AppShell
+        view={view}
+        onView={handleView}
+        services={services ?? []}
+        selectedId={selected?.id ?? null}
+        onSelectService={handleSelectService}
+        onLogout={() => void handleLogout()}
+        onUnauthorized={handleUnauthorized}
+      >
         {selected !== null ? (
-          <ServiceDetail
+          <ServiceWorkspace
             service={selected}
             onBack={() => setSelected(null)}
             onServiceChanged={() => void load()}
+            onUnauthorized={handleUnauthorized}
+          />
+        ) : view === 'dashboard' ? (
+          <Dashboard
+            services={services}
+            onSelectService={handleSelectService}
+            onView={handleView}
+            onUnauthorized={handleUnauthorized}
           />
         ) : view === 'audit' ? (
-          <AuditLog services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'notifications' ? (
-          <NotificationCenter services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <NotificationsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'issues' ? (
-          <Issues services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <IssuesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'logs' ? (
-          <Logs services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <LogsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+        ) : view === 'images' ? (
+          <ImagesScreen onUnauthorized={handleUnauthorized} />
+        ) : view === 'system' ? (
+          <SystemScreen onUnauthorized={handleUnauthorized} />
+        ) : view === 'rules' ? (
+          <RulesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+        ) : view === 'keys' ? (
+          <KeysScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : (
           <>
-            {error !== null && (
-              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
-                <p className="text-sm font-medium text-red-800">Couldn&apos;t load services</p>
-                <p className="mt-1 text-sm text-red-700">{error}</p>
-                <button
-                  type="button"
-                  onClick={() => void load()}
-                  className="mt-2 rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100"
-                >
-                  Retry
-                </button>
-              </div>
-            )}
+            <div className="flex items-center justify-between">
+              <h1 className="text-lg font-semibold tracking-tight">Services</h1>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void load()}
+                disabled={refreshing}
+              >
+                {refreshing ? 'Checking…' : 'Refresh'}
+              </Button>
+            </div>
 
-            {error === null && services === null && (
-              <p className="text-sm text-gray-500">Vibe-checking your services…</p>
+            {error !== null && (
+              <ErrorState
+                title="Couldn't load services"
+                message={error}
+                onRetry={() => void load()}
+              />
             )}
 
             {error === null && services !== null && services.length === 0 && (
-              <p className="text-sm text-gray-500">No services on the radar. Grass: touched. 🌱</p>
+              <EmptyState
+                title="No services on the radar"
+                body="Grass: touched. Add services to the inventory to watch them here."
+              />
             )}
 
-            {services !== null &&
-              services.map((service) => (
-                <ServiceCard key={service.id} service={service} onSelect={setSelected} />
-              ))}
+            {error === null && (services === null || services.length > 0) && (
+              <ServicesList services={services} onSelect={handleSelectService} />
+            )}
           </>
         )}
-      </main>
-    </div>
+      </AppShell>
+      <Toaster />
+    </>
   );
 }

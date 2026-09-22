@@ -417,6 +417,124 @@ code.
 **Goal**: README <30-min quickstart (timed on a fresh VM), demo
 compose stack, contributing guide, threat-model notes, `release.yml`
 wired, repo public.
+
+### S15 — UI/UX refresh on shadcn (Phase 8, ~5–6pd)
+
+**Status**: DONE (2026-09-22). No Go GUI toolkit applies (the UI
+is a React SPA; Go only serves the bundle) — the pick is
+**shadcn/ui** (Radix primitives + Tailwind v4, copy-paste, no
+vendor lock-in) plus **recharts** for metric/downtime trends.
+Shipped: app shell (service switcher, tab nav + More menu,
+notification bell w/ preview, theme toggle, user menu, hash
+deep-links), Dashboard (fleet, host strip, 24h notifications chart),
+Services table + 7-tab workspace (Overview/Deploys/Metrics/Logs/
+Issues/Alerts/Audit), deploy detail Sheet, Issues (release filter,
+paging, occurrence paging, stack/breadcrumbs, linked logs), Logs
+(toolbar, load-older `before` paging, context Sheet, stats), Rules +
+Keys screens w/ confirms, Images (reclaimable size, prune confirm),
+System (CPU/mem/disk gauges + load sparkline). Backend: Images +
+System services with docker/system/http unit tests; `/api/system`
+also serves host CPU (delta), mem (`/proc/meminfo`), disk
+(`Statfs`), all null-safe. Deltas from the S15.0 spec: Services is a
+filterable table (not card grid) per the tables/pagination ask;
+deploy/cutover/rollback stay inline op cards with confirm gates
+(not Dialog wizards); occurrence/log lists use cards, not tables;
+filters are per-screen (no shared FilterBar); forms use inline
+manual validation (RHF/zod installed, not wired). Validation: vet +
+lint (0 issues) + unit + race + govulncheck (accepted-risk only) +
+web verify/build green; EC2 click-through below.
+
+**Goal**: a polished app shell with real navigation, dialogs, tables,
+and feedback states — same flows, plus three new backend endpoints
+for the screens the API can't serve yet (images, system, keys UI).
+
+- S15.0 Screen & feature inventory (this spec; done when S15 ships)
+  Shell (all screens): top bar with service-switcher dropdown
+  (status dots), tab nav (Dashboard, Services, Issues, Logs,
+  Notifications, Images, System, Audit), notification bell with
+  unread badge + dropdown preview, user menu (logout). Active-route
+  highlight, responsive collapse, usable at 390px.
+  1. Dashboard (new home): fleet status cards per service (health,
+     live color, containers), host snapshot strip (CPU/mem/disk
+     live), recent notifications list, 24h events mini-chart.
+  2. Services + service detail: grid of cards (badges, skeletons);
+     detail tabs — Overview (health, containers, config), Metrics
+     (recharts CPU/mem/disk history per container + downtime trend),
+     Deploys (history table + pagination), Audit (service-scoped).
+  3. Deploy flows: deploy / cutover / rollback as Dialog wizards
+     with the existing confirm gates, SSE streamed progress, result
+     state (downtime secs, probe summary); deploy detail Sheet.
+  4. Issues: filterable table (service select, release filter, text
+     search) + client pagination; detail drawer with occurrences
+     table + pagination, stack-trace view, breadcrumbs timeline,
+     linked-logs section (existing API).
+  5. Logs: toolbar (service select, stream filter, time window,
+     search), capped virtual-feel list, line-context drawer, stats
+     footer (lines/drops/truncations); "load older" paging via
+     `before` cursor (no offset API — time-window paging instead).
+  6. Notifications: bell dropdown + full page parity, kind filter,
+     mark one/all read, unread counts.
+  7. Rules: alert-rules and issue-rules tables + create dialogs
+     (validated forms) + delete confirms.
+  8. API keys (new screen, existing API): table (prefix, service,
+     sample rate, created, revoked) + mint dialog with one-time
+     secret reveal + copy button + revoke confirm.
+  9. Docker images (new screen, NEW API): images table (repo, tag,
+     size, created, dangling badge) + prune-dangling button with
+     confirm + reclaimed-space result + daemon disk summary.
+  10. System (new screen, NEW API): host cards (hostname, OS/arch,
+      uptime, load, docker version), live gauges (host CPU/mem/disk
+      auto-refresh + session sparkline), touchgrass self-stats (DB
+      bytes incl. WAL sidecars, version, process uptime).
+  11. Audit: table with service/actor/action filters + pagination.
+  New backend endpoints (with store/service/http tests per area):
+  `GET /api/docker/images` (list w/ dangling flag),
+  `POST /api/docker/images/prune` (dangling-only, returns reclaimed
+  bytes), `GET /api/system` (host snapshot: stdlib + `docker info`,
+  null-safe per field, no new deps — `/proc` guarded by GOOS).
+  Stretch (needs migration): `POST /api/issues/{id}/resolve`.
+
+- S15.1 Foundation (1pd)
+  Scaffold shadcn (`components.json`, `@/lib/utils` with
+  clsx + tailwind-merge + class-variance-authority, CSS theme tokens
+  in Tailwind v4 `@theme`, lucide-react icons, react-hook-form + zod
+  resolvers for dialogs). Install primitives: Button, Input, Select,
+  DropdownMenu, Card, Badge, Dialog, Sheet, Tabs, Table, Pagination,
+  Skeleton, Separator, Label, Tooltip, Sonner (toasts), Chart
+  (recharts). Shared FilterBar + EmptyState + ErrorState components.
+  Acceptance: `npm run verify` + `build` green; a `/kitchen-sink`
+  dev-only route renders every primitive (removed before merge).
+- S15.2 App shell + navigation (1pd)
+  Replace the button-row nav with a top bar: service switcher
+  dropdown (all services + status dots), tabs for
+  Services/Issues/Logs/Notifications/Audit, notification bell with
+  unread badge + dropdown preview, user menu (logout). Active-route
+  highlighting, consistent page container, responsive collapse.
+  Acceptance: every existing route reachable from the shell;
+  deep-linking unchanged; usable at 390px wide.
+- S15.3 Screens (2–3pd)
+  Build S15.0 screens 1–11 in order: Dashboard, Services + detail
+  tabs, deploy Dialogs, Issues table + drawer, Logs toolbar + drawer,
+  Notifications page, Rules tables + form dialogs, API keys screen,
+  Images screen, System screen, Audit table. Backend first for the
+  two new areas (docker client ImageList/Prune + system snapshot
+  service, each with unit + http tests, then the screens that read
+  them). Confirm gates preserved on every destructive action.
+  Acceptance: every current user flow still completes (login →
+  deploy → cutover → rollback → audit; issue → linked logs;
+  log search → context); new screens read live data on EC2.
+- S15.4 Feedback + polish (0.5–1pd)
+  Toasts on all mutations, skeleton/empty/error-with-retry states
+  per view, form validation messages, focus management in dialogs
+  (Radix default), keyboard-navigable menus, `prefers-reduced-motion`
+  respected. Stretch: dark-mode toggle (shadcn `class` theme).
+  Acceptance: no silent failures; no layout shift on load; axe-ish
+  manual pass (labels, roles, contrast) on the five main views.
+- Standards in play: web `verify` (tsc + eslint) clean; no new
+  backend endpoints without a store test; screenshots or a
+  click-through note in the PR per reskinned view.
+- Validation: full gate suite green; click-through of every flow
+  against the EC2 box via https://infra.ticketnation.ph.
 - **Backlog (Phase 8, needs a new plan to start)**: one-click container
   actions, multi-host agents, RBAC, secrets management, tracing/APM,
   browser/mobile SDKs, PR previews.

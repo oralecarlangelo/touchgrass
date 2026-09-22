@@ -64,6 +64,20 @@ func (s stubStatsLister) Stats(_ context.Context, _ string) (docker.Stats, error
 	return docker.Stats{}, nil
 }
 
+func (s stubStatsLister) Images(_ context.Context) ([]docker.Image, error) {
+	return []docker.Image{
+		{ID: "sha256:harness", RepoTags: []string{"app:test"}, Size: 42, Created: 1700000000},
+	}, nil
+}
+
+func (s stubStatsLister) PruneImages(_ context.Context) (docker.PruneReport, error) {
+	return docker.PruneReport{Deleted: 1, ReclaimedBytes: 42}, nil
+}
+
+func (s stubStatsLister) DaemonInfo(_ context.Context) (docker.DaemonInfo, error) {
+	return docker.DaemonInfo{ServerVersion: "stub-daemon", ImageCount: 1}, nil
+}
+
 func (s stubStatsLister) Logs(
 	_ context.Context,
 	_ string,
@@ -157,6 +171,13 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 			Interval:           time.Hour,
 			MaxLinesPerService: 1000,
 			Logger:             logger,
+		}),
+		System: service.NewSystem(service.SystemConfig{
+			Docker:    stubStatsLister{},
+			Version:   "stub-version",
+			DBPath:    t.TempDir() + "/missing.db",
+			StartedAt: time.Now(),
+			Logger:    logger,
 		}),
 		Dist: testDist(),
 	})

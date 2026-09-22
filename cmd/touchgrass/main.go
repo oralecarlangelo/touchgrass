@@ -121,6 +121,7 @@ type serveServices struct {
 	events    *http.Hub
 	ingestor  *service.Ingestor
 	logs      *service.LogCollector
+	system    *service.System
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -153,6 +154,7 @@ func newServeServer(
 		Events:    services.events,
 		Ingestor:  services.ingestor,
 		Logs:      services.logs,
+		System:    services.system,
 		Dist:      dist,
 		DevProxy:  devProxy,
 	}), nil
@@ -214,6 +216,13 @@ func runServe(args []string) error {
 	audit := service.NewAudit(serviceStore, store.NewAuditStore(db))
 	ingestor := newIngestor(serviceStore, db, cfg.MaxOccurrences, logger)
 	collector := newLogCollector(wiring)
+	sys := service.NewSystem(service.SystemConfig{
+		Docker:    dockerClient,
+		Version:   version,
+		DBPath:    cfg.DB,
+		StartedAt: time.Now(),
+		Logger:    logger,
+	})
 
 	passwordHash, err := http.HashPassword(cfg.AdminPassword)
 	if err != nil {
@@ -250,7 +259,7 @@ func runServe(args []string) error {
 	server, err := newServeServer(cfg, logger, serveServices{
 		inventory: inv, sampler: sampler, deploys: deploys,
 		cutover: cutover, audit: audit, auth: auth, events: hub,
-		ingestor: ingestor, logs: collector,
+		ingestor: ingestor, logs: collector, system: sys,
 	}, version)
 	if err != nil {
 		return err

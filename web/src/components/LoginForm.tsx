@@ -1,5 +1,10 @@
 import type { FormEvent } from 'react';
 
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+
 export default function LoginForm({
   password,
   onPasswordChange,
@@ -19,43 +24,37 @@ export default function LoginForm({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <main className="mx-auto max-w-md px-4 py-16">
-        <h1 className="text-2xl font-bold text-gray-900">touchgrass</h1>
-        <p className="mt-1 text-sm text-gray-500">Admin login. No vibe check without it.</p>
-
-        <form
-          onSubmit={handleSubmit}
-          aria-label="Admin login"
-          className="mt-6 space-y-3 rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
-        >
-          <label className="block text-sm text-gray-700">
-            Admin password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => onPasswordChange(event.target.value)}
-              autoComplete="current-password"
-              aria-label="Admin password"
-              className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900"
-            />
-          </label>
-
-          {error !== null && (
-            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3">
-              <p className="text-sm text-red-700">{error}</p>
+    <div className="bg-background flex min-h-screen items-center justify-center px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>touchgrass</CardTitle>
+          <CardDescription>Admin login. No vibe check without it.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} aria-label="Admin login" className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor="admin-password">Admin password</Label>
+              <Input
+                id="admin-password"
+                type="password"
+                value={password}
+                onChange={(event) => onPasswordChange(event.target.value)}
+                autoComplete="current-password"
+              />
             </div>
-          )}
 
-          <button
-            type="submit"
-            disabled={submitting || password === ''}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            {submitting ? 'Checking…' : 'Log in'}
-          </button>
-        </form>
-      </main>
+            {error !== null && (
+              <p role="alert" className="text-destructive text-sm">
+                {error}
+              </p>
+            )}
+
+            <Button type="submit" disabled={submitting || password === ''} className="w-full">
+              {submitting ? 'Checking…' : 'Log in'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

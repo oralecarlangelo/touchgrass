@@ -592,6 +592,21 @@ server-side. Gated green (go vet/lint/tests/race, web verify/build),
 deployed, live bundle hash-verified; prod window splits 147 info /
 42 warn / 8 debug / 3 error.
 
+### S18 — SDK publish prep + /docs site (2026-09-22)
+
+**Status**: DONE (2026-09-22). `@touchgrass/node` is publish-ready:
+registry metadata (repo, homepage, keywords), `prepublishOnly`
+(verify + build), CJS usage docs, clean `npm pack` (27 files), and a
+tarball smoke test proving ESM `import` + CJS `require` with fail-open
+flush. Actual `npm publish` needs the maintainer's login — run it
+from `sdk/node/`. Docs: VitePress guides (quickstart, concepts, SDK,
+ingest, self-hosting, troubleshooting) + a Redoc API reference from
+a 35-operation `openapi.yaml` that mirrors `server.go`, embedded in
+the binary and served at `GET /docs/` (ahead of the SPA fallback,
+public like the console). Wired through Makefile (`build-docs`),
+goreleaser hooks, and CI (build + `redocly lint`). Gated green,
+deployed, verified live (guides 200, API ref 200, missing 404).
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

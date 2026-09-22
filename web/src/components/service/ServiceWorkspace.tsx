@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import HistoryScreen from '../HistoryScreen.tsx';
 import LogSearch from '../logs/LogSearch.tsx';
+import ActivityTab from './ActivityTab.tsx';
 import AlertsTab from './AlertsTab.tsx';
 import DeploysTab from './DeploysTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
@@ -12,7 +13,7 @@ import MetricsTab from './MetricsTab.tsx';
 import OverviewTab from './OverviewTab.tsx';
 import type { ServiceView } from '@/lib/api.ts';
 
-type Tab = 'overview' | 'deploys' | 'metrics' | 'logs' | 'issues' | 'alerts' | 'audit';
+type Tab = 'overview' | 'deploys' | 'metrics' | 'logs' | 'activity' | 'issues' | 'alerts' | 'audit';
 
 export default function ServiceWorkspace({
   service,
@@ -57,6 +58,7 @@ export default function ServiceWorkspace({
           <TabsTrigger value="deploys">Deploys</TabsTrigger>
           <TabsTrigger value="metrics">Metrics</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
           <TabsTrigger value="issues">Issues</TabsTrigger>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
@@ -83,6 +85,11 @@ export default function ServiceWorkspace({
         </TabsContent>
         <TabsContent value="logs">
           {tab === 'logs' && <LogSearch serviceId={service.id} onUnauthorized={onUnauthorized} />}
+        </TabsContent>
+        <TabsContent value="activity">
+          {tab === 'activity' && (
+            <ActivityTab serviceId={service.id} onUnauthorized={onUnauthorized} />
+          )}
         </TabsContent>
         <TabsContent value="issues">
           {tab === 'issues' && (

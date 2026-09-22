@@ -499,6 +499,26 @@ paths:
                   issues:
                     type: array
                     items: { $ref: '#/components/schemas/Issue' }
+  /issues/occurrences:
+    get:
+      operationId: listRecentOccurrences
+      tags: [issues]
+      summary: A service's occurrences newest first, across issues
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Occurrences
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [occurrences]
+                properties:
+                  occurrences:
+                    type: array
+                    items: { $ref: '#/components/schemas/Occurrence' }
   /issues/{id}:
     get:
       operationId: getIssue

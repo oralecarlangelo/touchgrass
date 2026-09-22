@@ -370,6 +370,18 @@ export async function fetchIssues(serviceId: string): Promise<Issue[]> {
   return body.issues ?? [];
 }
 
+export async function fetchOccurrences(serviceId: string, limit = 100): Promise<Occurrence[]> {
+  const body = await request<OccurrencesResponse>(
+    `/api/issues/occurrences?service_id=${encodeURIComponent(serviceId)}&limit=${limit}`,
+  );
+
+  return body.occurrences ?? [];
+}
+
+interface OccurrencesResponse {
+  occurrences: Occurrence[];
+}
+
 export async function fetchIssue(id: number, limit = 200): Promise<IssueDetailResponse> {
   const body = await request<IssueDetailResponse>(`/api/issues/${id}?limit=${limit}`);
 

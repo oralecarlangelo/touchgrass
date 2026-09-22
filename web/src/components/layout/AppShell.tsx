@@ -5,13 +5,16 @@ import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { ServiceView } from '@/lib/api.ts';
-import { moreTabs, primaryTabs, type ViewId } from '@/lib/views.ts';
+import { navGroups, type ViewId } from '@/lib/views.ts';
 import NotificationBell from './NotificationBell.tsx';
 import ServiceSwitcher from './ServiceSwitcher.tsx';
 import ThemeToggle from './ThemeToggle.tsx';
@@ -36,7 +39,8 @@ export default function AppShell({
   onUnauthorized: () => void;
   children: ReactNode;
 }) {
-  const inMore = moreTabs.some((tab) => tab.id === view);
+  const activeGroup = (groupId: string): boolean =>
+    navGroups.some((group) => group.id === groupId && group.items.some((tab) => tab.id === view));
 
   return (
     <TooltipProvider>
@@ -51,32 +55,31 @@ export default function AppShell({
             </div>
 
             <nav aria-label="Primary" className="ml-2 hidden items-center gap-1 lg:flex">
-              {primaryTabs.map((tab) => (
-                <Button
-                  key={tab.id}
-                  variant={view === tab.id ? 'secondary' : 'ghost'}
-                  size="sm"
-                  aria-current={view === tab.id ? 'page' : undefined}
-                  onClick={() => onView(tab.id)}
-                >
-                  {tab.label}
-                </Button>
+              {navGroups.map((group) => (
+                <DropdownMenu key={group.id}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant={activeGroup(group.id) ? 'secondary' : 'ghost'}
+                      size="sm"
+                      aria-current={activeGroup(group.id) ? 'page' : undefined}
+                    >
+                      {group.label}
+                      <ChevronDown className="h-3.5 w-3.5 opacity-50" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {group.items.map((tab) => (
+                      <DropdownMenuItem
+                        key={tab.id}
+                        aria-current={view === tab.id ? 'page' : undefined}
+                        onSelect={() => onView(tab.id)}
+                      >
+                        {tab.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               ))}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant={inMore ? 'secondary' : 'ghost'} size="sm">
-                    More
-                    <ChevronDown className="h-3.5 w-3.5 opacity-50" aria-hidden />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {moreTabs.map((tab) => (
-                    <DropdownMenuItem key={tab.id} onSelect={() => onView(tab.id)}>
-                      {tab.label}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
             </nav>
 
             <div className="ml-auto flex items-center gap-1">
@@ -90,10 +93,16 @@ export default function AppShell({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  {[...primaryTabs, ...moreTabs].map((tab) => (
-                    <DropdownMenuItem key={tab.id} onSelect={() => onView(tab.id)}>
-                      {tab.label}
-                    </DropdownMenuItem>
+                  {navGroups.map((group, index) => (
+                    <DropdownMenuGroup key={group.id}>
+                      {index > 0 && <DropdownMenuSeparator />}
+                      <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
+                      {group.items.map((tab) => (
+                        <DropdownMenuItem key={tab.id} onSelect={() => onView(tab.id)}>
+                          {tab.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuGroup>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>

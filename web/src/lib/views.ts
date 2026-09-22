@@ -16,21 +16,52 @@ export interface NavTab {
   label: string;
 }
 
-export const primaryTabs: NavTab[] = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'services', label: 'Services' },
-  { id: 'issues', label: 'Issues' },
-  { id: 'logs', label: 'Logs' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'images', label: 'Images' },
-  { id: 'system', label: 'System' },
-  { id: 'databases', label: 'Databases' },
-  { id: 'audit', label: 'Audit' },
-];
+export interface NavGroup {
+  id: string;
+  label: string;
+  items: NavTab[];
+}
 
-export const moreTabs: NavTab[] = [
-  { id: 'rules', label: 'Rules' },
-  { id: 'keys', label: 'API keys' },
+// Groups follow the operator workflow: observe the fleet, respond to
+// signals, operate infrastructure, administer configuration. New views
+// slot into the group matching their job — never a fifth top-level
+// bucket without retiring one.
+export const navGroups: NavGroup[] = [
+  {
+    id: 'overview',
+    label: 'Overview',
+    items: [
+      { id: 'dashboard', label: 'Dashboard' },
+      { id: 'services', label: 'Services' },
+    ],
+  },
+  {
+    id: 'signals',
+    label: 'Signals',
+    items: [
+      { id: 'issues', label: 'Issues' },
+      { id: 'logs', label: 'Logs' },
+      { id: 'notifications', label: 'Notifications' },
+    ],
+  },
+  {
+    id: 'operations',
+    label: 'Operations',
+    items: [
+      { id: 'databases', label: 'Databases' },
+      { id: 'images', label: 'Images' },
+    ],
+  },
+  {
+    id: 'administration',
+    label: 'Administration',
+    items: [
+      { id: 'rules', label: 'Rules' },
+      { id: 'keys', label: 'API keys' },
+      { id: 'audit', label: 'Audit' },
+      { id: 'system', label: 'System' },
+    ],
+  },
 ];
 
 export function healthDotClass(health: string): string {

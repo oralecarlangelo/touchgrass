@@ -442,7 +442,13 @@ deploy/cutover/rollback stay inline op cards with confirm gates
 filters are per-screen (no shared FilterBar); forms use inline
 manual validation (RHF/zod installed, not wired). Validation: vet +
 lint (0 issues) + unit + race + govulncheck (accepted-risk only) +
-web verify/build green; EC2 click-through below.
+web verify/build green; EC2 click-through 2026-09-22 on
+binary 53fc7b9: login 204, all 15 screen APIs 200
+(services/system/images/notifications/audit + per-service
+metrics/deploys/rules/issues/logs/stats/keys), live values
+(CPU/mem/disk, 100 images/2 dangling), served bundle hash matches
+local build, journal warning-free. Probe kept at `/tmp` (not in
+repo).
 
 **Goal**: a polished app shell with real navigation, dialogs, tables,
 and feedback states — same flows, plus three new backend endpoints

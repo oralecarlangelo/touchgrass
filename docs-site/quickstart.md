@@ -65,5 +65,7 @@ trace, breadcrumbs, and release tag — plus ±60s of surrounding
 container logs. Create a `new_issue` rule to get notified on the next
 one.
 
-Next: [Node SDK reference](/sdk) for every option, or [Concepts](/concepts)
-for how grouping, sampling, and retention work.
+Next: [Node SDK reference](/sdk) for every option, [Structured
+logging](/sdk-logging) to ship application logs with trace correlation,
+or [Concepts](/concepts) for how grouping, sampling, and retention
+work.

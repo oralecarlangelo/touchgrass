@@ -39,6 +39,36 @@ configurable.
 Unknown, mistyped, or revoked key. The server logs the key prefix
 only, so compare prefixes in the Keys screen.
 
+## No SDK logs appearing
+
+1. Check the tab: application logs live under the **Application**
+   source in the Logs view (`source=sdk`), not Containers.
+2. Check the client: like error capture, `logger` needs an
+   initialized client — a bad endpoint or key yields a disabled
+   client that never throws. Await `flush()` and check the boolean.
+3. Flush before exit: logs ride the 1s batch loop, so short-lived
+   scripts must `await flush()` (or `close()`) or the batch dies
+   with the process.
+4. Check the level filter and the search text — then the key, same
+   silent-`401` story as error ingest.
+
+## 400 from ingest/logs
+
+One invalid item rejects the whole batch; the response's `index`
+points at it. Usual suspects: a level outside
+trace/debug/info/warn/error/fatal, an empty or >8KB body, a
+`trace_id` that isn't 32 lowercase hex, an attribute `type` outside
+string/integer/double/boolean, or more than 1000 items.
+
+## Empty trace_id on OTel records
+
+Span context flows from each record's context, not the exporter —
+with no async tracking there is no active span to attach. Full
+setups (the OTel NodeSDK) get it automatically; minimal scripts
+must pass it explicitly:
+`emit({ body, context: trace.setSpan(context.active(), span) })`.
+See [SDK logging](/sdk-logging).
+
 ## PII in occurrences
 
 Add the pattern to the SDK `scrub` list, redeploy the app, and

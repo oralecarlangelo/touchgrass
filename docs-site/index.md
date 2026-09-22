@@ -22,4 +22,6 @@ features:
     details: Fingerprinted by type, message shape, and top frames. Releases tracked, spikes alerted.
   - title: Errors meet logs
     details: Every issue opens with ±60s of surrounding container logs. No more correlating by timestamp.
+  - title: Structured app logs
+    details: logger.info with levels, attributes, and trace IDs — or point your OpenTelemetry LoggerProvider at us. Queryable beside container logs.
 ---

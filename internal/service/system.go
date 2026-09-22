@@ -388,7 +388,7 @@ func hostDisk() (*int64, *int64) {
 		return nil, nil
 	}
 
-	if stat.Bsize == 0 {
+	if stat.Bsize <= 0 {
 		return nil, nil
 	}
 

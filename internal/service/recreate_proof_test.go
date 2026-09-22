@@ -100,7 +100,7 @@ func proofCheckDeployed(t *testing.T, db *store.DB, serviceID string) {
 func proofCheckRolledBack(t *testing.T, db *store.DB, serviceID string) {
 	t.Helper()
 
-	rolledBack := proofLatestDeploy(t, db, serviceID)
+	rolledBack := waitForHistoryLen(t, db, serviceID, 2)[0]
 	if rolledBack.Type != model.DeployRollback || rolledBack.Outcome != model.DeploySuccess {
 		t.Fatalf("deploy = %+v, want rollback success", rolledBack)
 	}
@@ -110,33 +110,101 @@ func proofCheckRolledBack(t *testing.T, db *store.DB, serviceID string) {
 func proofCheckHistoryLen(t *testing.T, db *store.DB, serviceID string, want int) {
 	t.Helper()
 
-	history, err := store.NewDeployStore(db).ListByService(context.Background(), serviceID, 10)
-	if err != nil {
-		t.Fatalf("ListByService() error = %v, want nil", err)
-	}
-
-	if len(history) != want {
-		t.Fatalf("history = %d entries, want %d (deploy + rollback)", len(history), want)
-	}
+	waitForHistoryLen(t, db, serviceID, want)
 }
 
 // proofCheckNotifications validates the deploy notification count.
 func proofCheckNotifications(t *testing.T, db *store.DB, want int) {
 	t.Helper()
 
+	deadline := time.Now().Add(5 * time.Second)
+
+	for time.Now().Before(deadline) {
+		notifications, err := store.NewNotificationStore(db).List(context.Background(), "", 10)
+		if err != nil {
+			t.Fatalf("List() error = %v, want nil", err)
+		}
+
+		if len(notifications) == want {
+			return
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
 	notifications, err := store.NewNotificationStore(db).List(context.Background(), "", 10)
 	if err != nil {
 		t.Fatalf("List() error = %v, want nil", err)
 	}
 
-	if len(notifications) != want {
-		t.Errorf("notifications = %d, want %d (deploy + rollback)", len(notifications), want)
-	}
+	t.Errorf("notifications = %d, want %d (deploy + rollback)", len(notifications), want)
 }
 
 // proofCheckAudit validates the deploy + rollback audit entries.
 func proofCheckAudit(t *testing.T, db *store.DB, serviceID string) {
 	t.Helper()
+
+	entries := waitForAuditActions(t, db, serviceID)
+
+	for _, entry := range entries {
+		if entry.Result != model.AuditSuccess {
+			t.Errorf("audit %s result = %q, want success", entry.Action, entry.Result)
+		}
+	}
+}
+
+// waitForHistoryLen polls the deploy history until it holds want entries.
+// Event counts alone cannot gate these reads: the test's waitForEvents
+// unblocks on progress events while the history write still races ahead,
+// which flaked under parallel CI load.
+func waitForHistoryLen(t *testing.T, db *store.DB, serviceID string, want int) []model.Deploy {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for time.Now().Before(deadline) {
+		history, err := store.NewDeployStore(db).ListByService(context.Background(), serviceID, 10)
+		if err != nil {
+			t.Fatalf("ListByService() error = %v, want nil", err)
+		}
+
+		if len(history) == want {
+			return history
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	history, err := store.NewDeployStore(db).ListByService(context.Background(), serviceID, 10)
+	if err != nil {
+		t.Fatalf("ListByService() error = %v, want nil", err)
+	}
+
+	t.Fatalf("history = %d entries, want %d (deploy + rollback)", len(history), want)
+
+	return nil
+}
+
+// waitForAuditActions polls the audit log until the deploy + rollback
+// entries land: the audit write follows the finished event, so a
+// single-shot read races it the same way history did.
+func waitForAuditActions(t *testing.T, db *store.DB, serviceID string) []model.Audit {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for time.Now().Before(deadline) {
+		entries, err := store.NewAuditStore(db).List(context.Background(), serviceID, 10)
+		if err != nil {
+			t.Fatalf("List() error = %v, want nil", err)
+		}
+
+		if auditHasDeployAndRollback(entries) {
+			return entries
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	entries, err := store.NewAuditStore(db).List(context.Background(), serviceID, 10)
 	if err != nil {
@@ -146,15 +214,21 @@ func proofCheckAudit(t *testing.T, db *store.DB, serviceID string) {
 	actions := map[string]bool{}
 	for _, entry := range entries {
 		actions[entry.Action] = true
-
-		if entry.Result != model.AuditSuccess {
-			t.Errorf("audit %s result = %q, want success", entry.Action, entry.Result)
-		}
 	}
 
-	if !actions[model.AuditDeploy] || !actions[model.AuditRollback] {
-		t.Errorf("audit actions = %v, want deploy + rollback", actions)
+	t.Fatalf("audit actions = %v, want deploy + rollback", actions)
+
+	return nil
+}
+
+// auditHasDeployAndRollback reports whether both operation entries exist.
+func auditHasDeployAndRollback(entries []model.Audit) bool {
+	actions := map[string]bool{}
+	for _, entry := range entries {
+		actions[entry.Action] = true
 	}
+
+	return actions[model.AuditDeploy] && actions[model.AuditRollback]
 }
 
 // configureRecreateScripts edits a seeded recreate row's data config,
@@ -189,20 +263,12 @@ func configureRecreateScripts(t *testing.T, db *store.DB, serviceID, script stri
 	}
 }
 
-// proofLatestDeploy returns the newest history entry for a service.
+// proofLatestDeploy returns the newest history entry for a service,
+// waiting for the deploy's history write to land first.
 func proofLatestDeploy(t *testing.T, db *store.DB, serviceID string) model.Deploy {
 	t.Helper()
 
-	deploys, err := store.NewDeployStore(db).ListByService(context.Background(), serviceID, 1)
-	if err != nil {
-		t.Fatalf("ListByService() error = %v, want nil", err)
-	}
-
-	if len(deploys) != 1 {
-		t.Fatalf("history = %d entries, want at least 1", len(deploys))
-	}
-
-	return deploys[0]
+	return waitForHistoryLen(t, db, serviceID, 1)[0]
 }
 
 // startRollbackSoon retries StartRollback past the deploy's run release,

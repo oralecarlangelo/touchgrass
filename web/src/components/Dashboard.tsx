@@ -162,8 +162,8 @@ export default function Dashboard({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-sm font-medium">Host resources (live)</CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => onView('system')}>
-            System
+          <Button variant="ghost" size="sm" onClick={() => onView('fleet')}>
+            Fleet
           </Button>
         </CardHeader>
         <CardContent>

@@ -820,6 +820,52 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SystemSnapshot' }
+  /system/containers:
+    get:
+      operationId: listFleetContainers
+      tags: [system]
+      summary: Latest sample per container, hottest CPU first
+      responses:
+        '200':
+          description: Fleet containers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [containers]
+                properties:
+                  containers:
+                    type: array
+                    items: { $ref: '#/components/schemas/FleetContainer' }
+  /system/history:
+    get:
+      operationId: getSystemHistory
+      tags: [system]
+      summary: Bucket-averaged host history (at most 1500 points)
+      description: |
+        Metric mem reports used bytes. Buckets size to the window so the
+        series never exceeds 1500 points. Hours above 168 clamp to 168.
+      parameters:
+        - name: metric
+          in: query
+          required: true
+          schema: { type: string, enum: [cpu, mem, load] }
+        - name: hours
+          in: query
+          schema: { type: integer, default: 24, minimum: 1, maximum: 168 }
+      responses:
+        '200':
+          description: History points, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [points]
+                properties:
+                  points:
+                    type: array
+                    items: { $ref: '#/components/schemas/HistoryPoint' }
+        '400': { $ref: '#/components/responses/BadRequest' }
   /databases:
     get:
       operationId: listDatabases
@@ -1330,6 +1376,26 @@ components:
       properties:
         name: { type: string }
         ok: { type: boolean }
+    FleetContainer:
+      type: object
+      required: [name, project, managed, state, cpu_percent, mem_bytes, mem_limit, restarts, sampled_at]
+      properties:
+        name: { type: string }
+        project: { type: string }
+        managed: { type: boolean }
+        service_id: { type: string }
+        state: { type: string }
+        cpu_percent: { type: number }
+        mem_bytes: { type: integer }
+        mem_limit: { type: integer }
+        restarts: { type: integer }
+        sampled_at: { type: string, format: date-time }
+    HistoryPoint:
+      type: object
+      required: [ts, value]
+      properties:
+        ts: { type: string, format: date-time }
+        value: { type: number }
     SystemSnapshot:
       type: object
       required: [hostname, os, arch, self]

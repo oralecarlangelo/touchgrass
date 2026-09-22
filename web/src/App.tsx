@@ -14,7 +14,7 @@ import NotificationsScreen from './components/NotificationsScreen.tsx';
 import RulesScreen from './components/RulesScreen.tsx';
 import ServicesList from './components/ServicesList.tsx';
 import ServiceWorkspace from './components/service/ServiceWorkspace.tsx';
-import SystemScreen from './components/SystemScreen.tsx';
+import FleetScreen from './components/FleetScreen.tsx';
 import AppShell from './components/layout/AppShell.tsx';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -235,8 +235,8 @@ export default function App() {
           <LogsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'images' ? (
           <ImagesScreen onUnauthorized={handleUnauthorized} />
-        ) : view === 'system' ? (
-          <SystemScreen onUnauthorized={handleUnauthorized} />
+        ) : view === 'fleet' ? (
+          <FleetScreen onUnauthorized={handleUnauthorized} onSelectService={handleSelectService} />
         ) : view === 'databases' ? (
           <DatabasesScreen onUnauthorized={handleUnauthorized} />
         ) : view === 'rules' ? (

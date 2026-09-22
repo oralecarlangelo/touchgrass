@@ -330,6 +330,7 @@ func newSampler(wiring serveWiring) *service.Sampler {
 		IssueRules:    store.NewIssueRuleStore(wiring.db),
 		Logs:          store.NewLogStore(wiring.db),
 		SDKLogs:       store.NewSDKLogStore(wiring.db),
+		Fleet:         store.NewFleetStore(wiring.db),
 		Interval:      wiring.cfg.MetricsInterval,
 		Retention: service.Retention{
 			Metrics:       wiring.cfg.RetentionMetrics,

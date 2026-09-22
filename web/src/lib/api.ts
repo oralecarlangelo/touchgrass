@@ -757,6 +757,50 @@ export async function fetchSystem(): Promise<SystemSnapshot> {
   return request<SystemSnapshot>('/api/system');
 }
 
+export interface FleetContainer {
+  name: string;
+  project: string;
+  managed: boolean;
+  service_id?: string | null;
+  state: string;
+  cpu_percent: number;
+  mem_bytes: number;
+  mem_limit: number;
+  restarts: number;
+  sampled_at: string;
+}
+
+interface FleetContainersResponse {
+  containers: FleetContainer[];
+}
+
+export async function fetchFleetContainers(): Promise<FleetContainer[]> {
+  const body = await request<FleetContainersResponse>('/api/system/containers');
+
+  return body.containers ?? [];
+}
+
+export type SystemHistoryMetric = 'cpu' | 'mem' | 'load';
+
+export interface HistoryPoint {
+  ts: string;
+  value: number;
+}
+
+interface SystemHistoryResponse {
+  points: HistoryPoint[];
+}
+
+export async function fetchSystemHistory(
+  metric: SystemHistoryMetric,
+  hours: number,
+): Promise<HistoryPoint[]> {
+  const params = new URLSearchParams({ metric, hours: String(hours) });
+  const body = await request<SystemHistoryResponse>(`/api/system/history?${params.toString()}`);
+
+  return body.points ?? [];
+}
+
 export interface DatabaseView {
   id: string;
   label: string;

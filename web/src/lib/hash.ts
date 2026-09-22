@@ -7,7 +7,7 @@ const views: ViewId[] = [
   'logs',
   'notifications',
   'images',
-  'system',
+  'fleet',
   'audit',
   'rules',
   'keys',

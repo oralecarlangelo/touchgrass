@@ -755,6 +755,49 @@ reconcile for orphaned job rows (store/service/main + tests). NO
 live restore test (prod data; restore proven by tests + review —
 first real restore is a planned drill, see database-ops.md).
 
+### S23 — Fleet monitoring: all containers + host history (2026-09-22)
+
+**Status**: IN PROGRESS. Goal: every container on the daemon observed
+(metrics-only, no service rows) and server-side host history, surfaced
+on a reworked fleet page. FROZEN CONTRACT:
+
+Store — migration `0012_fleet.sql`: `host_samples(sampled_at,
+cpu_percent, mem_used, mem_total, disk_used, disk_total, load1)` +
+`container_samples(sampled_at, container_name, project, managed,
+service_id, state, cpu_percent, mem_bytes, mem_limit, restarts)`,
+indexes on `(sampled_at)` and `(container_name, sampled_at)`.
+Retention reuses `TOUCHGRASS_RETENTION_METRICS` via the existing trim
+framework (new trim targets, no new env).
+
+Sampler (`resources.go` collect): after the managed loop, sample
+EVERY container into `container_samples` each interval with the
+managed flag (and `service_id` when managed) — the 3 managed rows
+duplicate the metrics table deliberately so the fleet table is one
+query; plus one `host_samples` row reusing the existing
+`service/system.go` snapshot helpers (no duplicated /proc parsing).
+
+API (admin-session): `GET /api/system/containers` →
+`{"containers":[{name,project,managed,service_id?,state,
+cpu_percent,mem_bytes,mem_limit,restarts,sampled_at}]}` latest row
+per container, ordered by cpu desc;
+`GET /api/system/history?metric=cpu|mem|load&hours=N` (default 24,
+max 168) → `{"points":[{ts,value}]}` bucket-averaged in SQL to
+≤1500 points (mem = used bytes). OpenAPI updated, redocly clean.
+
+UI: rename the `system` view to `fleet` (view id, `#/fleet` hash,
+`FleetScreen.tsx`, label "Fleet", moved to the Overview group after
+Services; backend routes stay `/api/system*`). Page: host stat
+cards (existing snapshot), CPU/memory/load charts from history with
+1h/6h/24h/7d range selector (recharts, existing patterns), fleet
+table (name, project, managed/unmanaged badge with service link
+when managed, state, cpu, mem, restarts, sampled age) in server
+order. SCOPE GUARD: no alert rules on unmanaged containers, no
+per-container history drill-down, no client column sorting in S23.
+
+Validation: per-area gates, full gate, deploy, live-verify
+(~20-container fleet incl. unmanaged projects, history points for
+all three metrics, UI renders with charts + table).
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

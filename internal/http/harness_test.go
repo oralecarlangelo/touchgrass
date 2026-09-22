@@ -122,6 +122,7 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 		IssueRules:    store.NewIssueRuleStore(db),
 		Logs:          store.NewLogStore(db),
 		SDKLogs:       store.NewSDKLogStore(db),
+		Fleet:         store.NewFleetStore(db),
 		Interval:      time.Hour,
 		Retention: service.Retention{
 			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,

@@ -120,6 +120,8 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/docker/images", server.handleDockerImages)
 	mux.HandleFunc("POST /api/docker/images/prune", server.handlePruneImages)
 	mux.HandleFunc("GET /api/system", server.handleSystem)
+	mux.HandleFunc("GET /api/system/containers", server.handleFleetContainers)
+	mux.HandleFunc("GET /api/system/history", server.handleSystemHistory)
 	mux.HandleFunc("GET /api/databases", server.handleDatabases)
 	mux.HandleFunc("GET /api/databases/backups", server.handleBackups)
 	mux.HandleFunc("POST /api/databases/backups", server.handleStartBackup)

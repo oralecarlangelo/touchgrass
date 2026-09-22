@@ -5,7 +5,7 @@ export type ViewId =
   | 'logs'
   | 'notifications'
   | 'images'
-  | 'system'
+  | 'fleet'
   | 'audit'
   | 'rules'
   | 'keys'
@@ -33,6 +33,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { id: 'dashboard', label: 'Dashboard' },
       { id: 'services', label: 'Services' },
+      { id: 'fleet', label: 'Fleet' },
     ],
   },
   {
@@ -59,7 +60,6 @@ export const navGroups: NavGroup[] = [
       { id: 'rules', label: 'Rules' },
       { id: 'keys', label: 'API keys' },
       { id: 'audit', label: 'Audit' },
-      { id: 'system', label: 'System' },
     ],
   },
 ];

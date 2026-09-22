@@ -47,6 +47,7 @@ type SamplerConfig struct {
 	IssueRules    *store.IssueRuleStore
 	Logs          *store.LogStore
 	SDKLogs       *store.SDKLogStore
+	Fleet         *store.FleetStore
 	Interval      time.Duration
 	Retention     Retention
 	Logger        *slog.Logger
@@ -65,12 +66,15 @@ type Sampler struct {
 	issueRules    *store.IssueRuleStore
 	logs          *store.LogStore
 	sdkLogs       *store.SDKLogStore
+	fleet         *store.FleetStore
 	interval      time.Duration
 	retention     Retention
 	logger        *slog.Logger
 	mutex         sync.Mutex
 	breaches      map[int64]breachState
 	spikes        map[int64]map[int64]bool
+	cpuMu         sync.Mutex
+	cpuLast       *cpuSample
 }
 
 // breachState tracks one rule's ongoing breach episode.
@@ -93,6 +97,7 @@ func NewSampler(cfg SamplerConfig) *Sampler {
 		issueRules:    cfg.IssueRules,
 		logs:          cfg.Logs,
 		sdkLogs:       cfg.SDKLogs,
+		fleet:         cfg.Fleet,
 		interval:      cfg.Interval,
 		retention:     cfg.Retention,
 		logger:        cfg.Logger,
@@ -136,7 +141,8 @@ func (s *Sampler) sample(ctx context.Context) {
 	s.trim(ctx)
 }
 
-// collect records one sample per managed container.
+// collect records one sample per managed container, then the fleet and
+// host samples.
 func (s *Sampler) collect(ctx context.Context) error {
 	defs, err := s.services.All(ctx)
 	if err != nil {
@@ -179,7 +185,7 @@ func (s *Sampler) collect(ctx context.Context) error {
 
 	group.Wait()
 
-	return nil
+	return s.sampleFleet(ctx, defs, containers, time.Now())
 }
 
 // sampleOne stats one container and records the sample. Failures log and
@@ -333,6 +339,8 @@ func (s *Sampler) trim(ctx context.Context) {
 		{name: "issues", trim: s.issues.TrimBefore},
 		{name: "logs", trim: s.logs.TrimBefore},
 		{name: "sdk_logs", trim: s.sdkLogs.TrimBefore},
+		{name: "host samples", trim: s.fleet.TrimHostsBefore},
+		{name: "container samples", trim: s.fleet.TrimContainersBefore},
 	}
 
 	for _, target := range targets {
@@ -359,7 +367,7 @@ func (s *Sampler) trimOne(ctx context.Context, target trimTarget, now time.Time)
 // retentionFor resolves the max age for a trim target name.
 func (s *Sampler) retentionFor(name string) time.Duration {
 	switch name {
-	case "metrics":
+	case "metrics", "host samples", "container samples":
 		return s.retention.Metrics
 	case "notifications":
 		return s.retention.Notifications

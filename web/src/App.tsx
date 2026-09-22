@@ -191,6 +191,14 @@ export default function App() {
     [services],
   );
 
+  const handleDeletedService = useCallback(
+    (id: string) => {
+      setSelected((current) => (current?.id === id ? null : current));
+      void load();
+    },
+    [load],
+  );
+
   if (session === null) {
     return (
       <div className="bg-background flex min-h-screen items-center justify-center px-4">
@@ -297,7 +305,11 @@ export default function App() {
             )}
 
             {error === null && (services === null || services.length > 0) && (
-              <ServicesList services={services} onSelect={handleSelectService} />
+              <ServicesList
+                services={services}
+                onSelect={handleSelectService}
+                onDeleted={handleDeletedService}
+              />
             )}
           </>
         )}

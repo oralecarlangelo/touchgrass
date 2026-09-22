@@ -467,6 +467,35 @@ func (o *Onboarding) Create(
 	return CreateOutput{ID: input.ID, Strategy: input.Strategy}, nil
 }
 
+// Delete removes a service from management. The definition and its
+// touchgrass-side rows go away; running containers are untouched. The
+// deletion itself is audited as a global entry since the service row no
+// longer exists to attach it to.
+func (o *Onboarding) Delete(ctx context.Context, id, actor string) error {
+	if actor == "" {
+		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	if !serviceIDPattern.MatchString(id) {
+		return fmt.Errorf("%w: id %q (want ^[a-z0-9-]+$)", ErrInvalidInput, id)
+	}
+
+	if err := o.services.Delete(ctx, id); err != nil {
+		return fmt.Errorf("deleting service: %w", err)
+	}
+
+	if _, err := o.audit.Record(ctx, model.AuditRecord{
+		Actor:  actor,
+		Action: model.AuditServiceDelete,
+		Result: model.AuditSuccess,
+		Detail: "deleted service " + id,
+	}); err != nil {
+		return fmt.Errorf("auditing service deletion: %w", err)
+	}
+
+	return nil
+}
+
 // checkCreateInput validates the creation envelope: actor, id shape and
 // uniqueness, strategy, and compose locations.
 func (o *Onboarding) checkCreateInput(ctx context.Context, input CreateInput, actor string) error {

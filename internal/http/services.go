@@ -60,3 +60,15 @@ func (s *Server) handleCreateService(w nethttp.ResponseWriter, r *nethttp.Reques
 
 	writeJSON(w, s.logger, nethttp.StatusCreated, created)
 }
+
+// handleDeleteService removes a service from management. Running
+// containers are untouched; only the touchgrass definition and history go.
+func (s *Server) handleDeleteService(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if err := s.onboarding.Delete(r.Context(), r.PathValue("id"), actorAdmin); err != nil {
+		writeServiceError(w, s.logger, err, "failed to delete service")
+
+		return
+	}
+
+	w.WriteHeader(nethttp.StatusNoContent)
+}

@@ -140,3 +140,17 @@ Findings:
   pass blue/green explicitly for migrations.
 - Per-service lock dirs (`/var/tmp/bluegreen-cutover-<svc>.lock`)
   — the default lock would serialize cutovers across services.
+
+## 7. Removing a service (S25, 2026-09-22)
+
+`DELETE /api/services/{id}` (Services page → Delete, confirm-gated)
+removes the service from management. The definition plus all of its
+touchgrass-side rows (alert rules, API keys, deploys, metrics,
+notifications, logs, issues, audit history) go away in one
+transaction — enforced FKs require the child cleanup — and the
+removal itself is audited as global `service_delete`
+(`migrations/0014_service_delete.sql` extends the audit CHECK).
+
+Running containers are never touched: the workload keeps serving
+and the container reappears as unmanaged on the Fleet page, where
+Manage can bring it back under management at any time.

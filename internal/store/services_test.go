@@ -135,3 +135,55 @@ func TestServiceUpdateConfig(t *testing.T) {
 		t.Errorf("UpdateConfig() error = %v, want ErrServiceNotFound", err)
 	}
 }
+
+func TestServiceDelete(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	services := NewServiceStore(db)
+
+	if _, err := db.sql.ExecContext(ctx,
+		"INSERT INTO audit (service_id, actor, action, result) VALUES (?, ?, 'login', 'success')",
+		testServiceAPI, "test",
+	); err != nil {
+		t.Fatalf("seeding audit child: %v", err)
+	}
+
+	if err := services.Delete(ctx, testServiceAPI); err != nil {
+		t.Fatalf("Delete() error = %v, want nil", err)
+	}
+
+	if _, err := services.Get(ctx, testServiceAPI); !errors.Is(err, ErrServiceNotFound) {
+		t.Errorf("Get() after delete error = %v, want ErrServiceNotFound", err)
+	}
+
+	var children int
+
+	if err := db.sql.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM audit WHERE service_id = ?", testServiceAPI,
+	).Scan(&children); err != nil {
+		t.Fatalf("counting audit children: %v", err)
+	}
+
+	if children != 0 {
+		t.Errorf("audit children after delete = %d, want 0", children)
+	}
+
+	rest, err := services.All(ctx)
+	if err != nil {
+		t.Fatalf("All() error = %v, want nil", err)
+	}
+
+	if len(rest) != 2 {
+		t.Errorf("All() = %d services, want 2 after delete", len(rest))
+	}
+
+	if err := services.Delete(ctx, testServiceAPI); !errors.Is(err, ErrServiceNotFound) {
+		t.Errorf("Delete() again error = %v, want ErrServiceNotFound", err)
+	}
+
+	if err := services.Delete(ctx, "nope"); !errors.Is(err, ErrServiceNotFound) {
+		t.Errorf("Delete(unknown) error = %v, want ErrServiceNotFound", err)
+	}
+}

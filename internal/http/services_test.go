@@ -353,3 +353,52 @@ func TestHandleServicesDockerError(t *testing.T) {
 		t.Errorf("envelope = %+v, want precise error with code", got)
 	}
 }
+
+func TestHandleDeleteService(t *testing.T) {
+	t.Parallel()
+
+	server := onboardingTestServer(t, stubLister{}, stubProber{})
+
+	create := httptest.NewRequestWithContext(
+		t.Context(),
+		nethttp.MethodPost,
+		"/api/services",
+		strings.NewReader(createServiceBody(t)),
+	)
+	create.AddCookie(authCookie(t, server))
+
+	createRec := httptest.NewRecorder()
+	server.handler.ServeHTTP(createRec, create)
+
+	if createRec.Result().StatusCode != nethttp.StatusCreated {
+		t.Fatalf("create status = %d, want %d", createRec.Result().StatusCode, nethttp.StatusCreated)
+	}
+
+	remove := httptest.NewRequestWithContext(t.Context(), nethttp.MethodDelete, "/api/services/shop-web", nil)
+	remove.AddCookie(authCookie(t, server))
+
+	removeRec := httptest.NewRecorder()
+	server.handler.ServeHTTP(removeRec, remove)
+
+	if removeRec.Result().StatusCode != nethttp.StatusNoContent {
+		t.Fatalf(
+			"delete status = %d, want %d",
+			removeRec.Result().StatusCode,
+			nethttp.StatusNoContent,
+		)
+	}
+
+	again := httptest.NewRequestWithContext(t.Context(), nethttp.MethodDelete, "/api/services/shop-web", nil)
+	again.AddCookie(authCookie(t, server))
+
+	againRec := httptest.NewRecorder()
+	server.handler.ServeHTTP(againRec, again)
+
+	if againRec.Result().StatusCode != nethttp.StatusNotFound {
+		t.Fatalf(
+			"second delete status = %d, want %d",
+			againRec.Result().StatusCode,
+			nethttp.StatusNotFound,
+		)
+	}
+}

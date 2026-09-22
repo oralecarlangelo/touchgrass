@@ -89,6 +89,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)
 	mux.HandleFunc("POST /api/services", server.handleCreateService)
+	mux.HandleFunc("DELETE /api/services/{id}", server.handleDeleteService)
 	mux.HandleFunc("GET /api/onboarding/suggest", server.handleOnboardingSuggest)
 	mux.HandleFunc("GET /api/services/{id}/metrics", server.handleMetrics)
 	mux.HandleFunc("GET /api/services/{id}/deploys", server.handleDeploys)

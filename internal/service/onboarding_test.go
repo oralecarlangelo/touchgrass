@@ -941,3 +941,76 @@ func TestOnboardingNonexecutableScript(t *testing.T) {
 		t.Errorf("Create() error = %v, want ErrInvalidInput", err)
 	}
 }
+
+func TestOnboardingDelete(t *testing.T) {
+	t.Parallel()
+
+	newDeleteOnboarding := func(t *testing.T) (*Onboarding, *store.ServiceStore) {
+		t.Helper()
+
+		db := openInventoryDB(t)
+		services := store.NewServiceStore(db)
+
+		return NewOnboarding(OnboardingConfig{
+			Services:   services,
+			Docker:     stubLister{},
+			Prober:     stubProber{},
+			Audit:      NewAudit(services, store.NewAuditStore(db)),
+			ScriptsDir: t.TempDir(),
+		}), services
+	}
+
+	t.Run("removes service and audits globally", func(t *testing.T) {
+		t.Parallel()
+
+		onboarding, services := newDeleteOnboarding(t)
+		ctx := context.Background()
+
+		if err := onboarding.Delete(ctx, testServiceAPI, testAdminActor); err != nil {
+			t.Fatalf("Delete() error = %v, want nil", err)
+		}
+
+		if _, err := services.Get(ctx, testServiceAPI); !errors.Is(err, store.ErrServiceNotFound) {
+			t.Errorf("Get() after delete error = %v, want ErrServiceNotFound", err)
+		}
+	})
+
+	t.Run("unknown id", func(t *testing.T) {
+		t.Parallel()
+
+		onboarding, _ := newDeleteOnboarding(t)
+
+		if err := onboarding.Delete(context.Background(), "nope", testAdminActor); !errors.Is(
+			err,
+			store.ErrServiceNotFound,
+		) {
+			t.Errorf("Delete() error = %v, want ErrServiceNotFound", err)
+		}
+	})
+
+	t.Run("bad id shape", func(t *testing.T) {
+		t.Parallel()
+
+		onboarding, _ := newDeleteOnboarding(t)
+
+		if err := onboarding.Delete(context.Background(), "Shop_Web!", testAdminActor); !errors.Is(
+			err,
+			ErrInvalidInput,
+		) {
+			t.Errorf("Delete() error = %v, want ErrInvalidInput", err)
+		}
+	})
+
+	t.Run("missing actor", func(t *testing.T) {
+		t.Parallel()
+
+		onboarding, _ := newDeleteOnboarding(t)
+
+		if err := onboarding.Delete(context.Background(), testServiceAPI, ""); !errors.Is(
+			err,
+			ErrInvalidInput,
+		) {
+			t.Errorf("Delete() error = %v, want ErrInvalidInput", err)
+		}
+	})
+}

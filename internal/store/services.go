@@ -111,6 +111,65 @@ func (s *ServiceStore) UpdateConfig(ctx context.Context, id string, config json.
 	return nil
 }
 
+// serviceChildren lists every table with an enforced foreign key to
+// services(id). Delete clears them before the parent row.
+var serviceChildren = []string{
+	"alert_rules",
+	"api_keys",
+	"audit",
+	"deploy_probes",
+	"deploys",
+	"issue_rules",
+	"issues",
+	"log_lines",
+	"metrics",
+	"notifications",
+	"occurrences",
+	"sdk_logs",
+}
+
+// Delete removes the service definition and all of its touchgrass-side
+// rows (rules, keys, deploys, metrics, logs, issues, audit history) in
+// one transaction. Running containers are untouched. Unknown ids fail
+// with ErrServiceNotFound.
+func (s *ServiceStore) Delete(ctx context.Context, id string) error {
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting service delete transaction: %w", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	for _, table := range serviceChildren {
+		//nolint:gosec // table names come from a fixed internal allowlist; id stays parameterized.
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE service_id = ?", id); err != nil {
+			return fmt.Errorf("deleting service %s: %w", table, err)
+		}
+	}
+
+	res, err := tx.ExecContext(ctx, "DELETE FROM services WHERE id = ?", id)
+	if err != nil {
+		return fmt.Errorf("deleting service: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("counting deleted services: %w", err)
+	}
+
+	if affected == 0 {
+		return fmt.Errorf("%w: %q", ErrServiceNotFound, id)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing service delete: %w", err)
+	}
+
+	return nil
+}
+
 // scanner covers *sql.Row and *sql.Rows for scanService.
 type scanner interface {
 	Scan(dest ...any) error

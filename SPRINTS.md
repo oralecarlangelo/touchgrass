@@ -864,6 +864,35 @@ confidence, probed health; 409 on managed tn-api; created
 job-portal for real — healthy, fleet row flipped, service_create
 audited; no deploy triggered).
 
+### S25 — Delete service + Fleet polish (2026-09-22)
+
+**Status**: DONE (2026-09-22). Two operator asks in one: removing a
+service from management, and making the Fleet page (esp. the Manage
+button) obvious.
+
+`DELETE /api/services/{id}` → 204; 400 bad id shape, 404 unknown
+id. Store deletes in one transaction: all child rows with enforced
+FKs to `services(id)` (alert_rules, api_keys, audit,
+deploy_probes, deploys, issue_rules, issues, log_lines, metrics,
+notifications, occurrences, sdk_logs) then the service row; unknown
+ids fail with `ErrServiceNotFound`. Service layer validates id +
+actor, then audits global `service_delete` (migration 0014 extends
+the audit CHECK; audit model + service allowlist updated). Running
+containers are never touched — the workload keeps serving and the
+container shows as unmanaged on Fleet again.
+
+UI: Services list rows get a Delete button → confirm Dialog
+(spells out what goes + that containers keep running) → sonner
+toast + list refresh + selection cleared. Fleet page: header counts
+("N managed · M unmanaged") with guidance, filter input in the
+header, unmanaged-first/CPU sort, primary Manage button on
+unmanaged rows, ghost Open button on managed rows, empty-filter
+state. OpenAPI `delete /services/{id}` (redocly clean), graduation
+runbook §7.
+
+SCOPE GUARD: no bulk delete, no container stop/remove on delete, no
+blue-green auto-bootstrap.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

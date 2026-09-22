@@ -270,6 +270,23 @@ paths:
                   strategy: { type: string, enum: [bluegreen, recreate] }
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { description: The service id already exists }
+  /services/{id}:
+    delete:
+      operationId: deleteService
+      tags: [services]
+      summary: Remove a service from management
+      description: |
+        Deletes the service definition and all of its touchgrass-side
+        rows (rules, keys, deploys, metrics, logs, issues, audit
+        history) in one transaction, then audits `service_delete` as a
+        global entry. Running containers are untouched — the workload
+        keeps serving and shows up as unmanaged on the Fleet page.
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: Unknown service id }
   /services/{id}/metrics:
     get:
       operationId: listMetrics

@@ -3,7 +3,7 @@ import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import {
   Select,
@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -184,6 +185,7 @@ export default function FleetScreen({
   const [loadAvg, setLoadAvg] = useState<HistoryPoint[] | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
     setError(null);
@@ -242,6 +244,32 @@ export default function FleetScreen({
   const memSeries = useMemo(() => toSeries(mem ?? [], range), [mem, range]);
   const loadSeries = useMemo(() => toSeries(loadAvg ?? [], range), [loadAvg, range]);
   const historyLoading = cpu === null || mem === null || loadAvg === null;
+
+  const managedCount = useMemo(
+    () => (containers ?? []).filter((container) => container.managed).length,
+    [containers],
+  );
+  const unmanagedCount = (containers?.length ?? 0) - managedCount;
+
+  // Unmanaged first (they need attention), then hottest CPU first.
+  const visibleContainers = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+
+    return (containers ?? [])
+      .filter(
+        (container) =>
+          needle === '' ||
+          container.name.toLowerCase().includes(needle) ||
+          container.project.toLowerCase().includes(needle),
+      )
+      .sort((a, b) => {
+        if (a.managed !== b.managed) {
+          return a.managed ? 1 : -1;
+        }
+
+        return b.cpu_percent - a.cpu_percent;
+      });
+  }, [containers, query]);
 
   if (error !== null && system === null) {
     return <ErrorState title="Couldn't load fleet info" message={error} onRetry={() => void load()} />;
@@ -395,10 +423,27 @@ export default function FleetScreen({
           </Card>
 
           <Card>
-            <CardHeader>
-              <CardTitle className="text-sm font-medium">
-                Containers{containers === null ? '' : ` (${containers.length})`}
-              </CardTitle>
+            <CardHeader className="flex flex-row items-start justify-between gap-4">
+              <div className="space-y-1.5">
+                <CardTitle className="text-sm font-medium">
+                  Containers{containers === null ? '' : ` (${containers.length})`}
+                </CardTitle>
+                {containers !== null && (
+                  <CardDescription>
+                    {managedCount} managed · {unmanagedCount} unmanaged
+                    {unmanagedCount > 0
+                      ? ' — press Manage on an unmanaged container to bring it under touchgrass deploys.'
+                      : ' — everything on this host is under management.'}
+                  </CardDescription>
+                )}
+              </div>
+              <Input
+                placeholder="Filter…"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                className="max-w-44"
+                aria-label="Filter containers"
+              />
             </CardHeader>
             <CardContent>
               {containers === null ? (
@@ -426,8 +471,9 @@ export default function FleetScreen({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {containers.map((container) => {
+                    {visibleContainers.map((container) => {
                       const mem = memPercent(container);
+                      const serviceId = container.service_id ?? '';
 
                       return (
                         <TableRow key={container.name}>
@@ -471,19 +517,32 @@ export default function FleetScreen({
                             {timeAgo(container.sampled_at)}
                           </TableCell>
                           <TableCell className="text-right">
-                            {!container.managed && (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setPromoteTarget(container.name)}
-                              >
+                            {!container.managed ? (
+                              <Button size="sm" onClick={() => setPromoteTarget(container.name)}>
                                 Manage
                               </Button>
+                            ) : (
+                              serviceId !== '' && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => onSelectService(serviceId)}
+                                >
+                                  Open
+                                </Button>
+                              )
                             )}
                           </TableCell>
                         </TableRow>
                       );
                     })}
+                    {visibleContainers.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-muted-foreground text-center">
+                          No containers match this filter.
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               )}

@@ -20,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import DeleteServiceDialog from './DeleteServiceDialog.tsx';
 import type { ServiceView } from '@/lib/api.ts';
 
 const pageSize = 10;
@@ -29,13 +30,16 @@ const healthOptions = ['all', 'healthy', 'unhealthy', 'unknown'] as const;
 export default function ServicesList({
   services,
   onSelect,
+  onDeleted,
 }: {
   services: ServiceView[] | null;
   onSelect: (id: string) => void;
+  onDeleted: (id: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [health, setHealth] = useState<(typeof healthOptions)[number]>('all');
   const [page, setPage] = useState(0);
+  const [pendingDelete, setPendingDelete] = useState<ServiceView | null>(null);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -124,9 +128,20 @@ export default function ServicesList({
                   <TableCell>{service.strategy}</TableCell>
                   <TableCell>{service.live_color === '' ? '—' : service.live_color}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="outline" size="sm" onClick={() => onSelect(service.id)}>
-                      Open
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={() => onSelect(service.id)}>
+                        Open
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => setPendingDelete(service)}
+                        aria-label={`Remove ${service.id}`}
+                      >
+                        Delete
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -140,6 +155,12 @@ export default function ServicesList({
             </TableBody>
           </Table>
         )}
+
+        <DeleteServiceDialog
+          service={pendingDelete}
+          onClose={() => setPendingDelete(null)}
+          onDeleted={onDeleted}
+        />
 
         <div className="flex items-center justify-between text-sm">
           <p className="text-muted-foreground">

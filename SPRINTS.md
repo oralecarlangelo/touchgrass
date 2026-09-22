@@ -607,6 +607,17 @@ public like the console). Wired through Makefile (`build-docs`),
 goreleaser hooks, and CI (build + `redocly lint`). Gated green,
 deployed, verified live (guides 200, API ref 200, missing 404).
 
+### S19 — Activity timeline: logs + errors + deploys (2026-09-22)
+
+**Status**: DONE (2026-09-22). Sentry-style unified timeline per
+service: new `GET /api/issues/occurrences` (service-wide, newest
+first) feeds an Activity tab merging log lines, error occurrences,
+and deploy markers chronologically with filter chips (All/Logs/
+Errors/Deploys), level-colored rows, and click-through to the issue
+sheet. Spec updated (`listRecentOccurrences`), docs rebuilt. Gated
+green (go vet/lint/tests, web verify/build, redocly lint), deployed,
+live bundle + API verified against prod data.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

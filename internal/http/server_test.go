@@ -36,7 +36,7 @@ func testServer(t *testing.T) *Server {
 	logger := slog.New(slog.DiscardHandler)
 
 	return New(Config{
-		Addr:    "127.0.0.1:0",
+		Addr:    testDatabaseAddr,
 		Version: testVersion,
 		Logger:  logger,
 		Auth:    testAuthenticator(t),

@@ -13,20 +13,30 @@ import (
 
 // Compose label keys used to match containers to managed services.
 const (
-	LabelComposeProject = "com.docker.compose.project"
-	LabelComposeService = "com.docker.compose.service"
+	LabelComposeProject    = "com.docker.compose.project"
+	LabelComposeService    = "com.docker.compose.service"
+	LabelComposeWorkingDir = "com.docker.compose.project.working_dir"
 )
+
+// PublishedPort is one host-published port mapping.
+type PublishedPort struct {
+	HostIP        string
+	HostPort      uint16
+	ContainerPort uint16
+	Proto         string
+}
 
 // Container is a running container.
 type Container struct {
-	ID      string
-	Name    string
-	Image   string
-	ImageID string
-	State   string
-	Status  string
-	Ports   []string
-	Labels  map[string]string
+	ID        string
+	Name      string
+	Image     string
+	ImageID   string
+	State     string
+	Status    string
+	Ports     []string
+	Published []PublishedPort
+	Labels    map[string]string
 }
 
 // Lister lists containers. Client is the production implementation.
@@ -77,20 +87,31 @@ func (c *Client) List(ctx context.Context) ([]Container, error) {
 // fromSummary maps an engine summary to a Container.
 func fromSummary(summary container.Summary) Container {
 	ports := make([]string, 0, len(summary.Ports))
+	published := []PublishedPort{}
 
 	for _, port := range summary.Ports {
 		ports = append(ports, formatPort(port))
+
+		if port.PublicPort > 0 {
+			published = append(published, PublishedPort{
+				HostIP:        port.IP,
+				HostPort:      port.PublicPort,
+				ContainerPort: port.PrivatePort,
+				Proto:         port.Type,
+			})
+		}
 	}
 
 	return Container{
-		ID:      summary.ID,
-		Name:    strings.TrimPrefix(first(summary.Names), "/"),
-		Image:   summary.Image,
-		ImageID: summary.ImageID,
-		State:   summary.State,
-		Status:  summary.Status,
-		Ports:   ports,
-		Labels:  maps.Clone(summary.Labels),
+		ID:        summary.ID,
+		Name:      strings.TrimPrefix(first(summary.Names), "/"),
+		Image:     summary.Image,
+		ImageID:   summary.ImageID,
+		State:     summary.State,
+		Status:    summary.Status,
+		Ports:     ports,
+		Published: published,
+		Labels:    maps.Clone(summary.Labels),
 	}
 }
 

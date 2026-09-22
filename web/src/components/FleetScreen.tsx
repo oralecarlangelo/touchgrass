@@ -22,6 +22,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
+import PromoteDialog from './PromoteDialog.tsx';
 import {
   fetchFleetContainers,
   fetchSystem,
@@ -182,6 +183,7 @@ export default function FleetScreen({
   const [mem, setMem] = useState<HistoryPoint[] | null>(null);
   const [loadAvg, setLoadAvg] = useState<HistoryPoint[] | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -420,6 +422,7 @@ export default function FleetScreen({
                       <TableHead className="text-right">Memory</TableHead>
                       <TableHead className="text-right">Restarts</TableHead>
                       <TableHead className="text-right">Sampled</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -466,6 +469,17 @@ export default function FleetScreen({
                           </TableCell>
                           <TableCell className="text-muted-foreground text-right text-xs">
                             {timeAgo(container.sampled_at)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {!container.managed && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPromoteTarget(container.name)}
+                              >
+                                Manage
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
@@ -532,6 +546,17 @@ export default function FleetScreen({
           </div>
         </>
       )}
+
+      <PromoteDialog
+        container={promoteTarget}
+        onClose={() => setPromoteTarget(null)}
+        onCreated={(id) => {
+          setPromoteTarget(null);
+          onSelectService(id);
+          void load();
+        }}
+        onUnauthorized={onUnauthorized}
+      />
     </div>
   );
 }

@@ -7,11 +7,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	nethttp "net/http"
 
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
+	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/probe"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -58,7 +61,7 @@ func servicesTestServer(t *testing.T, lister docker.Lister) *Server {
 	inv := service.NewInventory(services, lister, stubProber{}, logger)
 
 	return New(Config{
-		Addr:      "127.0.0.1:0",
+		Addr:      testDatabaseAddr,
 		Version:   testVersion,
 		Logger:    logger,
 		Inventory: inv,
@@ -75,15 +78,15 @@ func TestHandleServices(t *testing.T) {
 	containers := []docker.Container{
 		{
 			ID:      "aaaabbbbccccddddeeee",
-			Name:    "ticketnation-api-blue-1",
+			Name:    testBlueContainer,
 			Image:   "ticketnation-api:latest",
 			ImageID: "sha256:11112222333344445555",
-			State:   "running",
+			State:   testRunningState,
 			Status:  "Up 2 hours",
 			Ports:   []string{"127.0.0.1:4101->4000/tcp"},
 			Labels: map[string]string{
 				docker.LabelComposeProject: "ticketnation",
-				docker.LabelComposeService: "api-blue",
+				docker.LabelComposeService: testBlueService,
 			},
 		},
 	}
@@ -130,6 +133,186 @@ func TestHandleServices(t *testing.T) {
 
 	if got.Services[0].ID != "admin-fe" {
 		t.Errorf("services[0].id = %q, want admin-fe (ordered by id)", got.Services[0].ID)
+	}
+}
+
+// writeCreateScript writes a stub with mode and returns its path. Mode rides
+// a parameter (like the service package helper) since create validation
+// needs the exec bit on temp fixtures.
+func writeCreateScript(t *testing.T, dir, name string, mode os.FileMode) string {
+	t.Helper()
+
+	path := dir + "/" + name
+
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), mode); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v, want nil", name, err)
+	}
+
+	return path
+}
+
+// createServiceBody builds a valid creation body with temp scripts.
+func createServiceBody(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	deploy := writeCreateScript(t, dir, "deploy.sh", 0o755)
+	rollback := writeCreateScript(t, dir, "rollback.sh", 0o755)
+
+	return `{"id":"shop-web","strategy":"recreate","compose_project":"shop",` +
+		`"compose_dir":"` + dir + `",` +
+		`"config":{"service":"web","health_url":"http://127.0.0.1:4201/health",` +
+		`"deploy_script":"` + deploy + `","rollback_script":"` + rollback + `"}}`
+}
+
+func TestHandleCreateService(t *testing.T) {
+	t.Parallel()
+
+	server := onboardingTestServer(t, stubLister{}, stubProber{})
+
+	req := httptest.NewRequestWithContext(
+		t.Context(),
+		nethttp.MethodPost,
+		"/api/services",
+		strings.NewReader(createServiceBody(t)),
+	)
+	req.AddCookie(authCookie(t, server))
+
+	rec := httptest.NewRecorder()
+	server.handler.ServeHTTP(rec, req)
+
+	res := rec.Result()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("reading body: %v", err)
+	}
+
+	if err := res.Body.Close(); err != nil {
+		t.Fatalf("closing body: %v", err)
+	}
+
+	if res.StatusCode != nethttp.StatusCreated {
+		t.Fatalf("status = %d, want %d (body: %s)", res.StatusCode, nethttp.StatusCreated, body)
+	}
+
+	var got service.CreateOutput
+
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decoding body: %v", err)
+	}
+
+	if got.ID != "shop-web" || got.Strategy != model.StrategyRecreate {
+		t.Errorf("created = (%q, %q), want (shop-web, recreate)", got.ID, got.Strategy)
+	}
+
+	listReq := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, "/api/services", nil)
+	listReq.AddCookie(authCookie(t, server))
+
+	listRec := httptest.NewRecorder()
+	server.handler.ServeHTTP(listRec, listReq)
+
+	listRes := listRec.Result()
+
+	listBody, err := io.ReadAll(listRes.Body)
+	if err != nil {
+		t.Fatalf("reading list body: %v", err)
+	}
+
+	if err := listRes.Body.Close(); err != nil {
+		t.Fatalf("closing list body: %v", err)
+	}
+
+	var listed servicesResponse
+
+	if err := json.Unmarshal(listBody, &listed); err != nil {
+		t.Fatalf("decoding list body: %v", err)
+	}
+
+	if len(listed.Services) != 4 {
+		t.Fatalf("services = %d, want 4 after create", len(listed.Services))
+	}
+}
+
+func TestHandleCreateServiceErrors(t *testing.T) {
+	t.Parallel()
+
+	base := createServiceBody(t)
+
+	tests := []struct {
+		name       string
+		body       func(string) string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "malformed json",
+			body:       func(string) string { return testMalformedJSON },
+			wantStatus: nethttp.StatusBadRequest,
+			wantCode:   testInvalidRequest,
+		},
+		{
+			name:       "bad id",
+			body:       func(body string) string { return strings.Replace(body, "shop-web", "Shop!", 1) },
+			wantStatus: nethttp.StatusBadRequest,
+			wantCode:   testInvalidRequest,
+		},
+		{
+			name:       "duplicate id",
+			body:       func(body string) string { return strings.Replace(body, "shop-web", "tn-api", 1) },
+			wantStatus: nethttp.StatusConflict,
+			wantCode:   "conflict",
+		},
+		{
+			name:       "bad strategy",
+			body:       func(body string) string { return strings.Replace(body, "recreate", "canary", 1) },
+			wantStatus: nethttp.StatusBadRequest,
+			wantCode:   testInvalidRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := onboardingTestServer(t, stubLister{}, stubProber{})
+
+			req := httptest.NewRequestWithContext(
+				t.Context(),
+				nethttp.MethodPost,
+				"/api/services",
+				strings.NewReader(tt.body(base)),
+			)
+			req.AddCookie(authCookie(t, server))
+
+			rec := httptest.NewRecorder()
+			server.handler.ServeHTTP(rec, req)
+
+			res := rec.Result()
+
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				t.Fatalf("reading body: %v", err)
+			}
+
+			if err := res.Body.Close(); err != nil {
+				t.Fatalf("closing body: %v", err)
+			}
+
+			if res.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", res.StatusCode, tt.wantStatus, body)
+			}
+
+			var got errorResponse
+
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("decoding body: %v", err)
+			}
+
+			if got.Code != tt.wantCode || got.Error == "" {
+				t.Errorf("envelope = %+v, want code %q with message", got, tt.wantCode)
+			}
+		})
 	}
 }
 

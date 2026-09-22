@@ -74,6 +74,24 @@ func (s *ServiceStore) Get(ctx context.Context, id string) (model.Service, error
 	return service, nil
 }
 
+// Create inserts a new service definition. Duplicate ids fail.
+func (s *ServiceStore) Create(ctx context.Context, service model.Service) error {
+	if _, err := s.db.sql.ExecContext(
+		ctx,
+		"INSERT INTO services (id, name, strategy, compose_project, compose_dir, config) VALUES (?, ?, ?, ?, ?, ?)",
+		service.ID,
+		service.Name,
+		string(service.Strategy),
+		service.ComposeProject,
+		service.ComposeDir,
+		string(service.Config),
+	); err != nil {
+		return fmt.Errorf("creating service: %w", err)
+	}
+
+	return nil
+}
+
 // UpdateConfig replaces the strategy config for id.
 func (s *ServiceStore) UpdateConfig(ctx context.Context, id string, config json.RawMessage) error {
 	res, err := s.db.sql.ExecContext(ctx, "UPDATE services SET config = ? WHERE id = ?", string(config), id)

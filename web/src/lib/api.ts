@@ -886,3 +886,59 @@ export async function verifyDatabaseBackup(name: string): Promise<{ name: string
 export async function startDatabaseRestore(name: string): Promise<DatabaseJobStartResponse> {
   return request<DatabaseJobStartResponse>('/api/databases/restore', jsonBody({ name }));
 }
+
+export type OnboardingStrategy = 'recreate' | 'bluegreen';
+
+export interface OnboardingSuggest {
+  container: string;
+  service_id: string;
+  strategy: string;
+  compose_project: string;
+  compose_dir: string;
+  service: string;
+  health_url: string;
+  public_url: string;
+  deploy_script: string;
+  rollback_script: string;
+  blue_service?: string;
+  green_service?: string;
+  blue_target?: string;
+  green_target?: string;
+  blue_url?: string;
+  green_url?: string;
+  nginx_conf?: string;
+  marker?: string;
+  cutover_script?: string;
+  confidence: string;
+  reasons: string[];
+  warnings: string[];
+}
+
+export async function suggestService(container: string): Promise<OnboardingSuggest> {
+  const params = new URLSearchParams({ container });
+  const body = await request<OnboardingSuggest>(`/api/onboarding/suggest?${params.toString()}`);
+
+  return {
+    ...body,
+    reasons: body.reasons ?? [],
+    warnings: body.warnings ?? [],
+  };
+}
+
+export interface CreateServiceInput {
+  id: string;
+  name?: string;
+  strategy: OnboardingStrategy;
+  compose_project: string;
+  compose_dir: string;
+  config: Record<string, string>;
+}
+
+export interface CreatedService {
+  id: string;
+  strategy: string;
+}
+
+export async function createService(input: CreateServiceInput): Promise<CreatedService> {
+  return request<CreatedService>('/api/services', jsonBody(input));
+}

@@ -24,6 +24,8 @@ tags:
     description: SDK report intake and key management
   - name: services
     description: Inventory, metrics, deploys, and audit
+  - name: onboarding
+    description: Promote fleet containers to managed services
   - name: alerts
     description: Metric rules and the notification center
   - name: issues
@@ -242,6 +244,32 @@ paths:
                   services:
                     type: array
                     items: { $ref: '#/components/schemas/ServiceView' }
+    post:
+      operationId: createService
+      tags: [services]
+      summary: Create a managed service
+      description: |
+        Validates the id (`^[a-z0-9-]+$`, unique), the strategy enum,
+        the compose project/dir (dir must exist), the per-strategy
+        config, and script executability, then audits `service_create`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateServiceRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, strategy]
+                properties:
+                  id: { type: string }
+                  strategy: { type: string, enum: [bluegreen, recreate] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: The service id already exists }
   /services/{id}/metrics:
     get:
       operationId: listMetrics
@@ -386,6 +414,29 @@ paths:
                 properties:
                   target: { type: string, description: Compose service name }
         '409': { description: A run is already in flight for this service }
+  /onboarding/suggest:
+    get:
+      operationId: suggestService
+      tags: [onboarding]
+      summary: Draft a service row for one fleet container
+      description: |
+        Drafts project/service/dir from compose labels, the service id
+        from the project name, the health URL by probing the lowest
+        published host port, and blue-green fields when an X-blue +
+        X-green pair shares the project. Read-only.
+      parameters:
+        - name: container
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Drafted service row
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceSuggestion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: The container is already managed by a service }
   /alerts/rules:
     get:
       operationId: listAlertRules
@@ -1158,6 +1209,49 @@ components:
               ports:
                 type: array
                 items: { type: string }
+    ServiceSuggestion:
+      type: object
+      required: [container, service_id, strategy, compose_project, compose_dir, service,
+        health_url, public_url, deploy_script, rollback_script, confidence, reasons, warnings]
+      properties:
+        container: { type: string }
+        service_id: { type: string }
+        strategy: { type: string, enum: [bluegreen, recreate] }
+        compose_project: { type: string }
+        compose_dir: { type: string }
+        service: { type: string }
+        health_url: { type: string }
+        public_url: { type: string }
+        deploy_script: { type: string }
+        rollback_script: { type: string }
+        blue_service: { type: string }
+        green_service: { type: string }
+        blue_target: { type: string }
+        green_target: { type: string }
+        blue_url: { type: string }
+        green_url: { type: string }
+        nginx_conf: { type: string }
+        marker: { type: string }
+        cutover_script: { type: string }
+        confidence: { type: string, enum: [high, medium, low] }
+        reasons:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items: { type: string }
+    CreateServiceRequest:
+      type: object
+      required: [id, strategy, compose_project, compose_dir, config]
+      properties:
+        id: { type: string, description: 'Lowercase slug: ^[a-z0-9-]+$' }
+        name: { type: string, description: Display name; defaults to the id }
+        strategy: { type: string, enum: [bluegreen, recreate] }
+        compose_project: { type: string }
+        compose_dir: { type: string }
+        config:
+          type: object
+          description: Raw strategy JSON (recreate or blue-green fields)
     Metric:
       type: object
       required: [id, service_id, container_name, sampled_at, cpu_percent, mem_bytes, mem_limit, disk_bytes, restarts, uptime_secs]

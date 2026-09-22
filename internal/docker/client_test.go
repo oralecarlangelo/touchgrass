@@ -21,6 +21,21 @@ func TestNew(t *testing.T) {
 
 const testStateRunning = "running"
 
+// checkPublished validates published port mappings.
+func checkPublished(t *testing.T, got, expected []PublishedPort) {
+	t.Helper()
+
+	if len(got) != len(expected) {
+		t.Fatalf("fromSummary() published = %v, want %v", got, expected)
+	}
+
+	for i := range got {
+		if got[i] != expected[i] {
+			t.Errorf("fromSummary() published[%d] = %+v, want %+v", i, got[i], expected[i])
+		}
+	}
+}
+
 func TestFromSummary(t *testing.T) {
 	t.Parallel()
 
@@ -49,7 +64,10 @@ func TestFromSummary(t *testing.T) {
 				State:   testStateRunning,
 				Status:  "Up 2 hours",
 				Ports:   []string{"127.0.0.1:4101->4000/tcp"},
-				Labels:  map[string]string{LabelComposeProject: "ticketnation", LabelComposeService: "api-blue"},
+				Published: []PublishedPort{
+					{HostIP: "127.0.0.1", HostPort: 4101, ContainerPort: 4000, Proto: "tcp"},
+				},
+				Labels: map[string]string{LabelComposeProject: "ticketnation", LabelComposeService: "api-blue"},
 			},
 		},
 		{
@@ -63,12 +81,13 @@ func TestFromSummary(t *testing.T) {
 				Labels: map[string]string{},
 			},
 			expected: Container{
-				ID:     "fff000",
-				Name:   "",
-				Image:  "redis:7-alpine",
-				State:  testStateRunning,
-				Ports:  []string{"6379/tcp"},
-				Labels: map[string]string{},
+				ID:        "fff000",
+				Name:      "",
+				Image:     "redis:7-alpine",
+				State:     testStateRunning,
+				Ports:     []string{"6379/tcp"},
+				Published: []PublishedPort{},
+				Labels:    map[string]string{},
 			},
 		},
 	}
@@ -103,6 +122,8 @@ func TestFromSummary(t *testing.T) {
 					t.Errorf("fromSummary() ports[%d] = %q, want %q", i, got.Ports[i], tt.expected.Ports[i])
 				}
 			}
+
+			checkPublished(t, got.Published, tt.expected.Published)
 
 			if len(got.Labels) != len(tt.expected.Labels) {
 				t.Errorf("fromSummary() labels = %v, want %v", got.Labels, tt.expected.Labels)

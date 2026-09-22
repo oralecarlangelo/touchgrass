@@ -44,6 +44,7 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 | `TOUCHGRASS_DB_BACKUP_DIR`         | `./backups`        | pg_dump artifacts plus `.sha256` sidecars            |
 | `TOUCHGRASS_DB_BACKUP_KEEP`        | `14`               | Newest backups retained after each backup            |
 | `TOUCHGRASS_REDIS_CONTAINER`       | (empty)            | Redis container for the health chip; empty hides it  |
+| `TOUCHGRASS_SCRIPTS_DIR`           | `scripts`          | Deploy helper scripts; relative resolves at app root |
 
 Durations parse Go syntax (`30s`, `10m`, `168h`).
 `TOUCHGRASS_RETENTION_SDK_LOGS` is the exception: a whole-day count.

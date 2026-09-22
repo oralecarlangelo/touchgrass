@@ -161,8 +161,32 @@ export default function App() {
 
   const handleSelectService = useCallback(
     (id: string | null) => {
-      setSelected(id === null ? null : (services?.find((service) => service.id === id) ?? null));
-      setView('services');
+      if (id === null) {
+        setSelected(null);
+        setView('services');
+        return;
+      }
+
+      const found = services?.find((service) => service.id === id) ?? null;
+
+      if (found !== null) {
+        setSelected(found);
+        setView('services');
+        return;
+      }
+
+      // Unknown id (e.g. a just-promoted service missing from the cached
+      // inventory): refetch once so #/services/<id> still lands on it.
+      void fetchServices()
+        .then((fetched) => {
+          setServices(fetched);
+          setSelected(fetched.find((service) => service.id === id) ?? null);
+          setView('services');
+        })
+        .catch(() => {
+          setSelected(null);
+          setView('services');
+        });
     },
     [services],
   );

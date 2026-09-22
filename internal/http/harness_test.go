@@ -30,6 +30,10 @@ const (
 	testInvalidRequest = "invalid_request"
 	testServiceAPI     = "tn-api"
 	testUnknownService = "unknown service"
+	testBlueContainer  = "ticketnation-api-blue-1"
+	testBlueService    = "api-blue"
+	testRunningState   = "running"
+	testMalformedJSON  = "{oops"
 )
 
 // hashTestPassword generates the harness bcrypt hash once.
@@ -135,7 +139,7 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 	audit := service.NewAudit(services, store.NewAuditStore(db))
 
 	server := New(Config{
-		Addr:      "127.0.0.1:0",
+		Addr:      testDatabaseAddr,
 		Version:   testVersion,
 		Logger:    logger,
 		Inventory: service.NewInventory(services, stubStatsLister{}, stubProber{}, logger),

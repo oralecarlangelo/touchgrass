@@ -29,6 +29,7 @@ const (
 	defaultPostgresDB             = "postgres"
 	defaultBackupDir              = "./backups"
 	defaultBackupKeep             = "14"
+	defaultScriptsDir             = "scripts"
 	addrEnvVar                    = "TOUCHGRASS_ADDR"
 	dbEnvVar                      = "TOUCHGRASS_DB"
 	envEnvVar                     = "APP_ENV"
@@ -52,6 +53,7 @@ const (
 	backupDirEnvVar               = "TOUCHGRASS_DB_BACKUP_DIR"
 	backupKeepEnvVar              = "TOUCHGRASS_DB_BACKUP_KEEP"
 	redisContainerEnvVar          = "TOUCHGRASS_REDIS_CONTAINER"
+	scriptsDirEnvVar              = "TOUCHGRASS_SCRIPTS_DIR"
 	envDev                        = "dev"
 	envProd                       = "prod"
 )
@@ -102,6 +104,9 @@ type Config struct {
 	BackupKeep int
 	// RedisContainer is the redis container name; empty hides redis.
 	RedisContainer string
+	// ScriptsDir holds the deploy helper scripts; relative paths resolve
+	// against the app working directory.
+	ScriptsDir string
 }
 
 // Load reads configuration from the environment.
@@ -111,9 +116,10 @@ func Load() (Config, error) {
 
 // listenConfig groups validated startup locations.
 type listenConfig struct {
-	addr string
-	db   string
-	env  string
+	addr       string
+	db         string
+	env        string
+	scriptsDir string
 }
 
 // scheduleConfig groups validated durations.
@@ -203,6 +209,7 @@ func load(getenv func(string) string) (Config, error) {
 		BackupDir:              database.backupDir,
 		BackupKeep:             database.backupKeep,
 		RedisContainer:         database.redisContainer,
+		ScriptsDir:             listen.scriptsDir,
 	}, nil
 }
 
@@ -231,7 +238,12 @@ func loadListen(getenv func(string) string) (listenConfig, error) {
 		return listenConfig{}, fmt.Errorf("invalid %s %q: want dev or prod", envEnvVar, env)
 	}
 
-	return listenConfig{addr: addr, db: db, env: env}, nil
+	scriptsDir := getenv(scriptsDirEnvVar)
+	if scriptsDir == "" {
+		scriptsDir = defaultScriptsDir
+	}
+
+	return listenConfig{addr: addr, db: db, env: env, scriptsDir: scriptsDir}, nil
 }
 
 // loadSchedule validates sampling, retention, watch, and cutover durations.

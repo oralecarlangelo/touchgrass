@@ -146,8 +146,8 @@ func TestHandleIssueLogs(t *testing.T) {
 
 	now := time.Now()
 	lines := []model.LogLine{
-		{ServiceID: testServiceAPI, Container: "api-blue", Stream: model.LogStderr, Line: "linked boom", Ts: now},
-		{ServiceID: testServiceAPI, Container: "api-blue", Stream: model.LogStdout, Line: "ancient", Ts: now.Add(-2 * time.Hour)},
+		{ServiceID: testServiceAPI, Container: testBlueService, Stream: model.LogStderr, Line: "linked boom", Ts: now},
+		{ServiceID: testServiceAPI, Container: testBlueService, Stream: model.LogStdout, Line: "ancient", Ts: now.Add(-2 * time.Hour)},
 	}
 
 	if _, err := store.NewLogStore(db).InsertBatch(t.Context(), lines); err != nil {

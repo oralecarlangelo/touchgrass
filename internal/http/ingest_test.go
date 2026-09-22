@@ -148,7 +148,7 @@ func TestHandleIngestRejects(t *testing.T) {
 	}{
 		{name: "missing key", key: "", body: testReportBody, status: nethttp.StatusUnauthorized},
 		{name: "bad key", key: "bogus", body: testReportBody, status: nethttp.StatusUnauthorized},
-		{name: "bad json", key: plaintext, body: "{oops", status: nethttp.StatusBadRequest},
+		{name: "bad json", key: plaintext, body: testMalformedJSON, status: nethttp.StatusBadRequest},
 		{
 			name: "bad type", key: plaintext,
 			body:   `{"type":"trace","message":"x"}`,
@@ -247,7 +247,7 @@ func TestHandleKeysRejects(t *testing.T) {
 		},
 		{
 			name: "bad json", method: nethttp.MethodPost, target: testKeysPath,
-			body: "{oops", status: nethttp.StatusBadRequest,
+			body: testMalformedJSON, status: nethttp.StatusBadRequest,
 		},
 		{
 			name: "bad revoke id", method: nethttp.MethodPost, target: "/api/keys/abc/revoke",

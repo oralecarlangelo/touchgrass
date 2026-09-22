@@ -22,7 +22,7 @@ func seedLogLines(t *testing.T, db *store.DB, base time.Time, messages ...string
 	for i, message := range messages {
 		lines = append(lines, model.LogLine{
 			ServiceID: testServiceAPI,
-			Container: "ticketnation-api-blue-1",
+			Container: testBlueContainer,
 			Stream:    model.LogStdout,
 			Line:      message,
 			Ts:        base.Add(time.Duration(i) * time.Second),

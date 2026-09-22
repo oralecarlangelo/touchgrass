@@ -23,68 +23,73 @@ const (
 
 // Config wires a Server.
 type Config struct {
-	Addr      string
-	Version   string
-	Logger    *slog.Logger
-	Inventory *service.Inventory
-	Sampler   *service.Sampler
-	Deploys   *service.Deploys
-	Cutover   *service.Cutover
-	Audit     *service.Audit
-	Auth      *Authenticator
-	Events    *Hub
-	Ingestor  *service.Ingestor
-	Logs      *service.LogCollector
-	SDKLogs   *service.LogIngestor
-	System    *service.System
-	Database  *service.Database
-	Dist      fs.FS
-	Docs      fs.FS
-	DevProxy  string
+	Addr       string
+	Version    string
+	Logger     *slog.Logger
+	Inventory  *service.Inventory
+	Sampler    *service.Sampler
+	Deploys    *service.Deploys
+	Cutover    *service.Cutover
+	Audit      *service.Audit
+	Auth       *Authenticator
+	Events     *Hub
+	Ingestor   *service.Ingestor
+	Logs       *service.LogCollector
+	SDKLogs    *service.LogIngestor
+	System     *service.System
+	Database   *service.Database
+	Onboarding *service.Onboarding
+	Dist       fs.FS
+	Docs       fs.FS
+	DevProxy   string
 }
 
 // Server is the touchgrass HTTP server.
 type Server struct {
-	addr      string
-	version   string
-	logger    *slog.Logger
-	inventory *service.Inventory
-	sampler   *service.Sampler
-	deploys   *service.Deploys
-	cutover   *service.Cutover
-	audit     *service.Audit
-	auth      *Authenticator
-	events    *Hub
-	ingestor  *service.Ingestor
-	logs      *service.LogCollector
-	sdkLogs   *service.LogIngestor
-	system    *service.System
-	database  *service.Database
-	handler   nethttp.Handler
+	addr       string
+	version    string
+	logger     *slog.Logger
+	inventory  *service.Inventory
+	sampler    *service.Sampler
+	deploys    *service.Deploys
+	cutover    *service.Cutover
+	audit      *service.Audit
+	auth       *Authenticator
+	events     *Hub
+	ingestor   *service.Ingestor
+	logs       *service.LogCollector
+	sdkLogs    *service.LogIngestor
+	system     *service.System
+	database   *service.Database
+	onboarding *service.Onboarding
+	handler    nethttp.Handler
 }
 
 // New builds a Server.
 func New(cfg Config) *Server {
 	mux := nethttp.NewServeMux()
 	server := &Server{
-		addr:      cfg.Addr,
-		version:   cfg.Version,
-		logger:    cfg.Logger,
-		inventory: cfg.Inventory,
-		sampler:   cfg.Sampler,
-		deploys:   cfg.Deploys,
-		cutover:   cfg.Cutover,
-		audit:     cfg.Audit,
-		auth:      cfg.Auth,
-		events:    cfg.Events,
-		ingestor:  cfg.Ingestor,
-		logs:      cfg.Logs,
-		sdkLogs:   cfg.SDKLogs,
-		system:    cfg.System,
-		database:  cfg.Database,
+		addr:       cfg.Addr,
+		version:    cfg.Version,
+		logger:     cfg.Logger,
+		inventory:  cfg.Inventory,
+		sampler:    cfg.Sampler,
+		deploys:    cfg.Deploys,
+		cutover:    cfg.Cutover,
+		audit:      cfg.Audit,
+		auth:       cfg.Auth,
+		events:     cfg.Events,
+		ingestor:   cfg.Ingestor,
+		logs:       cfg.Logs,
+		sdkLogs:    cfg.SDKLogs,
+		system:     cfg.System,
+		database:   cfg.Database,
+		onboarding: cfg.Onboarding,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)
+	mux.HandleFunc("POST /api/services", server.handleCreateService)
+	mux.HandleFunc("GET /api/onboarding/suggest", server.handleOnboardingSuggest)
 	mux.HandleFunc("GET /api/services/{id}/metrics", server.handleMetrics)
 	mux.HandleFunc("GET /api/services/{id}/deploys", server.handleDeploys)
 	mux.HandleFunc("POST /api/services/{id}/deploys", server.handleRecordDeploy)

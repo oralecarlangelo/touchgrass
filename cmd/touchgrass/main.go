@@ -113,18 +113,19 @@ func startBackground(
 
 // serveServices wires HTTP handlers to domain services.
 type serveServices struct {
-	inventory *service.Inventory
-	sampler   *service.Sampler
-	deploys   *service.Deploys
-	cutover   *service.Cutover
-	audit     *service.Audit
-	auth      *http.Authenticator
-	events    *http.Hub
-	ingestor  *service.Ingestor
-	logs      *service.LogCollector
-	sdkLogs   *service.LogIngestor
-	system    *service.System
-	database  *service.Database
+	inventory  *service.Inventory
+	sampler    *service.Sampler
+	deploys    *service.Deploys
+	cutover    *service.Cutover
+	audit      *service.Audit
+	auth       *http.Authenticator
+	events     *http.Hub
+	ingestor   *service.Ingestor
+	logs       *service.LogCollector
+	sdkLogs    *service.LogIngestor
+	system     *service.System
+	database   *service.Database
+	onboarding *service.Onboarding
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -150,24 +151,25 @@ func newServeServer(
 	}
 
 	return http.New(http.Config{
-		Addr:      cfg.Addr,
-		Version:   version,
-		Logger:    logger,
-		Inventory: services.inventory,
-		Sampler:   services.sampler,
-		Deploys:   services.deploys,
-		Cutover:   services.cutover,
-		Audit:     services.audit,
-		Auth:      services.auth,
-		Events:    services.events,
-		Ingestor:  services.ingestor,
-		Logs:      services.logs,
-		SDKLogs:   services.sdkLogs,
-		System:    services.system,
-		Database:  services.database,
-		Dist:      dist,
-		Docs:      docs,
-		DevProxy:  devProxy,
+		Addr:       cfg.Addr,
+		Version:    version,
+		Logger:     logger,
+		Inventory:  services.inventory,
+		Sampler:    services.sampler,
+		Deploys:    services.deploys,
+		Cutover:    services.cutover,
+		Audit:      services.audit,
+		Auth:       services.auth,
+		Events:     services.events,
+		Ingestor:   services.ingestor,
+		Logs:       services.logs,
+		SDKLogs:    services.sdkLogs,
+		System:     services.system,
+		Database:   services.database,
+		Onboarding: services.onboarding,
+		Dist:       dist,
+		Docs:       docs,
+		DevProxy:   devProxy,
 	}), nil
 }
 
@@ -238,6 +240,8 @@ func runServe(args []string) error {
 	databases := newDatabase(db, cfg, logger)
 	reconcileDatabases(databases, logger)
 
+	onboarding := newOnboarding(wiring, prober, audit)
+
 	passwordHash, err := http.HashPassword(cfg.AdminPassword)
 	if err != nil {
 		return err
@@ -275,7 +279,7 @@ func runServe(args []string) error {
 		inventory: inv, sampler: sampler, deploys: deploys,
 		cutover: cutover, audit: audit, auth: auth, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
-		database: databases,
+		database: databases, onboarding: onboarding,
 	}, version)
 	if err != nil {
 		return err
@@ -314,6 +318,17 @@ type serveWiring struct {
 	db       *store.DB
 	cfg      config.Config
 	logger   *slog.Logger
+}
+
+// newOnboarding wires the suggest + create service.
+func newOnboarding(wiring serveWiring, prober *probe.Prober, audit *service.Audit) *service.Onboarding {
+	return service.NewOnboarding(service.OnboardingConfig{
+		Services:   wiring.services,
+		Docker:     wiring.docker,
+		Prober:     prober,
+		Audit:      audit,
+		ScriptsDir: wiring.cfg.ScriptsDir,
+	})
 }
 
 // newSampler wires metrics sampling, alerting, and retention.

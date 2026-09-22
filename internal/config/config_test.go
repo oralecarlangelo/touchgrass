@@ -20,6 +20,7 @@ func defaultTestConfig() Config {
 		RetentionSDKLogs:  7 * 24 * time.Hour,
 		PostgresContainer: "", PostgresUser: defaultPostgresUser, PostgresDB: defaultPostgresDB,
 		BackupDir: defaultBackupDir, BackupKeep: 14, RedisContainer: "",
+		ScriptsDir: defaultScriptsDir,
 	}
 }
 
@@ -48,6 +49,7 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_POSTGRES_CONTAINER": "pg", "TOUCHGRASS_POSTGRES_USER": "app",
 				"TOUCHGRASS_POSTGRES_DB": "ticketnation", "TOUCHGRASS_DB_BACKUP_DIR": "/opt/backups",
 				"TOUCHGRASS_DB_BACKUP_KEEP": "30", "TOUCHGRASS_REDIS_CONTAINER": "redis",
+				"TOUCHGRASS_SCRIPTS_DIR": "/opt/touchgrass/scripts",
 			},
 			mutate: func(cfg *Config) {
 				cfg.Addr = ":8080"
@@ -68,6 +70,7 @@ func TestLoad(t *testing.T) {
 				cfg.BackupDir = "/opt/backups"
 				cfg.BackupKeep = 30
 				cfg.RedisContainer = "redis"
+				cfg.ScriptsDir = "/opt/touchgrass/scripts"
 			},
 		},
 		{

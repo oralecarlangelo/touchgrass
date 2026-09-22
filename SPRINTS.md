@@ -800,6 +800,66 @@ known-only), CI green, deploy, live-verify (20-container fleet: 3
 managed + 17 unmanaged across 15 projects incl. the project's own
 db/redis; cpu/mem/load history accumulating; Fleet bundle live).
 
+### S24 — Promote to managed: suggest + create (2026-09-22)
+
+**Status**: IN PROGRESS. Goal: one-click promotion of an observed
+fleet container to a managed service: a suggest endpoint that drafts
+the row from labels + port probes, and a create endpoint with
+validation. FROZEN CONTRACT:
+
+Env: `TOUCHGRASS_SCRIPTS_DIR` (default `"scripts"`, resolved
+relative to the app root; prod sets the absolute
+`/home/ubuntu/touchgrass/scripts` at deploy).
+
+`GET /api/onboarding/suggest?container=<name>` → 200:
+`{container, service_id, strategy:"recreate"|"bluegreen",
+compose_project, compose_dir, service, health_url, public_url:"",
+deploy_script, rollback_script, blue_service?, green_service?,
+blue_target?, green_target?, blue_url?, green_url?, nginx_conf?,
+marker?, cutover_script?, confidence:"high"|"medium"|"low",
+reasons[], warnings[]}`. 400 unknown container (no such name on the
+daemon); 409 already managed (project+service matches an existing
+row). Logic: labels give project/service/working_dir (missing
+labels → low + warnings, blanks for the operator); service_id tries
+project then project-service, else "" + warning when both taken;
+health probe tries the lowest published host port's `/` then
+`/health` (3s timeouts, first 2xx wins; none → "" + warning; no
+published ports → warning); recreate scripts default to
+`<scripts-dir>/recreate-deploy.sh` / `recreate-rollback.sh`.
+Blue-green detection: project container services contain an
+`X-blue`+`X-green` pair → strategy bluegreen with services/targets
+(from published ports)/urls (probed per color) prefilled,
+nginx_conf from scanning `/etc/nginx/sites-enabled/*` for a
+`# BLUEGREEN-ACTIVE` marker line on either port (unreadable →
+"" + warning), marker default, cutover_script "" + "fork the team
+script (manual)" warning. Probing + nginx scan behind injectable
+helpers — no real HTTP/fs in unit tests.
+
+`POST /api/services` → body `{id, name?, strategy,
+compose_project, compose_dir, config}` (config = raw strategy JSON);
+201 `{id, strategy}`. Validate: id `^[a-z0-9-]+$` + unique (409),
+strategy enum, project/dir non-empty, dir exists (400), config
+decodes per strategy with required fields (recreate: service,
+health_url, both scripts; bluegreen: services, targets, urls,
+nginx_conf, marker, cutover_script), scripts executable (400).
+Audit `service_create` (new model constant). Add
+`ServiceStore.Create` if missing (+ test). OpenAPI both, redocly
+clean.
+
+UI (FleetScreen): unmanaged rows get a Manage button → Dialog with
+editable draft (service id, strategy select, compose project/dir,
+service, health_url + probe-result note, public_url, script paths,
+blue-green fields shown when detected, confidence + reasons +
+warnings) → Create → sonner toast + navigate `#/services/<id>`;
+errors inline. SCOPE GUARD: no auto blue-green bootstrap (compose
+colors + nginx edits stay manual per graduation §6), no bulk
+promote, no delete-service in S24.
+
+Validation: per-area gates, full gate, deploy with scripts-dir env
+set, live-verify suggest on a real unmanaged container (read-only),
+then promote ONE real container end to end and confirm it appears
+managed with health + passing dry checks (no deploy triggered).
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

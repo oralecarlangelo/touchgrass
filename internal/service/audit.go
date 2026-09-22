@@ -29,9 +29,13 @@ func (a *Audit) Record(ctx context.Context, record model.AuditRecord) (int64, er
 	}
 
 	switch record.Action {
-	case model.AuditCutover, model.AuditRollback, model.AuditLogin, model.AuditDeploy:
+	case model.AuditCutover, model.AuditRollback, model.AuditLogin, model.AuditDeploy, model.AuditServiceCreate:
 	default:
-		return 0, fmt.Errorf("%w: action %q (want cutover, rollback, login, or deploy)", ErrInvalidInput, record.Action)
+		return 0, fmt.Errorf(
+			"%w: action %q (want cutover, rollback, login, deploy, or service_create)",
+			ErrInvalidInput,
+			record.Action,
+		)
 	}
 
 	switch record.Result {

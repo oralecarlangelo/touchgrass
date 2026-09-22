@@ -67,6 +67,40 @@ type RecreateConfig struct {
 	RollbackScript string `json:"rollback_script"`
 }
 
+// Suggestion confidences for onboarding drafts.
+const (
+	ConfidenceHigh   = "high"
+	ConfidenceMedium = "medium"
+	ConfidenceLow    = "low"
+)
+
+// ServiceSuggestion is a drafted service row for one fleet container.
+// Blue-green fields stay empty unless a color pair was detected.
+type ServiceSuggestion struct {
+	Container      string   `json:"container"`
+	ServiceID      string   `json:"service_id"`
+	Strategy       Strategy `json:"strategy"`
+	ComposeProject string   `json:"compose_project"`
+	ComposeDir     string   `json:"compose_dir"`
+	Service        string   `json:"service"`
+	HealthURL      string   `json:"health_url"`
+	PublicURL      string   `json:"public_url"`
+	DeployScript   string   `json:"deploy_script"`
+	RollbackScript string   `json:"rollback_script"`
+	BlueService    string   `json:"blue_service,omitempty"`
+	GreenService   string   `json:"green_service,omitempty"`
+	BlueTarget     string   `json:"blue_target,omitempty"`
+	GreenTarget    string   `json:"green_target,omitempty"`
+	BlueURL        string   `json:"blue_url,omitempty"`
+	GreenURL       string   `json:"green_url,omitempty"`
+	NginxConf      string   `json:"nginx_conf,omitempty"`
+	Marker         string   `json:"marker,omitempty"`
+	CutoverScript  string   `json:"cutover_script,omitempty"`
+	Confidence     string   `json:"confidence"`
+	Reasons        []string `json:"reasons"`
+	Warnings       []string `json:"warnings"`
+}
+
 // ServiceView is the API representation of a service with live state.
 type ServiceView struct {
 	ID         string          `json:"id"`

@@ -91,11 +91,11 @@ func TestHandleFleetContainers(t *testing.T) {
 	seed := []model.ContainerSample{
 		{
 			ContainerName: "api-blue-1", Project: "fleet-app", Managed: true, ServiceID: testServiceAPI,
-			State: "running", CPUPercent: 12.5, MemBytes: 200, MemLimit: 1000, Restarts: 2, SampledAt: now,
+			State: testRunningState, CPUPercent: 12.5, MemBytes: 200, MemLimit: 1000, Restarts: 2, SampledAt: now,
 		},
 		{
 			ContainerName: "cache-1", Project: "infra", Managed: false,
-			State: "running", CPUPercent: 40, MemBytes: 900, MemLimit: 1000, Restarts: 0, SampledAt: now,
+			State: testRunningState, CPUPercent: 40, MemBytes: 900, MemLimit: 1000, Restarts: 0, SampledAt: now,
 		},
 	}
 

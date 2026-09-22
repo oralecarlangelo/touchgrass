@@ -6,10 +6,11 @@ import (
 
 // Audit actions recorded in the append-only log.
 const (
-	AuditCutover  = "cutover"
-	AuditRollback = "rollback"
-	AuditLogin    = "login"
-	AuditDeploy   = "deploy"
+	AuditCutover       = "cutover"
+	AuditRollback      = "rollback"
+	AuditLogin         = "login"
+	AuditDeploy        = "deploy"
+	AuditServiceCreate = "service_create"
 )
 
 // Audit results recorded in the append-only log.

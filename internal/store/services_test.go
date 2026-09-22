@@ -9,88 +9,129 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
 
-func TestServiceStoreAll(t *testing.T) {
-	t.Parallel()
+const testServiceShop = "shop-web"
 
-	db := openTestDB(t)
-
-	services, err := NewServiceStore(db).All(context.Background())
-	if err != nil {
-		t.Fatalf("All() error = %v, want nil", err)
-	}
-
-	if len(services) != 3 {
-		t.Fatalf("All() returned %d services, want 3", len(services))
-	}
-
-	want := map[string]model.Strategy{
-		testServiceAPI: model.StrategyBlueGreen,
-		"tn-fe":        model.StrategyRecreate,
-		"admin-fe":     model.StrategyRecreate,
-	}
-
-	for _, service := range services {
-		expected, ok := want[service.ID]
-		if !ok {
-			t.Errorf("All() unexpected service id %q", service.ID)
-
-			continue
-		}
-
-		if service.Strategy != expected {
-			t.Errorf("All() service %q strategy = %q, want %q", service.ID, service.Strategy, expected)
-		}
-
-		if len(service.Config) == 0 {
-			t.Errorf("All() service %q has empty config", service.ID)
-		}
-	}
-}
-
-func TestServiceStoreGet(t *testing.T) {
-	t.Parallel()
-
-	db := openTestDB(t)
-	ctx := context.Background()
-
-	service, err := NewServiceStore(db).Get(ctx, testServiceAPI)
-	if err != nil {
-		t.Fatalf("Get() error = %v, want nil", err)
-	}
-
-	if service.Name != testServiceAPI || service.ComposeProject != "ticketnation" {
-		t.Errorf("Get() = %+v, want tn-api in project ticketnation", service)
-	}
-
-	_, err = NewServiceStore(db).Get(ctx, "nope")
-	if !errors.Is(err, ErrServiceNotFound) {
-		t.Errorf("Get() error = %v, want ErrServiceNotFound", err)
-	}
-}
-
-func TestServiceStoreUpdateConfig(t *testing.T) {
+func TestServiceCreate(t *testing.T) {
 	t.Parallel()
 
 	db := openTestDB(t)
 	ctx := context.Background()
 	services := NewServiceStore(db)
 
-	config := json.RawMessage(`{"service":"app","health_url":"http://127.0.0.1:3002/health"}`)
-
-	if err := services.UpdateConfig(ctx, "admin-fe", config); err != nil {
-		t.Fatalf("UpdateConfig() error = %v, want nil", err)
+	created := model.Service{
+		ID:             testServiceShop,
+		Name:           testServiceShop,
+		Strategy:       model.StrategyRecreate,
+		ComposeProject: "shop",
+		ComposeDir:     "/opt/shop",
+		Config:         json.RawMessage(`{"service":"web"}`),
 	}
 
-	got, err := services.Get(ctx, "admin-fe")
+	if err := services.Create(ctx, created); err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	got, err := services.Get(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("Get() error = %v, want nil", err)
 	}
 
-	if string(got.Config) != string(config) {
-		t.Errorf("Get() config = %s, want %s", got.Config, config)
+	if got.ID != created.ID || got.Name != created.Name || got.Strategy != created.Strategy {
+		t.Errorf("Get() identity = (%q, %q, %q), want (%q, %q, %q)",
+			got.ID, got.Name, got.Strategy, created.ID, created.Name, created.Strategy)
 	}
 
-	if err := services.UpdateConfig(ctx, "nope", config); !errors.Is(err, ErrServiceNotFound) {
+	if got.ComposeProject != created.ComposeProject || got.ComposeDir != created.ComposeDir {
+		t.Errorf("Get() compose = (%q, %q), want (%q, %q)",
+			got.ComposeProject, got.ComposeDir, created.ComposeProject, created.ComposeDir)
+	}
+
+	if string(got.Config) != string(created.Config) {
+		t.Errorf("Get() config = %s, want %s", got.Config, created.Config)
+	}
+}
+
+func TestServiceCreateDuplicate(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	services := NewServiceStore(db)
+
+	created := model.Service{
+		ID:             testServiceShop,
+		Name:           testServiceShop,
+		Strategy:       model.StrategyRecreate,
+		ComposeProject: "shop",
+		ComposeDir:     "/opt/shop",
+		Config:         json.RawMessage(`{}`),
+	}
+
+	if err := services.Create(ctx, created); err != nil {
+		t.Fatalf("Create() error = %v, want nil", err)
+	}
+
+	if err := services.Create(ctx, created); err == nil {
+		t.Error("Create(duplicate) error = nil, want constraint error")
+	}
+}
+
+func TestServiceAll(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	services := NewServiceStore(db)
+
+	got, err := services.All(ctx)
+	if err != nil {
+		t.Fatalf("All() error = %v, want nil", err)
+	}
+
+	if len(got) != 3 {
+		t.Fatalf("All() = %d services, want 3 seeded", len(got))
+	}
+
+	if got[0].ID != "admin-fe" || got[1].ID != "tn-api" || got[2].ID != "tn-fe" {
+		t.Errorf("All() ids = %q, %q, %q, want ordered by id", got[0].ID, got[1].ID, got[2].ID)
+	}
+}
+
+func TestServiceGetNotFound(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	services := NewServiceStore(db)
+
+	if _, err := services.Get(ctx, "nope"); !errors.Is(err, ErrServiceNotFound) {
+		t.Errorf("Get() error = %v, want ErrServiceNotFound", err)
+	}
+}
+
+func TestServiceUpdateConfig(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	services := NewServiceStore(db)
+
+	updated := json.RawMessage(`{"service":"web","health_url":"http://x/"}`)
+
+	if err := services.UpdateConfig(ctx, testServiceAPI, updated); err != nil {
+		t.Fatalf("UpdateConfig() error = %v, want nil", err)
+	}
+
+	got, err := services.Get(ctx, testServiceAPI)
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+
+	if string(got.Config) != string(updated) {
+		t.Errorf("Get() config = %s, want %s", got.Config, updated)
+	}
+
+	if err := services.UpdateConfig(ctx, "nope", updated); !errors.Is(err, ErrServiceNotFound) {
 		t.Errorf("UpdateConfig() error = %v, want ErrServiceNotFound", err)
 	}
 }

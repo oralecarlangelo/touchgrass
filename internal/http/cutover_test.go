@@ -51,7 +51,7 @@ func TestHandleCutoverValidation(t *testing.T) {
 		{
 			name:         "bad json",
 			target:       "/api/services/tn-api/cutover",
-			body:         `{oops`,
+			body:         testMalformedJSON,
 			expectedCode: testInvalidRequest,
 			status:       nethttp.StatusBadRequest,
 		},

@@ -35,6 +35,7 @@ type Config struct {
 	Events    *Hub
 	Ingestor  *service.Ingestor
 	Logs      *service.LogCollector
+	SDKLogs   *service.LogIngestor
 	System    *service.System
 	Dist      fs.FS
 	Docs      fs.FS
@@ -55,6 +56,7 @@ type Server struct {
 	events    *Hub
 	ingestor  *service.Ingestor
 	logs      *service.LogCollector
+	sdkLogs   *service.LogIngestor
 	system    *service.System
 	handler   nethttp.Handler
 }
@@ -75,6 +77,7 @@ func New(cfg Config) *Server {
 		events:    cfg.Events,
 		ingestor:  cfg.Ingestor,
 		logs:      cfg.Logs,
+		sdkLogs:   cfg.SDKLogs,
 		system:    cfg.System,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
@@ -97,6 +100,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", server.handleMe)
 	mux.HandleFunc("POST /api/ingest", server.handleIngest)
+	mux.HandleFunc("POST /api/ingest/logs", server.handleIngestLogs)
 	mux.HandleFunc("POST /api/keys", server.handleCreateKey)
 	mux.HandleFunc("GET /api/keys", server.handleKeys)
 	mux.HandleFunc("POST /api/keys/{id}/revoke", server.handleRevokeKey)

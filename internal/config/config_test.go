@@ -18,6 +18,7 @@ func TestLoad(t *testing.T) {
 		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
 		RetentionErrors: 720 * time.Hour, MaxOccurrences: 10000,
 		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
+		RetentionSDKLogs: 7 * 24 * time.Hour,
 	}
 
 	tests := []struct {
@@ -40,7 +41,7 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_COOKIE_SECURE": "true", "TOUCHGRASS_WATCH_INTERVAL": "2s",
 				"TOUCHGRASS_RETENTION_ERRORS": "24h", "TOUCHGRASS_INGEST_MAX_OCCURRENCES": "500",
 				"TOUCHGRASS_RETENTION_LOGS": "48h", "TOUCHGRASS_LOGS_MAX_LINES": "1000",
-				"TOUCHGRASS_LOG_POLL_INTERVAL": "2s",
+				"TOUCHGRASS_LOG_POLL_INTERVAL": "2s", "TOUCHGRASS_RETENTION_SDK_LOGS": "3",
 			},
 			expected: Config{
 				Addr: ":8080", DB: "/data/t.db", Env: "dev",
@@ -50,6 +51,7 @@ func TestLoad(t *testing.T) {
 				WatchInterval: 2 * time.Second, CutoverTimeout: 10 * time.Minute,
 				RetentionErrors: 24 * time.Hour, MaxOccurrences: 500,
 				RetentionLogs: 48 * time.Hour, MaxLogLines: 1000, LogPollInterval: 2 * time.Second,
+				RetentionSDKLogs: 3 * 24 * time.Hour,
 			},
 			expectedErr: false,
 		},
@@ -149,6 +151,14 @@ func TestLoadIngest(t *testing.T) {
 			name: "invalid log poll interval",
 			env:  map[string]string{"TOUCHGRASS_LOG_POLL_INTERVAL": "often", adminPasswordEnvVar: "s"},
 		},
+		{
+			name: "invalid sdk logs retention",
+			env:  map[string]string{"TOUCHGRASS_RETENTION_SDK_LOGS": "seven", adminPasswordEnvVar: "s"},
+		},
+		{
+			name: "non-positive sdk logs retention",
+			env:  map[string]string{"TOUCHGRASS_RETENTION_SDK_LOGS": "0", adminPasswordEnvVar: "s"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -157,6 +167,44 @@ func TestLoadIngest(t *testing.T) {
 
 			if _, err := load(func(key string) string { return tt.env[key] }); err == nil {
 				t.Error("load() error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestLoadRetentionSDKLogsForms(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		value    string
+		expected time.Duration
+	}{
+		{name: "day count", value: "7", expected: 7 * 24 * time.Hour},
+		{name: "go duration", value: "48h", expected: 48 * time.Hour},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := load(func(key string) string {
+				if key == retentionSDKLogsEnvVar {
+					return tt.value
+				}
+
+				if key == adminPasswordEnvVar {
+					return testAdminPassword
+				}
+
+				return ""
+			})
+			if err != nil {
+				t.Fatalf("load() error = %v, want nil", err)
+			}
+
+			if cfg.RetentionSDKLogs != tt.expected {
+				t.Errorf("RetentionSDKLogs = %v, want %v", cfg.RetentionSDKLogs, tt.expected)
 			}
 		})
 	}
@@ -181,6 +229,7 @@ func TestLoadReadsProcessEnv(t *testing.T) {
 		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
 		RetentionErrors: 720 * time.Hour, MaxOccurrences: 10000,
 		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
+		RetentionSDKLogs: 7 * 24 * time.Hour,
 	}
 
 	if cfg != expected {

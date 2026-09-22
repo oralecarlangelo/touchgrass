@@ -1,4 +1,4 @@
-import type { Breadcrumb, ScrubPattern, StackFrame } from './types.js';
+import type { Breadcrumb, LogAttributes, LogItem, ScrubPattern, StackFrame } from './types.js';
 
 const redacted = '[redacted]';
 
@@ -87,5 +87,37 @@ export function scrubReport<T extends { message: string }>(
     };
   } catch {
     return { message: report.message, breadcrumbs: crumbs, stack: frames };
+  }
+}
+
+/**
+ * scrubLogItem redacts PII patterns from a log body and its string
+ * attribute values. Never throws: scrub failure returns the item as-is.
+ */
+export function scrubLogItem(item: LogItem, patterns: RegExp[]): LogItem {
+  try {
+    if (patterns.length === 0) {
+      return item;
+    }
+
+    const scrubbed: LogItem = { ...item, body: scrubText(item.body, patterns) };
+
+    if (item.attributes !== undefined) {
+      const attributes: LogAttributes = {};
+
+      for (const [key, entry] of Object.entries(item.attributes)) {
+        if (entry.type === 'string' && typeof entry.value === 'string') {
+          attributes[key] = { value: scrubText(entry.value, patterns), type: entry.type };
+        } else {
+          attributes[key] = entry;
+        }
+      }
+
+      scrubbed.attributes = attributes;
+    }
+
+    return scrubbed;
+  } catch {
+    return item;
   }
 }

@@ -2,9 +2,15 @@ import { Badge } from '@/components/ui/badge';
 import type { LogLine } from '@/lib/api.ts';
 import { formatTime, stripAnsi } from '@/lib/format.ts';
 
-function levelBadge(level: string): { variant: 'destructive' | 'outline' | 'secondary'; className: string } {
+// Shared with the SDK log rows (S20 adds trace + fatal to the level set;
+// container levels stay error/warn/info/debug).
+export function levelBadge(level: string): {
+  variant: 'destructive' | 'outline' | 'secondary';
+  className: string;
+} {
   switch (level) {
     case 'error':
+    case 'fatal':
       return { variant: 'destructive', className: 'shrink-0 text-[10px] uppercase' };
     case 'warn':
       return {
@@ -13,6 +19,7 @@ function levelBadge(level: string): { variant: 'destructive' | 'outline' | 'seco
           'shrink-0 border-amber-500/50 bg-amber-500/10 text-[10px] text-amber-700 uppercase dark:text-amber-400',
       };
     case 'debug':
+    case 'trace':
       return {
         variant: 'outline',
         className: 'shrink-0 text-[10px] text-muted-foreground uppercase',

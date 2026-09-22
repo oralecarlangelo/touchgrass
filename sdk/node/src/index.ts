@@ -15,10 +15,24 @@
 // code, performs sync IO, or holds the event loop.
 
 import { TouchgrassClient } from './client.js';
-import type { BreadcrumbInput, InitOptions } from './types.js';
+import type { BreadcrumbInput, InitOptions, Logger, LogLevel } from './types.js';
 
 export { TouchgrassClient } from './client.js';
-export type { Breadcrumb, BreadcrumbInput, ErrorReport, InitOptions, StackFrame } from './types.js';
+export { levelToSeverityNumber } from './logger.js';
+export type {
+  BeforeSendLog,
+  Breadcrumb,
+  BreadcrumbInput,
+  ErrorReport,
+  InitOptions,
+  LogAttribute,
+  LogAttributes,
+  LogBatchRequest,
+  LogItem,
+  Logger,
+  LogLevel,
+  StackFrame,
+} from './types.js';
 
 let defaultClient: TouchgrassClient | null = null;
 
@@ -74,6 +88,54 @@ export function addBreadcrumb(input: BreadcrumbInput): void {
     // Fail open.
   }
 }
+
+/**
+ * captureLog queues one structured log at any level. Never throws.
+ * Prefer the logger.* shortcuts; this generic form suits multi-client
+ * hosts and dynamic levels.
+ */
+export function captureLog(level: LogLevel, message: unknown, ...args: unknown[]): void {
+  try {
+    defaultClient?.captureLog(level, message, ...args);
+  } catch {
+    // Fail open.
+  }
+}
+
+function logAt(level: LogLevel, message: unknown, args: unknown[]): void {
+  try {
+    defaultClient?.captureLog(level, message, ...args);
+  } catch {
+    // Fail open.
+  }
+}
+
+/**
+ * logger ships structured logs with printf formatting, typed
+ * attributes, and OTel trace auto-capture. Every method is fail-open:
+ * a trailing plain object becomes attributes, Errors capture type and
+ * stack, and nothing here throws into host code.
+ */
+export const logger: Logger = {
+  trace(message: unknown, ...args: unknown[]): void {
+    logAt('trace', message, args);
+  },
+  debug(message: unknown, ...args: unknown[]): void {
+    logAt('debug', message, args);
+  },
+  info(message: unknown, ...args: unknown[]): void {
+    logAt('info', message, args);
+  },
+  warn(message: unknown, ...args: unknown[]): void {
+    logAt('warn', message, args);
+  },
+  error(message: unknown, ...args: unknown[]): void {
+    logAt('error', message, args);
+  },
+  fatal(message: unknown, ...args: unknown[]): void {
+    logAt('fatal', message, args);
+  },
+};
 
 /**
  * flush delivers queued reports within timeoutMs. Resolves true when

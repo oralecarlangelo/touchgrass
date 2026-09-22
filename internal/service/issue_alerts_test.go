@@ -161,10 +161,11 @@ func TestTrimIssues(t *testing.T) {
 		Issues:        store.NewIssueStore(db),
 		IssueRules:    store.NewIssueRuleStore(db),
 		Logs:          store.NewLogStore(db),
+		SDKLogs:       store.NewSDKLogStore(db),
 		Interval:      time.Hour,
 		Retention: Retention{
 			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour,
-			Errors: time.Nanosecond, Logs: time.Nanosecond,
+			Errors: time.Nanosecond, Logs: time.Nanosecond, SDKLogs: time.Hour,
 		},
 		Logger: slog.New(slog.DiscardHandler),
 	})

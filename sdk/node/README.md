@@ -1,8 +1,10 @@
 # @touchgrass/node
 
-Fail-open error SDK for touchgrass. Captures uncaught exceptions,
-unhandled rejections, and manual reports with stack traces, breadcrumbs,
-and release tags, then delivers them async to `POST /api/ingest`.
+Fail-open observability SDK for touchgrass. Captures uncaught
+exceptions, unhandled rejections, and manual reports with stack traces,
+breadcrumbs, and release tags (async to `POST /api/ingest`), plus
+structured logs with levels, attributes, and trace context (batched to
+`POST /api/ingest/logs`).
 
 Zero runtime dependencies. Node 20+.
 
@@ -44,6 +46,23 @@ const { init, captureException } = require('@touchgrass/node');
 
 init({ endpoint: 'https://tg.internal', key: 'tg_...' });
 ```
+
+## Logging
+
+```ts
+import { logger } from '@touchgrass/node';
+
+logger.info('order %s', order.id, { total: order.total });
+logger.error(new Error('charge failed'), { order: order.id });
+```
+
+`logger.{trace,debug,info,warn,error,fatal}(msg, ...args)` formats with
+`util.format`, stores a trailing plain object as typed attributes, and
+auto-captures the OTel active span when `@opentelemetry/api` is
+present. `beforeSendLog` in `init` filters or rewrites logs (return
+`null` to drop). OTel-native apps can use
+`TouchgrassLogRecordExporter` from `@touchgrass/node/otel` instead —
+see the [structured logging guide](https://github.com/oralecarlangelo/touchgrass/blob/develop/docs-site/sdk-logging.md).
 
 ## Fail-open contract (FR-L2)
 

@@ -121,9 +121,11 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 		Issues:        store.NewIssueStore(db),
 		IssueRules:    store.NewIssueRuleStore(db),
 		Logs:          store.NewLogStore(db),
+		SDKLogs:       store.NewSDKLogStore(db),
 		Interval:      time.Hour,
 		Retention: service.Retention{
 			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,
+			SDKLogs: time.Hour,
 		},
 		Logger: logger,
 	})
@@ -171,6 +173,11 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 			Interval:           time.Hour,
 			MaxLinesPerService: 1000,
 			Logger:             logger,
+		}),
+		SDKLogs: service.NewLogIngestor(service.LogIngestorConfig{
+			Services: services,
+			Keys:     store.NewKeyStore(db),
+			SDKLogs:  store.NewSDKLogStore(db),
 		}),
 		System: service.NewSystem(service.SystemConfig{
 			Docker:    stubStatsLister{},

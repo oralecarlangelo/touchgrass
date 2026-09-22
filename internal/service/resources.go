@@ -31,6 +31,7 @@ type Retention struct {
 	Deploys       time.Duration
 	Errors        time.Duration
 	Logs          time.Duration
+	SDKLogs       time.Duration
 }
 
 // SamplerConfig wires a Sampler.
@@ -45,6 +46,7 @@ type SamplerConfig struct {
 	Issues        *store.IssueStore
 	IssueRules    *store.IssueRuleStore
 	Logs          *store.LogStore
+	SDKLogs       *store.SDKLogStore
 	Interval      time.Duration
 	Retention     Retention
 	Logger        *slog.Logger
@@ -62,6 +64,7 @@ type Sampler struct {
 	issues        *store.IssueStore
 	issueRules    *store.IssueRuleStore
 	logs          *store.LogStore
+	sdkLogs       *store.SDKLogStore
 	interval      time.Duration
 	retention     Retention
 	logger        *slog.Logger
@@ -89,6 +92,7 @@ func NewSampler(cfg SamplerConfig) *Sampler {
 		issues:        cfg.Issues,
 		issueRules:    cfg.IssueRules,
 		logs:          cfg.Logs,
+		sdkLogs:       cfg.SDKLogs,
 		interval:      cfg.Interval,
 		retention:     cfg.Retention,
 		logger:        cfg.Logger,
@@ -328,6 +332,7 @@ func (s *Sampler) trim(ctx context.Context) {
 		{name: "occurrences", trim: s.occurrences.TrimBefore},
 		{name: "issues", trim: s.issues.TrimBefore},
 		{name: "logs", trim: s.logs.TrimBefore},
+		{name: "sdk_logs", trim: s.sdkLogs.TrimBefore},
 	}
 
 	for _, target := range targets {
@@ -362,6 +367,8 @@ func (s *Sampler) retentionFor(name string) time.Duration {
 		return s.retention.Deploys
 	case "occurrences", "issues":
 		return s.retention.Errors
+	case "sdk_logs":
+		return s.retention.SDKLogs
 	default:
 		return s.retention.Logs
 	}

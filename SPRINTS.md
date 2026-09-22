@@ -618,6 +618,61 @@ sheet. Spec updated (`listRecentOccurrences`), docs rebuilt. Gated
 green (go vet/lint/tests, web verify/build, redocly lint), deployed,
 live bundle + API verified against prod data.
 
+### S20 — Structured logging SDK + OTel bridge (Sentry Logs-style)
+
+**Status**: IN PROGRESS. Goal: `logger.info/warn/error…` in
+`@touchgrass/node` ships structured logs (levels, attributes, trace
+context) to a new batched ingest endpoint, stored per service and
+explorable in the Logs view; plus an OTel `LogRecordExporter` so
+OTel-native apps get integration without code changes. Modeled on
+[develop.sentry.dev/sdk/telemetry/logs](https://develop.sentry.dev/sdk/telemetry/logs/)
+(Sentry Log protocol v2.2 + OTel severity mapping). FROZEN CONTRACT:
+
+Wire — `POST /api/ingest/logs` (Bearer API key, same keys as
+`/api/ingest`): body `{ "release"?: string≤128, "items": [Item×1..1000]
+}`. Item: `timestamp` (unix seconds float, required), `level`
+(trace|debug|info|warn|error|fatal, required), `body` (1..8192,
+required), `severity_number` (1..24; server infers 1/5/9/13/17/21 from
+level when absent), `trace_id` (32 lowercase hex), `span_id` (16
+lowercase hex), `attributes` (≤64 keys, key 1..128, value
+`{value: string|number|boolean, type: string|integer|double|boolean}`,
+string values ≤4096). Invalid item → whole batch 400 with
+`{error, index}`. Success → 202 `{accepted: n}`.
+
+Store — migration `0010_sdk_logs.sql`: `sdk_logs(id, service, ts`
+ms`, level, severity, message, attributes JSON, trace_id, span_id,
+release)`, indexes `(service, ts)`, `(trace_id)`. Retention via the
+`resources.go` trim framework, new target `sdk_logs`, env
+`TOUCHGRASS_RETENTION_SDK_LOGS` (days, default 7).
+
+Query — `GET /api/logs` gains `source=sdk|containers` (default
+`containers`, back-compat) and `trace_id` (sdk only; 400 with
+`source=containers`). Existing `level=` filter applies to both. OpenAPI
+updated, redocly clean.
+
+SDK (`@touchgrass/node` → 0.2.0) — `logger.{trace,debug,info,warn,
+error,fatal}(msg, attrs?)` with printf formatting (`util.format`) when
+extra args present and trailing-plain-object = attributes; formatting
+stored as `sentry.message.template` / `sentry.message.parameter.N`
+typed attrs; `Error` first-arg captures type+stack attrs; queued on the
+existing client batcher (same flush/close, fail-open, scrub,
+`beforeSendLog` hook); trace/span auto-capture from
+`@opentelemetry/api` active span via guarded dynamic require (never
+throws, no hard dep). `./otel` subpath exports
+`TouchgrassLogRecordExporter` (`@opentelemetry/sdk-logs` peerDep,
+optional) mapping OTel LogRecords → ingest items; zero-dep core
+preserved. Docs page `sdk-logging.md` (API, attrs, trace correlation,
+OTel guide).
+
+UI — Logs view gains Containers | Application (SDK) source tabs; SDK
+rows reuse level colors with attribute expansion + trace/span chips
+(trace chip filters by trace); empty state links `/docs/sdk-logging`.
+SCOPE GUARD: Activity timeline untouched in S20 (no SDK merge there).
+
+Validation: per-area gates green, full gate, deploy, live dogfood via a
+throwaway node script posting logger batches to prod ingest, SDK rows
+visible in UI, docs live.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

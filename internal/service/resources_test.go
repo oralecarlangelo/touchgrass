@@ -54,9 +54,11 @@ func testSampler(t *testing.T, lister StatsLister) (*Sampler, *store.DB) {
 		Issues:        store.NewIssueStore(db),
 		IssueRules:    store.NewIssueRuleStore(db),
 		Logs:          store.NewLogStore(db),
+		SDKLogs:       store.NewSDKLogStore(db),
 		Interval:      5 * time.Millisecond,
 		Retention: Retention{
 			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,
+			SDKLogs: time.Hour,
 		},
 		Logger: slog.New(slog.DiscardHandler),
 	})

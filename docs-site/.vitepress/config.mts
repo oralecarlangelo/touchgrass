@@ -26,6 +26,7 @@ export default defineConfig({
         text: 'SDK',
         items: [
           { text: 'Node SDK', link: '/sdk' },
+          { text: 'Structured logging', link: '/sdk-logging' },
           { text: 'Ingest API', link: '/ingest' },
         ],
       },

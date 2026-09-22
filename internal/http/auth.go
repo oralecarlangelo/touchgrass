@@ -193,7 +193,8 @@ func (a *Authenticator) Middleware(logger *slog.Logger, next nethttp.Handler) ne
 
 // isPublic reports API paths that need no session.
 func isPublic(path string) bool {
-	return path == "/api/health" || path == "/api/auth/login" || path == "/api/ingest"
+	return path == "/api/health" || path == "/api/auth/login" ||
+		path == "/api/ingest" || path == "/api/ingest/logs"
 }
 
 // clientIP returns the peer host without trusting proxy headers.

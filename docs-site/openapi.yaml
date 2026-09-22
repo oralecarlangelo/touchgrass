@@ -6,8 +6,9 @@ info:
     Self-hosted blue-green deploys, metrics, and error tracking.
     Mirrors `internal/http/server.go` — update both together.
 
-    All routes except `/api/health`, `/api/auth/login`, and
-    `/api/ingest` require the admin session cookie from login.
+    All routes except `/api/health`, `/api/auth/login`,
+    `/api/ingest`, and `/api/ingest/logs` require the admin session
+    cookie from login.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -28,7 +29,7 @@ tags:
   - name: issues
     description: Grouped errors and issue alert rules
   - name: logs
-    description: Container log search and context
+    description: Container and SDK log ingest, search, and context
   - name: system
     description: Host snapshot and image management
 paths:
@@ -117,6 +118,50 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '413': { description: Report exceeds 1MB }
+  /ingest/logs:
+    post:
+      operationId: ingestLogBatch
+      tags: [ingest]
+      summary: Submit one batch of SDK log records
+      security: [{ bearerAuth: [] }, { keyAuth: [] }]
+      description: |
+        Public by design; the per-service key is the credential, sent as
+        `Authorization: Bearer <tg_key>` (or the `X-Touchgrass-Key` alias).
+        Batches cap at 10MB and 1000 items. Validation is all-or-nothing:
+        one invalid item rejects the batch with its index. Payloads are
+        never logged.
+      parameters:
+        - name: Authorization
+          in: header
+          schema: { type: string, example: 'Bearer tg_0123456789abcdef0123456789abcdef' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SDKLogBatch'
+      responses:
+        '202':
+          description: Batch stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted:
+                    type: integer
+                    description: Stored rows (the full batch; partial stores never happen)
+        '400':
+          description: Invalid batch or item
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Error'
+                  - $ref: '#/components/schemas/SDKLogItemError'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { description: Batch exceeds 10MB }
   /keys:
     get:
       operationId: listKeys
@@ -629,13 +674,21 @@ paths:
     get:
       operationId: searchLogs
       tags: [logs]
-      summary: Search collected lines, newest first
+      summary: Search collected lines or SDK rows, newest first
       parameters:
         - $ref: '#/components/parameters/ServiceId'
+        - name: source
+          in: query
+          description: Row source (default containers)
+          schema: { type: string, enum: [containers, sdk], default: containers }
         - name: q
           in: query
-          description: Full-text AND query
+          description: Full-text AND query (containers) or message substring (sdk)
           schema: { type: string }
+        - name: trace_id
+          in: query
+          description: Full trace id filter (sdk only; 400 with source=containers)
+          schema: { type: string, pattern: '^[0-9a-f]{32}$' }
         - name: after
           in: query
           schema: { type: string, format: date-time }
@@ -647,12 +700,12 @@ paths:
           schema: { type: string, enum: [stdout, stderr] }
         - name: level
           in: query
-          description: Comma-separated set
+          description: Comma-separated set (sdk adds trace and fatal)
           schema: { type: string, example: 'error,warn' }
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
-          description: Lines (levels parsed at read time)
+          description: Lines, newest first
           content:
             application/json:
               schema:
@@ -661,7 +714,11 @@ paths:
                 properties:
                   lines:
                     type: array
-                    items: { $ref: '#/components/schemas/LogLine' }
+                    description: LogLine rows for source=containers (levels parsed at read time), SDKLog rows for source=sdk
+                    items:
+                      oneOf:
+                        - $ref: '#/components/schemas/LogLine'
+                        - $ref: '#/components/schemas/SDKLog'
   /logs/stats:
     get:
       operationId: getLogStats
@@ -773,6 +830,10 @@ components:
       in: header
       name: X-Touchgrass-Key
       description: Per-service tg_ ingestion key
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Per-service tg_ ingestion key as a Bearer token
   parameters:
     ServiceId:
       name: service_id
@@ -994,6 +1055,69 @@ components:
         threshold: { type: integer }
         window_secs: { type: integer }
         enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+    SDKLogAttribute:
+      type: object
+      required: [value, type]
+      properties:
+        value:
+          type: [string, number, boolean]
+          description: Must match the declared type (integer values are whole numbers)
+        type: { type: string, enum: [string, integer, double, boolean] }
+    SDKLogItem:
+      type: object
+      required: [timestamp, level, body]
+      properties:
+        timestamp:
+          type: number
+          description: Event time as unix seconds (float)
+        level: { type: string, enum: [trace, debug, info, warn, error, fatal] }
+        body: { type: string, minLength: 1, maxLength: 8192 }
+        severity_number:
+          type: integer
+          minimum: 1
+          maximum: 24
+          description: OTel severity; inferred from level (1/5/9/13/17/21) when absent
+        trace_id: { type: string, pattern: '^[0-9a-f]{32}$' }
+        span_id: { type: string, pattern: '^[0-9a-f]{16}$' }
+        attributes:
+          type: object
+          maxProperties: 64
+          additionalProperties: { $ref: '#/components/schemas/SDKLogAttribute' }
+    SDKLogBatch:
+      type: object
+      required: [items]
+      properties:
+        release: { type: string, maxLength: 128 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/SDKLogItem' }
+    SDKLogItemError:
+      type: object
+      required: [error, index]
+      properties:
+        error: { type: string }
+        index:
+          type: integer
+          description: Zero-based position of the invalid item in the batch
+    SDKLog:
+      type: object
+      required: [id, service_id, ts, level, severity_number, message, attributes, trace_id, span_id, release, created_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        ts: { type: string, format: date-time }
+        level: { type: string, enum: [trace, debug, info, warn, error, fatal] }
+        severity_number: { type: integer, minimum: 1, maximum: 24 }
+        message: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/SDKLogAttribute' }
+        trace_id: { type: string }
+        span_id: { type: string }
+        release: { type: string }
         created_at: { type: string, format: date-time }
     LogLine:
       type: object

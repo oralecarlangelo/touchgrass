@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"strconv"
 	"time"
 
@@ -16,12 +17,26 @@ const (
 	maxLogContext     = 100
 )
 
+const (
+	// logSourceContainers selects docker-collected lines (the default).
+	logSourceContainers = "containers"
+	// logSourceSDK selects structured SDK rows.
+	logSourceSDK = "sdk"
+)
+
 // logsResponse is the log search payload.
 type logsResponse struct {
 	Lines []model.LogLine `json:"lines"`
 }
 
-// handleLogs searches a service's collected log lines.
+// sdkLogsResponse is the SDK log search payload: the same "lines"
+// envelope carrying structured rows.
+type sdkLogsResponse struct {
+	Lines []model.SDKLog `json:"lines"`
+}
+
+// handleLogs searches a service's collected log lines, or its SDK rows
+// with source=sdk.
 func (s *Server) handleLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 	serviceID := r.URL.Query().Get("service_id")
 	if serviceID == "" {
@@ -30,21 +45,30 @@ func (s *Server) handleLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	after, err := parseLogBound(r.URL.Query().Get("after"))
+	query := r.URL.Query()
+
+	source, err := parseLogSource(query.Get("source"), query.Get("trace_id"), query.Get("stream"))
+	if err != nil {
+		writeError(w, s.logger, err, err.Error(), "invalid_request", nethttp.StatusBadRequest)
+
+		return
+	}
+
+	after, err := parseLogBound(query.Get("after"))
 	if err != nil {
 		writeError(w, s.logger, err, "invalid after timestamp (want RFC3339)", "invalid_request", nethttp.StatusBadRequest)
 
 		return
 	}
 
-	before, err := parseLogBound(r.URL.Query().Get("before"))
+	before, err := parseLogBound(query.Get("before"))
 	if err != nil {
 		writeError(w, s.logger, err, "invalid before timestamp (want RFC3339)", "invalid_request", nethttp.StatusBadRequest)
 
 		return
 	}
 
-	limit, err := parseLimit(r.URL.Query().Get("limit"))
+	limit, err := parseLimit(query.Get("limit"))
 	if err != nil {
 		writeError(w, s.logger, err, "invalid limit (want 1-1000)", "invalid_request", nethttp.StatusBadRequest)
 
@@ -55,9 +79,26 @@ func (s *Server) handleLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 		limit = defaultLogLimit
 	}
 
+	if source == logSourceSDK {
+		rows, err := s.sdkLogs.SearchLogs(r.Context(), service.SDKLogSearch{
+			ServiceID: serviceID, Query: query.Get("q"),
+			Level: query.Get("level"), TraceID: query.Get("trace_id"),
+			Since: after, Until: before, Limit: limit,
+		})
+		if err != nil {
+			writeServiceError(w, s.logger, err, "failed to load logs")
+
+			return
+		}
+
+		writeJSON(w, s.logger, nethttp.StatusOK, sdkLogsResponse{Lines: rows})
+
+		return
+	}
+
 	lines, err := s.logs.Search(r.Context(), service.LogSearch{
-		ServiceID: serviceID, Query: r.URL.Query().Get("q"),
-		Stream: r.URL.Query().Get("stream"), Level: r.URL.Query().Get("level"),
+		ServiceID: serviceID, Query: query.Get("q"),
+		Stream: query.Get("stream"), Level: query.Get("level"),
 		Since: after, Until: before, Limit: limit,
 	})
 	if err != nil {
@@ -67,6 +108,36 @@ func (s *Server) handleLogs(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	writeJSON(w, s.logger, nethttp.StatusOK, logsResponse{Lines: lines})
+}
+
+// Log source selector errors, reported verbatim to callers.
+var (
+	errInvalidSource         = errors.New("invalid source (want sdk or containers)")
+	errTraceNeedsSDK         = errors.New("trace_id requires source=sdk")
+	errStreamNeedsContainers = errors.New("stream requires source=containers")
+)
+
+// parseLogSource resolves the source selector, defaulting to
+// containers, and rejects filters bound to the other source.
+func parseLogSource(source, traceID, stream string) (string, error) {
+	if source == "" {
+		source = logSourceContainers
+	}
+
+	switch source {
+	case logSourceContainers:
+		if traceID != "" {
+			return "", errTraceNeedsSDK
+		}
+	case logSourceSDK:
+		if stream != "" {
+			return "", errStreamNeedsContainers
+		}
+	default:
+		return "", errInvalidSource
+	}
+
+	return source, nil
 }
 
 // handleLogStats reports one service's stored lines plus backpressure losses.

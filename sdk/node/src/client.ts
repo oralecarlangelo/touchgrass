@@ -1,11 +1,21 @@
-import { scrubReport, compileScrub } from './scrub.js';
+import {
+  applyBeforeSendLog,
+  buildLogItem,
+  isLogLevel,
+  maxLogBatchSize,
+  sanitizeLogItem,
+} from './logger.js';
+import { scrubLogItem, scrubReport, compileScrub } from './scrub.js';
 import { parseStack } from './stacktrace.js';
-import { postReport } from './transport.js';
+import { postLogs, postReport } from './transport.js';
 import type {
+  BeforeSendLog,
   Breadcrumb,
   BreadcrumbInput,
   ErrorReport,
   InitOptions,
+  LogItem,
+  LogLevel,
   StackFrame,
 } from './types.js';
 
@@ -64,16 +74,28 @@ function resolveRelease(options: InitOptions): string {
   }
 }
 
-function resolveEndpoint(options: InitOptions): string | null {
+function resolveBase(options: InitOptions): string | null {
   try {
     if (typeof options.endpoint !== 'string' || options.endpoint.trim() === '') {
       return null;
     }
 
-    return `${options.endpoint.replace(/\/+$/, '')}/api/ingest`;
+    return options.endpoint.replace(/\/+$/, '');
   } catch {
     return null;
   }
+}
+
+function resolveEndpoint(options: InitOptions): string | null {
+  const base = resolveBase(options);
+
+  return base === null ? null : `${base}/api/ingest`;
+}
+
+function resolveLogsEndpoint(options: InitOptions): string | null {
+  const base = resolveBase(options);
+
+  return base === null ? null : `${base}/api/ingest/logs`;
 }
 
 function resolveKey(options: InitOptions): string | null {
@@ -95,11 +117,14 @@ function resolveKey(options: InitOptions): string | null {
  */
 export class TouchgrassClient {
   private readonly endpoint: string | null;
+  private readonly logsEndpoint: string | null;
   private readonly key: string | null;
   private readonly release: string;
   private readonly scrubPatterns: RegExp[];
+  private readonly beforeSendLog: BeforeSendLog | undefined;
   private readonly maxQueue: number;
   private readonly queue: ErrorReport[] = [];
+  private readonly logQueue: LogItem[] = [];
   private readonly breadcrumbs: Breadcrumb[] = [];
   private timer: NodeJS.Timeout | null = null;
   private handlersInstalled = false;
@@ -107,16 +132,23 @@ export class TouchgrassClient {
 
   constructor(options: InitOptions) {
     let endpoint: string | null = null;
+    let logsEndpoint: string | null = null;
     let key: string | null = null;
     let release = '';
     let patterns: RegExp[] = [];
+    let beforeSendLog: BeforeSendLog | undefined;
     let maxQueue = defaultMaxQueue;
 
     try {
       endpoint = resolveEndpoint(options);
+      logsEndpoint = resolveLogsEndpoint(options);
       key = resolveKey(options);
       release = resolveRelease(options);
       patterns = compileScrub(options.scrub);
+
+      if (typeof options.beforeSendLog === 'function') {
+        beforeSendLog = options.beforeSendLog;
+      }
 
       if (
         typeof options.maxQueue === 'number' &&
@@ -127,13 +159,16 @@ export class TouchgrassClient {
       }
     } catch {
       endpoint = null;
+      logsEndpoint = null;
       key = null;
     }
 
     this.endpoint = endpoint;
+    this.logsEndpoint = logsEndpoint;
     this.key = key;
     this.release = release;
     this.scrubPatterns = patterns;
+    this.beforeSendLog = beforeSendLog;
     this.maxQueue = maxQueue;
 
     if (this.enabled()) {
@@ -209,9 +244,33 @@ export class TouchgrassClient {
   }
 
   /**
-   * flush delivers queued reports within timeoutMs, resolving true when
-   * every report lands. Best-effort: failed reports drop rather than
-   * wedge the queue. Never rejects.
+   * captureLog queues one structured log for batched delivery to
+   * POST /api/ingest/logs. Pipeline: printf-format, beforeSendLog,
+   * sanitize, scrub, enqueue. Invalid levels no-op. Never throws.
+   */
+  captureLog(level: LogLevel, message: unknown, ...args: unknown[]): void {
+    try {
+      if (!this.enabled() || !isLogLevel(level)) {
+        return;
+      }
+
+      const built = buildLogItem(level, message, args);
+      const kept = applyBeforeSendLog(this.beforeSendLog, built);
+
+      if (kept === null) {
+        return;
+      }
+
+      this.enqueueLog(sanitizeLogItem(kept, level));
+    } catch {
+      // Fail open: logging must never throw into host code.
+    }
+  }
+
+  /**
+   * flush delivers queued reports and log batches within timeoutMs,
+   * resolving true when every queue drains. Best-effort: failures
+   * drop rather than wedge the queues. Never rejects.
    */
   async flush(timeoutMs = requestTimeoutMs): Promise<boolean> {
     try {
@@ -241,7 +300,28 @@ export class TouchgrassClient {
         delivered = delivered && ok;
       }
 
-      return delivered && this.queue.length === 0;
+      if (this.logsEndpoint !== null) {
+        while (this.logQueue.length > 0 && Date.now() < deadline) {
+          const batch = this.logQueue.splice(0, maxLogBatchSize());
+
+          if (batch.length === 0) {
+            break;
+          }
+
+          const remaining = Math.max(1, deadline - Date.now());
+          const ok = await postLogs(
+            this.logsEndpoint,
+            this.key,
+            this.release,
+            batch,
+            Math.min(remaining, requestTimeoutMs),
+          );
+
+          delivered = delivered && ok;
+        }
+      }
+
+      return delivered && this.queue.length === 0 && this.logQueue.length === 0;
     } catch {
       return false;
     }
@@ -278,6 +358,14 @@ export class TouchgrassClient {
 
     while (this.queue.length > this.maxQueue) {
       this.queue.shift();
+    }
+  }
+
+  private enqueueLog(item: LogItem): void {
+    this.logQueue.push(scrubLogItem(item, this.scrubPatterns));
+
+    while (this.logQueue.length > this.maxQueue) {
+      this.logQueue.shift();
     }
   }
 

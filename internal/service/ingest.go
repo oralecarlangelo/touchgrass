@@ -169,16 +169,7 @@ func (in *Ingestor) Ingest(
 
 // authenticate resolves a presented key or rejects it without detail.
 func (in *Ingestor) authenticate(ctx context.Context, presented string) (model.APIKey, error) {
-	if len(presented) != keyLen || !strings.HasPrefix(presented, keyTag) {
-		return model.APIKey{}, fmt.Errorf("%w: bad api key", ErrUnauthorized)
-	}
-
-	key, err := in.keys.ByHash(ctx, HashKey(presented))
-	if err != nil {
-		return model.APIKey{}, fmt.Errorf("%w: bad api key", ErrUnauthorized)
-	}
-
-	return key, nil
+	return authenticateKey(ctx, in.keys, presented)
 }
 
 // buildOccurrence validates a report and normalizes it for storage.

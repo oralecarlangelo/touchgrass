@@ -508,6 +508,137 @@ export async function fetchLogContext(
   return request<LogContext>(`/api/logs/${id}?before=${before}&after=${after}`);
 }
 
+export interface SdkLogAttribute {
+  value: string | number | boolean;
+  type: string;
+}
+
+export interface SdkLogEntry {
+  id: number;
+  ts: string;
+  level: string;
+  message: string;
+  attributes: Record<string, SdkLogAttribute>;
+  trace_id: string;
+  span_id: string;
+  release: string;
+}
+
+interface SdkLogsResponse {
+  lines: unknown[];
+}
+
+export interface SdkLogSearch {
+  q?: string;
+  after?: string;
+  before?: string;
+  level?: string;
+  trace_id?: string;
+  limit?: number;
+}
+
+function pickString(raw: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = raw[key];
+
+    if (typeof value === 'string') {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+function pickNumber(raw: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const value = raw[key];
+
+    if (typeof value === 'number') {
+      return value;
+    }
+  }
+
+  return 0;
+}
+
+function normalizeSdkAttributes(raw: unknown): Record<string, SdkLogAttribute> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return {};
+  }
+
+  const normalized: Record<string, SdkLogAttribute> = {};
+
+  for (const [key, attr] of Object.entries(raw)) {
+    if (typeof attr !== 'object' || attr === null || Array.isArray(attr)) {
+      continue;
+    }
+
+    const value = (attr as Record<string, unknown>).value;
+
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+      continue;
+    }
+
+    const type = (attr as Record<string, unknown>).type;
+    normalized[key] = { value, type: typeof type === 'string' ? type : 'string' };
+  }
+
+  return normalized;
+}
+
+// The S20 wire shape is snake_case per repo convention; camelCase keys are
+// accepted too so a small backend drift degrades instead of blanking rows.
+function normalizeSdkLogEntry(raw: unknown): SdkLogEntry {
+  if (typeof raw !== 'object' || raw === null) {
+    return { id: 0, ts: '', level: '', message: '', attributes: {}, trace_id: '', span_id: '', release: '' };
+  }
+
+  const record = raw as Record<string, unknown>;
+
+  return {
+    id: pickNumber(record, ['id']),
+    ts: pickString(record, ['ts']),
+    level: pickString(record, ['level']),
+    message: pickString(record, ['message']),
+    attributes: normalizeSdkAttributes(record.attributes),
+    trace_id: pickString(record, ['trace_id', 'traceId']),
+    span_id: pickString(record, ['span_id', 'spanId']),
+    release: pickString(record, ['release']),
+  };
+}
+
+export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}): Promise<SdkLogEntry[]> {
+  const params = new URLSearchParams({ service_id: serviceId, source: 'sdk' });
+
+  if (search.q !== undefined && search.q !== '') {
+    params.set('q', search.q);
+  }
+
+  if (search.after !== undefined && search.after !== '') {
+    params.set('after', search.after);
+  }
+
+  if (search.before !== undefined && search.before !== '') {
+    params.set('before', search.before);
+  }
+
+  if (search.level !== undefined && search.level !== '') {
+    params.set('level', search.level);
+  }
+
+  if (search.trace_id !== undefined && search.trace_id !== '') {
+    params.set('trace_id', search.trace_id);
+  }
+
+  if (search.limit !== undefined) {
+    params.set('limit', String(search.limit));
+  }
+
+  const body = await request<SdkLogsResponse>(`/api/logs?${params.toString()}`);
+
+  return (body.lines ?? []).map(normalizeSdkLogEntry);
+}
+
 export async function fetchAudit(serviceId: string, limit = 100): Promise<AuditEntry[]> {
   const params = new URLSearchParams({ limit: String(limit) });
 

@@ -24,6 +24,7 @@ const (
 	defaultRetentionLogs          = "168h"
 	defaultMaxLogLines            = "50000"
 	defaultLogPollInterval        = "5s"
+	defaultRetentionSDKLogs       = "7"
 	addrEnvVar                    = "TOUCHGRASS_ADDR"
 	dbEnvVar                      = "TOUCHGRASS_DB"
 	envEnvVar                     = "APP_ENV"
@@ -40,6 +41,7 @@ const (
 	retentionLogsEnvVar           = "TOUCHGRASS_RETENTION_LOGS"
 	maxLogLinesEnvVar             = "TOUCHGRASS_LOGS_MAX_LINES"
 	logPollIntervalEnvVar         = "TOUCHGRASS_LOG_POLL_INTERVAL"
+	retentionSDKLogsEnvVar        = "TOUCHGRASS_RETENTION_SDK_LOGS"
 	envDev                        = "dev"
 	envProd                       = "prod"
 )
@@ -72,6 +74,8 @@ type Config struct {
 	MaxOccurrences int
 	// RetentionLogs bounds log line max age.
 	RetentionLogs time.Duration
+	// RetentionSDKLogs bounds SDK log row max age.
+	RetentionSDKLogs time.Duration
 	// MaxLogLines caps stored log lines per service, newest kept.
 	MaxLogLines int
 	// LogPollInterval paces container log polling.
@@ -100,6 +104,7 @@ type scheduleConfig struct {
 	watch                  time.Duration
 	cutoverTimeout         time.Duration
 	retentionLogs          time.Duration
+	retentionSDKLogs       time.Duration
 	logPoll                time.Duration
 }
 
@@ -152,6 +157,7 @@ func load(getenv func(string) string) (Config, error) {
 		RetentionErrors:        schedule.retentionErrors,
 		MaxOccurrences:         ingest.maxOccurrences,
 		RetentionLogs:          schedule.retentionLogs,
+		RetentionSDKLogs:       schedule.retentionSDKLogs,
 		MaxLogLines:            ingest.maxLogLines,
 		LogPollInterval:        schedule.logPoll,
 	}, nil
@@ -227,6 +233,11 @@ func loadSchedule(getenv func(string) string) (scheduleConfig, error) {
 		return scheduleConfig{}, err
 	}
 
+	retentionSDKLogs, err := parseRetentionDays(getenv, retentionSDKLogsEnvVar, defaultRetentionSDKLogs)
+	if err != nil {
+		return scheduleConfig{}, err
+	}
+
 	logPoll, err := parseDuration(getenv, logPollIntervalEnvVar, defaultLogPollInterval)
 	if err != nil {
 		return scheduleConfig{}, err
@@ -241,6 +252,7 @@ func loadSchedule(getenv func(string) string) (scheduleConfig, error) {
 		watch:                  watch,
 		cutoverTimeout:         cutoverTimeout,
 		retentionLogs:          retentionLogs,
+		retentionSDKLogs:       retentionSDKLogs,
 		logPoll:                logPoll,
 	}, nil
 }
@@ -294,6 +306,35 @@ func loadAdmin(getenv func(string) string) (adminConfig, error) {
 	}
 
 	return adminConfig{password: password, secure: secure}, nil
+}
+
+// parseRetentionDays reads a day-count retention variable with a
+// default, accepting a plain day count ("7") or — for consistency
+// with the other retention variables — a Go duration ("168h").
+func parseRetentionDays(getenv func(string) string, name, def string) (time.Duration, error) {
+	raw := getenv(name)
+	if raw == "" {
+		raw = def
+	}
+
+	if days, err := strconv.Atoi(raw); err == nil {
+		if days < 1 {
+			return 0, fmt.Errorf("invalid %s %q: must be positive", name, raw)
+		}
+
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: want day count or Go duration", name, raw)
+	}
+
+	if duration <= 0 {
+		return 0, fmt.Errorf("invalid %s %q: must be positive", name, raw)
+	}
+
+	return duration, nil
 }
 
 // parseDuration reads a Go duration variable with a default.

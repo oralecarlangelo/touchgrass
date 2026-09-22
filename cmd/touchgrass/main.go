@@ -122,6 +122,7 @@ type serveServices struct {
 	events    *http.Hub
 	ingestor  *service.Ingestor
 	logs      *service.LogCollector
+	sdkLogs   *service.LogIngestor
 	system    *service.System
 }
 
@@ -160,6 +161,7 @@ func newServeServer(
 		Events:    services.events,
 		Ingestor:  services.ingestor,
 		Logs:      services.logs,
+		SDKLogs:   services.sdkLogs,
 		System:    services.system,
 		Dist:      dist,
 		Docs:      docs,
@@ -223,6 +225,7 @@ func runServe(args []string) error {
 	audit := service.NewAudit(serviceStore, store.NewAuditStore(db))
 	ingestor := newIngestor(serviceStore, db, cfg.MaxOccurrences, logger)
 	collector := newLogCollector(wiring)
+	sdkLogs := newLogIngestor(serviceStore, db)
 	sys := service.NewSystem(service.SystemConfig{
 		Docker:    dockerClient,
 		Version:   version,
@@ -267,7 +270,7 @@ func runServe(args []string) error {
 	server, err := newServeServer(cfg, logger, serveServices{
 		inventory: inv, sampler: sampler, deploys: deploys,
 		cutover: cutover, audit: audit, auth: auth, events: hub,
-		ingestor: ingestor, logs: collector, system: sys,
+		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
 	}, version)
 	if err != nil {
 		return err
@@ -321,6 +324,7 @@ func newSampler(wiring serveWiring) *service.Sampler {
 		Issues:        store.NewIssueStore(wiring.db),
 		IssueRules:    store.NewIssueRuleStore(wiring.db),
 		Logs:          store.NewLogStore(wiring.db),
+		SDKLogs:       store.NewSDKLogStore(wiring.db),
 		Interval:      wiring.cfg.MetricsInterval,
 		Retention: service.Retention{
 			Metrics:       wiring.cfg.RetentionMetrics,
@@ -328,6 +332,7 @@ func newSampler(wiring serveWiring) *service.Sampler {
 			Deploys:       wiring.cfg.RetentionDeploys,
 			Errors:        wiring.cfg.RetentionErrors,
 			Logs:          wiring.cfg.RetentionLogs,
+			SDKLogs:       wiring.cfg.RetentionSDKLogs,
 		},
 		Logger: wiring.logger,
 	})
@@ -342,6 +347,15 @@ func newLogCollector(wiring serveWiring) *service.LogCollector {
 		Interval:           wiring.cfg.LogPollInterval,
 		MaxLinesPerService: wiring.cfg.MaxLogLines,
 		Logger:             wiring.logger,
+	})
+}
+
+// newLogIngestor wires structured-log ingestion on the shared key store.
+func newLogIngestor(serviceStore *store.ServiceStore, db *store.DB) *service.LogIngestor {
+	return service.NewLogIngestor(service.LogIngestorConfig{
+		Services: serviceStore,
+		Keys:     store.NewKeyStore(db),
+		SDKLogs:  store.NewSDKLogStore(db),
 	})
 }
 

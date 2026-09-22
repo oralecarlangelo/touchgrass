@@ -137,6 +137,121 @@ func TestHandleLogsFilters(t *testing.T) {
 	}
 }
 
+// seedSDKLogRows ingests one info row plus one traced error row over HTTP.
+func seedSDKLogRows(t *testing.T, server *Server) {
+	t.Helper()
+
+	plaintext, _ := mintTestKey(t, server, testServiceAPI, "1")
+
+	status, body := doLogIngestRequest(t, server, plaintext, "", testLogBatchBody)
+	if status != nethttp.StatusAccepted {
+		t.Fatalf("seed status = %d, want 202 (body: %s)", status, body)
+	}
+}
+
+// getSDKLogs fetches one SDK source page and decodes it.
+func getSDKLogs(t *testing.T, server *Server, params string) sdkLogsResponse {
+	t.Helper()
+
+	status, body := doRequest(t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+params, "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
+	}
+
+	var got sdkLogsResponse
+
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decoding sdk logs: %v", err)
+	}
+
+	return got
+}
+
+func TestHandleLogsSDKSource(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+	seedSDKLogRows(t, server)
+
+	got := getSDKLogs(t, server, "&source=sdk")
+
+	if len(got.Lines) != 2 || got.Lines[0].Message != testLogErrorBody {
+		t.Fatalf("lines = %+v, want the batch newest first", got.Lines)
+	}
+
+	row := got.Lines[0]
+
+	if row.Level != model.LogLevelError || row.Severity != 17 || row.Release != testLogRelease {
+		t.Errorf("row = %+v, want error severity 17 with release", row)
+	}
+
+	if row.TraceID != testTraceID || row.SpanID != "0123456789abcdef" {
+		t.Errorf("row = %+v, want trace correlation", row)
+	}
+
+	if len(row.Attributes) != 1 {
+		t.Errorf("row attributes = %+v, want the route attribute", row.Attributes)
+	}
+}
+
+func TestHandleLogsSDKTrace(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+	seedSDKLogRows(t, server)
+
+	got := getSDKLogs(t, server, "&source=sdk&trace_id="+testTraceID)
+
+	if len(got.Lines) != 1 || got.Lines[0].Message != testLogErrorBody {
+		t.Errorf("trace filter = %+v, want the traced row", got.Lines)
+	}
+}
+
+func TestHandleLogsSDKLevel(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+	seedSDKLogRows(t, server)
+
+	got := getSDKLogs(t, server, "&source=sdk&level="+model.LogLevelError)
+
+	if len(got.Lines) != 1 || got.Lines[0].Level != model.LogLevelError {
+		t.Errorf("level filter = %+v, want the error row", got.Lines)
+	}
+}
+
+func TestHandleLogsSourceRejects(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+
+	status, _ := doRequest(t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&source=bogus", "")
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("bad source status = %d, want 400", status)
+	}
+
+	status, _ = doRequest(
+		t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&trace_id="+testTraceID, "",
+	)
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("trace with containers status = %d, want 400", status)
+	}
+
+	status, _ = doRequest(
+		t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&source=sdk&stream=stdout", "",
+	)
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("stream with sdk status = %d, want 400", status)
+	}
+
+	status, _ = doRequest(
+		t, server, nethttp.MethodGet, "/api/logs?service_id="+testServiceAPI+"&source=sdk&level=bogus", "",
+	)
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("bad sdk level status = %d, want 400", status)
+	}
+}
+
 func TestHandleLogsRejects(t *testing.T) {
 	t.Parallel()
 

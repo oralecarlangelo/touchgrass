@@ -2,7 +2,8 @@
 
 What touchgrass trusts, what it doesn't, and where the sharp edges
 are. v1 scope: single-host, single admin credential, in-app
-notifications only.
+notifications only. Covers everything through S27 (fleet, SDK
+logs/OTel, databases, onboarding, service delete).
 
 ## Trust boundaries
 
@@ -13,6 +14,7 @@ notifications only.
 | 3 | touchgrass → Docker socket | Local daemon answers truthfully | Socket file permissions (see below) |
 | 4 | touchgrass → service health URLs | HTTP status codes | Latency/body (timeouts on every probe) |
 | 5 | Operator → host | Env-provided secrets | Disk (no secrets at rest by design) |
+| 6 | touchgrass → Postgres/Redis | `docker exec` + in-container trust auth | No DB credentials held anywhere (nothing to leak) |
 
 ## Authentication and sessions
 
@@ -35,6 +37,12 @@ notifications only.
   replacement. Revoked keys get 401s; SDKs drop best-effort.
 - Ingest payloads are size-capped and grouped by server-computed
   fingerprint; the server never executes stack frames or breadcrumbs.
+- Structured logs (`POST /api/ingest/logs`, incl. OTel-shaped
+  batches) ride the same key model and caps. Log attributes can
+  carry app PII — scrubbing is client-side (SDK hooks), so treat
+  `sdk_logs` like occurrences at rest. OTel trace/span ids are
+  opaque strings to the server: validated for shape, never
+  dereferenced.
 
 ## The Docker socket (sharpest edge)
 
@@ -53,12 +61,44 @@ can call it can start a privileged container. Consequences:
 
 - Single SQLite file (`TOUCHGRASS_DB`). It holds occurrences (may
   contain app PII — scrub runs in the SDK *before* send, patterns are
-  team-reviewed per the dogfood runbook), log lines, hashed keys, and
-  the audit trail. Filesystem permissions are the control:
-  `chmod 600` the DB and keep it out of backups that leave the trust
-  boundary.
+  team-reviewed per the dogfood runbook), container log lines, SDK
+  logs, fleet samples, hashed keys, and the audit trail.
+  Filesystem permissions are the control: `chmod 600` the DB and
+  keep it out of backups that leave the trust boundary.
+- Postgres dumps live beside the DB in `TOUCHGRASS_DB_BACKUP_DIR`
+  (mode 0600, full prod data). Same discipline: tight perms, and
+  the keep-trim deletes old dumps — anything the trim must never
+  eat belongs elsewhere. Restore/re-verify paths validate backup
+  names (`<name>.dump`, no separators, must already exist) so the
+  API can't walk the backup dir.
 - Logs and occurrences are retention-trimmed (`TOUCHGRASS_RETENTION_*`)
   and per-service capped; trims are logged, FTS indexes follow deletes.
+
+## Operator-powered destruction (all admin-gated + audited)
+
+These exist so the operator can act fast; the control is the admin
+session plus confirm-gating in the UI, with an audit entry per run:
+
+- **Deploys** run service scripts with the process's privileges
+  (cutover/rollback/deploy). Blast radius is one service by
+  construction — scripts live outside touchgrass and stay
+  team-reviewed.
+- **Database restore** drains app backends and replaces table
+  contents; the app errors until verify completes. Typed-filename
+  confirm, auto safety backup first, `db_restore` audit entry.
+- **Service delete** wipes the service row plus its touchgrass-side
+  history *including its audit rows* — the one sanctioned exception
+  to audit append-only. The deletion itself is audited as a global
+  `service_delete` entry, so the trail shows who removed what.
+- **Image prune** deletes unused Docker images host-wide to reclaim
+  disk. Nothing running is touched (daemon-side guarantee), but
+  pulled images may need re-pulling.
+- **Onboarding suggest** probes the candidate container's own
+  published localhost ports for a health URL (short timeouts,
+  first 2xx wins). Admin-gated; it never probes arbitrary hosts.
+- **Fleet/system views** expose every container on the daemon,
+  including other teams' stacks. Same admin boundary as services —
+  no separate reader role exists to leak across.
 
 ## What v1 deliberately lacks
 

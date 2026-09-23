@@ -915,6 +915,34 @@ Validation: new recording-prober tests (skip stopped idle, probe
 when running) + full Go gate; deployed; journal quiet + inventory
 health unchanged.
 
+### S27 — Docs completeness: guides + architecture + threat model (2026-09-22)
+
+**Status**: DONE (2026-09-22). Audit found the API reference at
+100% route parity and SDK/fleet guides solid, but no Deploys or
+Databases guides, a stale ARCHITECTURE.md, ADRs stopping at 0008,
+and a pre-fleet threat model.
+
+Public (`docs-site/`, new nav under Operate): `deploys.md`
+(strategies, cutover/rollback/deploy flows, 202+SSE+poll,
+downtime proof, history/record, service delete, limits) and
+`databases.md` (health cards, backups, restore steps, jobs, API,
+limits) — every behavioral claim verified against code
+(409-busy/conflict, `pg_restore --list` verify, nil downtime
+without a public URL). Quickstart gains next-step links to
+fleet/deploys/databases.
+
+Implementation: ARCHITECTURE.md refreshed (service diagram,
+accurate resource list pointing at openapi.yaml, full schema
+table, SDK logger + OTel, embedded docs site, ADR-0009 pointer);
+ADR-0009 records OTel-logs-only (overriding the old
+"Tracing/APM out" ban); threat model covers S27 surfaces (SDK log
+PII, backup dir perms + name validation, docker-exec trust auth,
+operator destruction section incl. the audit append-only exception
+for service delete).
+
+Validation: docs-site verify+build, redocly, redeploy (docs are
+embedded), live fetch of /docs/deploys.html + /docs/databases.html.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

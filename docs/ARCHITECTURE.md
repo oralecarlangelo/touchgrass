@@ -7,8 +7,9 @@ change them via an ADR in `docs/adr/`, not by silent drift.
 ## System overview
 
 One Go binary + one SQLite file. The binary serves the API, the embedded
-UI, SSE streams, and the SDK ingestion endpoint; background loops probe
-health and enforce retention.
+UI and docs site, SSE streams, and the SDK ingestion endpoints;
+background loops sample containers, probe health, collect logs, and
+enforce retention.
 
 ```
                          ┌──────────────────────────────┐
@@ -17,20 +18,25 @@ health and enforce retention.
  browsers ──► :8080 ──►  │  internal/http               │
                          │   ├─ REST API (stdlib mux)   │
  tn-api etc.             │   ├─ SPA (embedded web/dist) │
-   │ SDK ──► :8080/ingest│   ├─ SSE (/events)           │
+   │ SDK ──► :8080/ingest│   ├─ docs (embedded site)    │
+                         │   ├─ SSE (/events)           │
                          │   └─ middleware (auth, log)  │
                          │                              │
                          │  internal/service            │
-                         │   ├─ deploy (traffic flips)  │
+                         │   ├─ deploy/cutover (deploys)│
                          │   ├─ resources (metrics)     │
                          │   ├─ issues (error grouping) │
-                         │   ├─ logs (search)           │
+                         │   ├─ logs + sdk_logs (search)│
+                         │   ├─ fleet/system (sampling) │
+                         │   ├─ database (pg/redis)     │
+                         │   ├─ onboarding (promote)    │
                          │   ├─ notify (webhook/email)  │
                          │   └─ audit (append-only)     │
                          │                              │
                          │  internal/store (SQLite)     │
                          │  internal/{docker,probe}     │
-                         │  schedulers (probe, retention│
+                         │  schedulers (sample, probe,  │
+                         │   collect, retention)        │
                          └──────┬───────────────┬───────┘
                                 │               │
                     Docker socket│               │SQLite file
@@ -60,19 +66,20 @@ POSTs webhooks / sends email.
 
 - Stdlib `net/http` + Go 1.22 method+pattern ServeMux. No router framework
   in v1 (stdlib-first).
-- Route sketch (finalized in technical design):
-  - `GET /api/health` — own health (also serves as the uptime probe target)
-  - `/api/services`, `/api/services/{id}/metrics`,
-    `/api/services/{id}/deploys`, `POST
-    /api/services/{id}/cutover`, `POST /api/services/{id}/rollback`,
-    `/api/alerts/rules`, `/api/notifications`, `/api/audit` — Sprint 5
-    resources, JSON, `[]` never `null`
-  - `/api/deploys`, `/api/resources`, `/api/issues`, `/api/logs` — later
-    pillar resources
-  - `POST /api/ingest` — SDK error reports (per-project API key header)
-  - `POST /api/ingest/logs` — SDK structured-log batches, same key model
-  - `GET /api/events` — SSE stream (metrics ticks, deploy progress, alerts)
-  - `/*` — embedded SPA fallback
+- Resources (authoritative list: `docs-site/openapi.yaml`, verified at
+  100% route parity — re-check with every new route): `GET /api/health`
+  (also the uptime probe
+  target); services (CRUD incl. `DELETE`, metrics, deploys, deploy,
+  cutover, rollback); onboarding suggest; alert rules; notifications;
+  audit; issues (+ occurrences, rules, per-issue logs); container logs
+  (+ stats, context); SDK logs ingest; API keys; fleet/system
+  (containers, host history); databases (health, backups, restore,
+  jobs); docker images (+ prune); `POST /api/ingest` (SDK error
+  reports, per-project API key header); `POST /api/ingest/logs` (SDK
+  structured-log batches, same key model); `GET /api/events` (SSE:
+  metrics ticks, deploy progress, alerts); `/docs` (embedded docs
+  site); `/*` (embedded SPA fallback). JSON everywhere, `[]` never
+  `null`.
 - Errors: internal chain with `%w`; boundary translates to
   `{error: <user-safe message>, code: <machine code>}` + status;
   technical detail goes to logs only.
@@ -87,12 +94,15 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 | ---- | ----- |
 | services | name, compose project, strategy, health endpoint, ports |
 | deploys | per-service cutover/rollback history: SHA, actor, timing, outcome, downtime secs |
-| metrics | container rollups (CPU/RAM/disk, restarts, uptime samples) |
-| issues | fingerprinted error groups + occurrences |
-| logs | collected container log lines (short retention) |
+| deploy_probes | per-run public-URL samples behind the downtime math |
+| metrics | per-service container rollups (CPU/RAM/disk, restarts, uptime samples) |
+| host/container_samples | fleet-wide samples for every container + host CPU/mem/load history |
+| issues | fingerprinted error groups + occurrences (+ releases, issue rules) |
+| log_lines | collected container log lines (short retention) |
 | sdk_logs | SDK structured logs: level, severity, attrs, trace/span, release |
-| audit | append-only cutover/rollback/login log |
-| settings | alert rules, notification targets, retention caps, keys |
+| db_jobs | backup/restore job rows (dumps live on disk, not in SQLite) |
+| audit | append-only action log (cutover, rollback, deploy, login, db_*, service_*) |
+| settings | alert rules, notifications, API keys, retention caps |
 
 - Migrations: versioned `migrations/*.sql` applied in order by an internal
   runner tracking `schema_migrations`. Forward-only in v1.
@@ -126,8 +136,10 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
 
 ## Web embedding and dev mode
 
-- Prod: `web/dist` (Vite build output) embedded via `go:embed`; the Go
-  binary serves it. Release flow builds the SPA first, then Go.
+- Prod: `web/dist` (Vite build output) and `docs-site/dist` (guides +
+  API reference) embedded via `go:embed`; the Go binary serves both.
+  Release flow builds the SPA and the docs site first (`make build`
+  does all three), then Go.
 - Dev: `make dev` runs API + `vite dev` side by side; the API proxies `/`
   to Vite when `APP_ENV=dev` so HMR works without rebuilds.
 
@@ -135,8 +147,15 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
 
 - Captures uncaught exceptions + manual reports with stack traces,
   breadcrumbs, release/SHA tags; batches async over HTTPS+key.
-- Zero dependencies. Fail-open: guarded init, no sync IO, try/catch
-  around everything; safe to leave enabled with ingestion down.
+- `logger` ships structured app logs (levels, attributes, release)
+  to `POST /api/ingest/logs`, queryable beside container logs.
+- OTel logs only (ADR-0009): auto-captured trace/span ids when
+  `@opentelemetry/api` is present, OTel 1–24 severity end to end,
+  plus an `@touchgrass/node/otel` exporter for OTel-native apps.
+  No spans, no metrics, no APM.
+- Zero dependencies (OTel API is an optional peer). Fail-open:
+  guarded init, no sync IO, try/catch around everything; safe to
+  leave enabled with ingestion down.
 - PII scrub hooks run client-side before send.
 
 ## Distribution
@@ -157,5 +176,6 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
 
 - `service`/`store` interfaces stay host-agnostic so multi-host agents can
   slot behind them; `docker/` is the seam an agent would remote.
-- Tracing/APM, browser/mobile SDKs, RBAC, and secrets management are
-  explicitly out — don't half-build them.
+- Tracing/APM stays out except OTel log correlation (ADR-0009);
+  browser/mobile SDKs, RBAC, and secrets management are explicitly
+  out — don't half-build them.

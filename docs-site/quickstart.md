@@ -68,4 +68,6 @@ one.
 Next: [Node SDK reference](/sdk) for every option, [Structured
 logging](/sdk-logging) to ship application logs with trace correlation,
 or [Concepts](/concepts) for how grouping, sampling, and retention
-work.
+work. Beyond errors: [Fleet monitoring](/fleet) for every container
+on the box, [Deploys](/deploys) for cutover/rollback flows, and
+[Databases](/databases) for Postgres health, backups, and restores.

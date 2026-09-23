@@ -102,7 +102,10 @@ func (in *Inventory) view(
 	}
 }
 
-// blueGreenView resolves the live color from nginx and probes both colors.
+// blueGreenView resolves the live color from nginx and probes the live
+// color plus any color with a running container. An idle color with no
+// running container reports unhealthy without a probe: dialing a stopped
+// color every sample only spams the log with refused connections.
 func (in *Inventory) blueGreenView(
 	ctx context.Context,
 	def model.Service,
@@ -114,8 +117,30 @@ func (in *Inventory) blueGreenView(
 	}
 
 	live := in.liveColor(def, cfg)
+	running := runningServices(def.ComposeProject, containers)
 
-	results := in.probeAll(ctx, []string{cfg.BlueURL, cfg.GreenURL})
+	targets := []struct {
+		name    string
+		service string
+		url     string
+	}{
+		{colorBlue, cfg.BlueService, cfg.BlueURL},
+		{colorGreen, cfg.GreenService, cfg.GreenURL},
+	}
+
+	urls := make([]string, 0, len(targets))
+
+	for _, color := range targets {
+		if live == color.name || running[color.service] {
+			urls = append(urls, color.url)
+
+			continue
+		}
+
+		in.logger.Debug("skipping probe for stopped idle color", "service", def.ID, "color", color.name)
+	}
+
+	results := in.probeAll(ctx, urls)
 
 	colors := []model.ColorView{
 		{
@@ -302,6 +327,25 @@ func shortID(id string) string {
 // belongsTo reports whether c belongs to a compose project and service set.
 func belongsTo(c docker.Container, project string, want map[string]bool) bool {
 	return c.Labels[docker.LabelComposeProject] == project && want[c.Labels[docker.LabelComposeService]]
+}
+
+// runningServices returns the compose service names with a running
+// container in project. The daemon list covers running containers only,
+// so membership alone proves liveness.
+func runningServices(project string, containers []docker.Container) map[string]bool {
+	running := make(map[string]bool)
+
+	for _, c := range containers {
+		if c.Labels[docker.LabelComposeProject] != project {
+			continue
+		}
+
+		if service := c.Labels[docker.LabelComposeService]; service != "" {
+			running[service] = true
+		}
+	}
+
+	return running
 }
 
 // decodeBlueGreen parses blue-green strategy config.

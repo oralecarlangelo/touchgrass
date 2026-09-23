@@ -27,6 +27,7 @@ const (
 	testUnknownServiceName = "unknown service"
 	testBogusValue         = "bogus"
 	testBlueHealthURL      = "http://127.0.0.1:4101/health"
+	testGreenHealthURL     = "http://127.0.0.1:4102/health"
 	testAdminHealthURL     = "http://127.0.0.1:3002/health"
 	testComposeProject     = "ticketnation"
 	testRunningState       = "running"

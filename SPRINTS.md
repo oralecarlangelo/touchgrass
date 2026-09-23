@@ -900,6 +900,21 @@ deployed, live-verified: canary create 201 → delete 204 → re-delete
 0014 live); inventory intact; new bundle `index-uJsc4pnq.js` serves
 the Fleet counts/filter/sort + delete dialog strings.
 
+### S26 — Quiet idle-color probe spam (2026-09-22)
+
+**Status**: DONE (2026-09-22). The 60s sampler probed both
+blue-green colors every tick, so each stopped idle color logged a
+WARN (`health probe failed … connection refused`) every minute.
+`blueGreenView` now probes the live color plus any color with a
+running container (the daemon list covers running containers only),
+and reports a stopped idle color unhealthy without dialing it (Debug
+log only). Live-color failures still probe + WARN; recreate
+services unchanged (their single URL is the live endpoint).
+
+Validation: new recording-prober tests (skip stopped idle, probe
+when running) + full Go gate; deployed; journal quiet + inventory
+health unchanged.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

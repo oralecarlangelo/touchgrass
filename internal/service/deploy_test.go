@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
+	"sync"
 	"testing"
 
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
@@ -38,6 +40,33 @@ func (s stubProber) Check(_ context.Context, target string) (probe.Result, error
 	}
 
 	return probe.Result{Healthy: false, StatusCode: 500}, nil
+}
+
+// recordingProber is a fake Prober that records probed targets.
+type recordingProber struct {
+	mu      sync.Mutex
+	targets []string
+	healthy map[string]bool
+}
+
+func (s *recordingProber) Check(_ context.Context, target string) (probe.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.targets = append(s.targets, target)
+
+	if s.healthy[target] {
+		return probe.Result{Healthy: true, StatusCode: 200}, nil
+	}
+
+	return probe.Result{Healthy: false, StatusCode: 500}, nil
+}
+
+func (s *recordingProber) probed() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]string{}, s.targets...)
 }
 
 // openInventoryDB returns a seeded in-memory store.
@@ -222,5 +251,69 @@ func TestShortID(t *testing.T) {
 				t.Errorf("shortID(%q) = %q, want %q", tt.id, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestServicesSkipsStoppedIdleColor(t *testing.T) {
+	t.Parallel()
+
+	// Only the blue container runs; green is stopped and idle (live color
+	// degrades to unknown without an nginx conf in tests).
+	prober := &recordingProber{healthy: map[string]bool{
+		testBlueHealthURL:  true,
+		testGreenHealthURL: true,
+	}}
+	inv := testInventory(t, stubLister{containers: testContainers()}, prober)
+
+	api := serviceViews(t, inv)[testServiceAPI]
+
+	if got := prober.probed(); !slices.Contains(got, testBlueHealthURL) {
+		t.Errorf("probed = %v, want blue URL probed (container running)", got)
+	}
+
+	if got := prober.probed(); slices.Contains(got, testGreenHealthURL) {
+		t.Errorf("probed = %v, want green URL skipped (stopped idle color)", got)
+	}
+
+	if len(api.Colors) != 2 {
+		t.Fatalf("tn-api colors = %d, want 2", len(api.Colors))
+	}
+
+	if api.Colors[1].Health != model.HealthUnhealthy {
+		t.Errorf("tn-api green health = %q, want unhealthy without a probe", api.Colors[1].Health)
+	}
+}
+
+func TestServicesProbesBothColorsWhenRunning(t *testing.T) {
+	t.Parallel()
+
+	containers := append(testContainers(), docker.Container{
+		ID:    "gggghhhhiiiijjjjkkkk",
+		Name:  "ticketnation-api-green-1",
+		State: testRunningState,
+		Labels: map[string]string{
+			docker.LabelComposeProject: testComposeProject,
+			docker.LabelComposeService: testGreenService,
+		},
+	})
+
+	prober := &recordingProber{healthy: map[string]bool{
+		testBlueHealthURL:  true,
+		testGreenHealthURL: true,
+	}}
+	inv := testInventory(t, stubLister{containers: containers}, prober)
+
+	api := serviceViews(t, inv)[testServiceAPI]
+
+	if got := prober.probed(); !slices.Contains(got, testGreenHealthURL) {
+		t.Errorf("probed = %v, want green URL probed (container running)", got)
+	}
+
+	if len(api.Colors) != 2 {
+		t.Fatalf("tn-api colors = %d, want 2", len(api.Colors))
+	}
+
+	if api.Colors[1].Health != model.HealthHealthy {
+		t.Errorf("tn-api green health = %q, want healthy", api.Colors[1].Health)
 	}
 }

@@ -43,6 +43,7 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 | `TOUCHGRASS_POSTGRES_DB`           | `postgres`         | Database health checks and backups target            |
 | `TOUCHGRASS_DB_BACKUP_DIR`         | `./backups`        | pg_dump artifacts plus `.sha256` sidecars            |
 | `TOUCHGRASS_DB_BACKUP_KEEP`        | `14`               | Newest backups retained after each backup            |
+| `TOUCHGRASS_DB_BACKUP_INTERVAL`    | `24h`              | Scheduled-backup cadence; `0` disables               |
 | `TOUCHGRASS_REDIS_CONTAINER`       | (empty)            | Redis container for the health chip; empty hides it  |
 | `TOUCHGRASS_SCRIPTS_DIR`           | `scripts`          | Deploy helper scripts; relative resolves at app root |
 

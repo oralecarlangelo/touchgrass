@@ -34,6 +34,10 @@ var (
 // dockerBin is the only binary the database runner executes.
 const dockerBin = "docker"
 
+// schedulerActor attributes scheduled-backup audit entries, distinct
+// from the admin actor behind console-triggered jobs.
+const schedulerActor = "scheduler"
+
 // jobsListLimit bounds GET /api/databases/jobs to the last 20 runs.
 const jobsListLimit = 20
 
@@ -529,6 +533,50 @@ func (d *Database) Reconcile(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// RunScheduler triggers a backup every interval until ctx is cancelled.
+// A non-positive interval disables scheduled backups. Ticks never
+// overlap a running job — a busy tick logs and skips — and an
+// unconfigured postgres degrades to a debug line. The first backup
+// fires after one interval, never at boot.
+func (d *Database) RunScheduler(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+
+	d.logger.Info("scheduling automatic backups", "interval", interval.String())
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			d.scheduledBackup(ctx)
+		}
+	}
+}
+
+// scheduledBackup starts one scheduler-attributed backup, skipping when
+// a job already runs, postgres is not configured, or ctx is done.
+func (d *Database) scheduledBackup(ctx context.Context) {
+	id, err := d.StartBackup(ctx, schedulerActor)
+
+	switch {
+	case err == nil:
+		d.logger.Info("scheduled backup started", "job", id)
+	case errors.Is(err, ErrDatabaseBusy):
+		d.logger.Info("scheduled backup skipped: a database job is already running")
+	case errors.Is(err, ErrDatabaseUnconfigured):
+		d.logger.Debug("scheduled backup skipped: postgres is not configured")
+	case errors.Is(err, context.Canceled):
+		d.logger.Debug("scheduled backup skipped: shutting down")
+	default:
+		d.logger.Error("scheduled backup failed to start", "error", err)
+	}
 }
 
 // StartBackup begins an async pg_dump backup, returning the job id.

@@ -29,6 +29,7 @@ const (
 	defaultPostgresDB             = "postgres"
 	defaultBackupDir              = "./backups"
 	defaultBackupKeep             = "14"
+	defaultBackupInterval         = "24h"
 	defaultScriptsDir             = "scripts"
 	addrEnvVar                    = "TOUCHGRASS_ADDR"
 	dbEnvVar                      = "TOUCHGRASS_DB"
@@ -52,6 +53,7 @@ const (
 	postgresDBEnvVar              = "TOUCHGRASS_POSTGRES_DB"
 	backupDirEnvVar               = "TOUCHGRASS_DB_BACKUP_DIR"
 	backupKeepEnvVar              = "TOUCHGRASS_DB_BACKUP_KEEP"
+	backupIntervalEnvVar          = "TOUCHGRASS_DB_BACKUP_INTERVAL"
 	redisContainerEnvVar          = "TOUCHGRASS_REDIS_CONTAINER"
 	scriptsDirEnvVar              = "TOUCHGRASS_SCRIPTS_DIR"
 	envDev                        = "dev"
@@ -102,6 +104,8 @@ type Config struct {
 	BackupDir string
 	// BackupKeep bounds newest backups retained after each backup.
 	BackupKeep int
+	// BackupInterval paces scheduled backups; zero disables them.
+	BackupInterval time.Duration
 	// RedisContainer is the redis container name; empty hides redis.
 	RedisContainer string
 	// ScriptsDir holds the deploy helper scripts; relative paths resolve
@@ -155,6 +159,7 @@ type databaseConfig struct {
 	dbName         string
 	backupDir      string
 	backupKeep     int
+	backupInterval time.Duration
 	redisContainer string
 }
 
@@ -208,6 +213,7 @@ func load(getenv func(string) string) (Config, error) {
 		PostgresDB:             database.dbName,
 		BackupDir:              database.backupDir,
 		BackupKeep:             database.backupKeep,
+		BackupInterval:         database.backupInterval,
 		RedisContainer:         database.redisContainer,
 		ScriptsDir:             listen.scriptsDir,
 	}, nil
@@ -350,14 +356,41 @@ func loadDatabase(getenv func(string) string) (databaseConfig, error) {
 		return databaseConfig{}, err
 	}
 
+	backupInterval, err := parseBackupInterval(getenv)
+	if err != nil {
+		return databaseConfig{}, err
+	}
+
 	return databaseConfig{
 		container:      getenv(postgresContainerEnvVar),
 		user:           user,
 		dbName:         dbName,
 		backupDir:      backupDir,
 		backupKeep:     backupKeep,
+		backupInterval: backupInterval,
 		redisContainer: getenv(redisContainerEnvVar),
 	}, nil
+}
+
+// parseBackupInterval resolves the scheduled-backup cadence: empty means
+// the default, zero ("0", "0s") disables scheduled backups, anything
+// else must be a positive Go duration.
+func parseBackupInterval(getenv func(string) string) (time.Duration, error) {
+	raw := getenv(backupIntervalEnvVar)
+	if raw == "" {
+		raw = defaultBackupInterval
+	}
+
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: want Go duration", backupIntervalEnvVar, raw)
+	}
+
+	if duration < 0 {
+		return 0, fmt.Errorf("invalid %s %q: must not be negative", backupIntervalEnvVar, raw)
+	}
+
+	return duration, nil
 }
 
 // parsePositiveInt resolves a required positive integer setting.

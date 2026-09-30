@@ -25,6 +25,12 @@ The Backup button streams `pg_dump -Fc` to
 newest (default 14). One job at a time — a second trigger gets 409
 `busy` while one runs.
 
+Backups also run on a schedule: every `TOUCHGRASS_DB_BACKUP_INTERVAL`
+(default `24h`, `0` disables), starting one interval after boot. A
+scheduled tick never overlaps a running job — it logs and skips — and
+scheduled runs audit under the `scheduler` actor so they read apart
+from console-triggered ones in the audit log.
+
 Manual dumps dropped in the same directory list and verify like
 any other backup — but they count toward the keep trim, so move
 anything the trim must never eat. Dumps compress well (gigabytes
@@ -82,8 +88,10 @@ Shapes are in the [REST API reference](/api/).
 - PostgreSQL and Redis are configured by container name
   (`TOUCHGRASS_POSTGRES_CONTAINER`, `TOUCHGRASS_REDIS_CONTAINER`)
   — one of each per host.
-- No scheduled backups in v1: trigger from the console (or the
-  API) on whatever cadence fits, or call the API from cron.
+- Scheduled backups run on a fixed interval from boot, not a
+  wall-clock time: the nightly run drifts with restarts. For an
+  exact 02:00 window, disable the scheduler (`0`) and call the
+  API from cron instead.
 - No point-in-time recovery: restores replace contents from a
   full dump. Keep the safety backups until each restore is
   signed off.

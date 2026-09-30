@@ -24,6 +24,16 @@ newest (default 14). One job at a time — a second trigger gets 409
 `busy` while one runs. Jobs survive nothing: a restart orphans the
 row, and boot reconciles it to failed ("interrupted by restart").
 
+Backups also run on a schedule: every `TOUCHGRASS_DB_BACKUP_INTERVAL`
+(default `24h`, `0` disables), starting one interval after boot. A
+scheduled tick never overlaps a running job — it logs (`scheduled
+backup skipped`) and waits for the next tick. Scheduled runs audit
+under the `scheduler` actor; console runs under `admin`. The schedule
+is interval-from-boot, not wall-clock: restarts drift the nightly
+run. For an exact 02:00 window, set the interval to `0` and call
+`POST /api/databases/backups` from cron with a session cookie
+(login first — sessions are in-memory, 24h, and die on restart).
+
 Pre-existing manual dumps in the same dir (e.g.
 `ticketnation-pre-*.dump`) list and verify like any other backup,
 and count toward the keep trim — rename or move anything the trim
@@ -70,5 +80,6 @@ TOUCHGRASS_POSTGRES_USER=ticketnation
 TOUCHGRASS_POSTGRES_DB=ticketnation
 TOUCHGRASS_DB_BACKUP_DIR=/opt/backups/ticketnation
 TOUCHGRASS_DB_BACKUP_KEEP=14
+TOUCHGRASS_DB_BACKUP_INTERVAL=24h
 TOUCHGRASS_REDIS_CONTAINER=ticketnation-redis-1
 ```

@@ -1241,3 +1241,173 @@ func TestJobUnknown(t *testing.T) {
 		t.Errorf("Job() error = %v, want ErrDBJobNotFound", err)
 	}
 }
+
+func TestRunSchedulerBacksUpOnInterval(t *testing.T) {
+	t.Parallel()
+
+	dump := []byte("pg-dump-bytes")
+	runner := &fakeRunner{handler: cannedPostgres(dump)}
+	svc, db, dir := testDatabase(t, runner, nil)
+
+	// A handful of ticks: enough to fire, few enough that every job
+	// stays inside the 20-row jobs list the assertion polls.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	svc.RunScheduler(ctx, 50*time.Millisecond)
+
+	job := waitSchedulerJob(t, svc)
+
+	if job.Kind != model.DBJobBackup || job.Status != model.DBJobSuccess {
+		t.Fatalf("job = %+v, want successful backup", job)
+	}
+
+	checkBackupArtifacts(t, dir, job, dump)
+
+	if !schedulerAudited(t, db) {
+		t.Error("audit has no scheduler-attributed db_backup entry, want one")
+	}
+}
+
+// waitSchedulerJob polls for the first successful backup job, since the
+// scheduler fires jobs async on its ticks.
+func waitSchedulerJob(t *testing.T, svc *Database) model.DBJob {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+
+	for time.Now().Before(deadline) {
+		jobs, err := svc.Jobs(context.Background())
+		if err != nil {
+			t.Fatalf("Jobs() error = %v, want nil", err)
+		}
+
+		for _, job := range jobs {
+			if job.Kind == model.DBJobBackup && job.Status == model.DBJobSuccess {
+				return job
+			}
+		}
+
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	t.Fatal("no successful scheduled backup after 5s")
+
+	return model.DBJob{}
+}
+
+// schedulerAudited reports whether a db_backup audit entry carries the
+// scheduler actor.
+func schedulerAudited(t *testing.T, db *store.DB) bool {
+	t.Helper()
+
+	entries, err := store.NewAuditStore(db).List(context.Background(), "", 100)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+
+	for _, entry := range entries {
+		if entry.Action == model.AuditDBBackup && entry.Actor == schedulerActor {
+			return true
+		}
+	}
+
+	return false
+}
+
+func TestRunSchedulerDisabled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		interval time.Duration
+	}{
+		{name: "zero", interval: 0},
+		{name: "negative", interval: -time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			runner := &fakeRunner{handler: cannedPostgres(nil)}
+			svc, _, _ := testDatabase(t, runner, nil)
+
+			done := make(chan struct{})
+
+			go func() {
+				defer close(done)
+
+				svc.RunScheduler(context.Background(), tt.interval)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("RunScheduler() still running after 1s, want immediate return")
+			}
+
+			jobs, err := svc.Jobs(context.Background())
+			if err != nil {
+				t.Fatalf("Jobs() error = %v, want nil", err)
+			}
+
+			if len(jobs) != 0 {
+				t.Errorf("jobs = %d, want 0 while disabled", len(jobs))
+			}
+		})
+	}
+}
+
+func TestRunSchedulerSkipsWhileBusy(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{handler: cannedPostgres([]byte("dump"))}
+	svc, _, _ := testDatabase(t, runner, nil)
+
+	if err := svc.claim(); err != nil {
+		t.Fatalf("claim() error = %v, want nil", err)
+	}
+	defer svc.release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	svc.RunScheduler(ctx, 20*time.Millisecond)
+
+	jobs, err := svc.Jobs(context.Background())
+	if err != nil {
+		t.Fatalf("Jobs() error = %v, want nil", err)
+	}
+
+	if len(jobs) != 0 {
+		t.Errorf("jobs = %d, want 0 while another job holds the guard", len(jobs))
+	}
+}
+
+func TestRunSchedulerSkipsUnconfigured(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeRunner{handler: cannedPostgres(nil)}
+	svc, _, _ := testDatabase(t, runner, func(cfg *DatabaseConfig) {
+		cfg.Container = ""
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	svc.RunScheduler(ctx, 20*time.Millisecond)
+
+	jobs, err := svc.Jobs(context.Background())
+	if err != nil {
+		t.Fatalf("Jobs() error = %v, want nil", err)
+	}
+
+	if len(jobs) != 0 {
+		t.Errorf("jobs = %d, want 0 without a postgres container", len(jobs))
+	}
+
+	if runner.count() != 0 {
+		t.Errorf("docker calls = %d, want 0 without a postgres container", runner.count())
+	}
+}

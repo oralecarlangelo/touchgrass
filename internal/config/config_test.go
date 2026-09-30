@@ -19,8 +19,8 @@ func defaultTestConfig() Config {
 		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
 		RetentionSDKLogs:  7 * 24 * time.Hour,
 		PostgresContainer: "", PostgresUser: defaultPostgresUser, PostgresDB: defaultPostgresDB,
-		BackupDir: defaultBackupDir, BackupKeep: 14, RedisContainer: "",
-		ScriptsDir: defaultScriptsDir,
+		BackupDir: defaultBackupDir, BackupKeep: 14, BackupInterval: 24 * time.Hour,
+		RedisContainer: "", ScriptsDir: defaultScriptsDir,
 	}
 }
 
@@ -48,8 +48,9 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_LOG_POLL_INTERVAL": "2s", "TOUCHGRASS_RETENTION_SDK_LOGS": "3",
 				"TOUCHGRASS_POSTGRES_CONTAINER": "pg", "TOUCHGRASS_POSTGRES_USER": "app",
 				"TOUCHGRASS_POSTGRES_DB": "ticketnation", "TOUCHGRASS_DB_BACKUP_DIR": "/opt/backups",
-				"TOUCHGRASS_DB_BACKUP_KEEP": "30", "TOUCHGRASS_REDIS_CONTAINER": "redis",
-				"TOUCHGRASS_SCRIPTS_DIR": "/opt/touchgrass/scripts",
+				"TOUCHGRASS_DB_BACKUP_KEEP": "30", "TOUCHGRASS_DB_BACKUP_INTERVAL": "6h",
+				"TOUCHGRASS_REDIS_CONTAINER": "redis",
+				"TOUCHGRASS_SCRIPTS_DIR":     "/opt/touchgrass/scripts",
 			},
 			mutate: func(cfg *Config) {
 				cfg.Addr = ":8080"
@@ -69,6 +70,7 @@ func TestLoad(t *testing.T) {
 				cfg.PostgresDB = "ticketnation"
 				cfg.BackupDir = "/opt/backups"
 				cfg.BackupKeep = 30
+				cfg.BackupInterval = 6 * time.Hour
 				cfg.RedisContainer = "redis"
 				cfg.ScriptsDir = "/opt/touchgrass/scripts"
 			},
@@ -101,6 +103,23 @@ func TestLoad(t *testing.T) {
 		{
 			name:        "non-boolean cookie flag",
 			env:         map[string]string{"TOUCHGRASS_COOKIE_SECURE": "maybe", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name: "zero backup interval disables",
+			env:  map[string]string{"TOUCHGRASS_DB_BACKUP_INTERVAL": "0", adminPasswordEnvVar: testAdminPassword},
+			mutate: func(cfg *Config) {
+				cfg.BackupInterval = 0
+			},
+		},
+		{
+			name:        "invalid backup interval",
+			env:         map[string]string{"TOUCHGRASS_DB_BACKUP_INTERVAL": "nightly", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "negative backup interval",
+			env:         map[string]string{"TOUCHGRASS_DB_BACKUP_INTERVAL": "-1h", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 	}

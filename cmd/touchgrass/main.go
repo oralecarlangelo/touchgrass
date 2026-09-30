@@ -66,25 +66,29 @@ func run(args []string) error {
 	}
 }
 
-// backgroundLoops wires sampler, inventory watch, and log collection goroutines.
+// backgroundLoops wires sampler, inventory watch, log collection, and
+// scheduled backup goroutines.
 type backgroundLoops struct {
-	sampler   *service.Sampler
-	inventory *service.Inventory
-	collector *service.LogCollector
-	interval  time.Duration
-	hub       *http.Hub
-	metrics   time.Duration
-	logPoll   time.Duration
+	sampler        *service.Sampler
+	inventory      *service.Inventory
+	collector      *service.LogCollector
+	databases      *service.Database
+	interval       time.Duration
+	hub            *http.Hub
+	metrics        time.Duration
+	logPoll        time.Duration
+	backupInterval time.Duration
 }
 
-// startBackground runs sampler, watch, and log loops until ctx is cancelled.
+// startBackground runs sampler, watch, log, and backup loops until ctx
+// is cancelled.
 func startBackground(
 	ctx context.Context,
 	loops backgroundLoops,
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(3)
+	group.Add(4)
 
 	go func() {
 		defer group.Done()
@@ -104,10 +108,17 @@ func startBackground(
 		loops.collector.Run(ctx)
 	}()
 
+	go func() {
+		defer group.Done()
+
+		loops.databases.RunScheduler(ctx, loops.backupInterval)
+	}()
+
 	logger.Info("starting background loops",
 		"metrics_interval", loops.metrics.String(),
 		"watch_interval", loops.interval.String(),
 		"log_poll_interval", loops.logPoll.String(),
+		"backup_interval", loops.backupInterval.String(),
 	)
 }
 
@@ -266,13 +277,15 @@ func runServe(args []string) error {
 	var group sync.WaitGroup
 
 	startBackground(ctx, backgroundLoops{
-		sampler:   sampler,
-		inventory: inv,
-		collector: collector,
-		interval:  cfg.WatchInterval,
-		hub:       hub,
-		metrics:   cfg.MetricsInterval,
-		logPoll:   cfg.LogPollInterval,
+		sampler:        sampler,
+		inventory:      inv,
+		collector:      collector,
+		databases:      databases,
+		interval:       cfg.WatchInterval,
+		hub:            hub,
+		metrics:        cfg.MetricsInterval,
+		logPoll:        cfg.LogPollInterval,
+		backupInterval: cfg.BackupInterval,
 	}, &group, logger)
 
 	server, err := newServeServer(cfg, logger, serveServices{

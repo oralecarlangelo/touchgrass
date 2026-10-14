@@ -995,8 +995,13 @@ Validation: `make vet`/`lint` (0 issues)/`test`/`test-race`/
 service validation + last-admin guard + bootstrap,
 per-request session revalidation, a 25-route viewer 403
 matrix plus a viewer reads-stay-open matrix, user CRUD
-round-trips with hash-leak assertions. EC2 click-through
-pending: create viewer, read prod logs, confirm 403s.
+round-trips with hash-leak assertions. EC2-VALIDATED
+(2026-10-14, binary 6dc45e1): migration 0015 applied +
+admin seeded on boot; legacy password login 204; viewer
+created (201, hash-free), logged in, read live tn-api prod
+logs; viewer cutover + user-delete both 403 `forbidden`;
+probe viewer deleted after the run; audit shows per-actor
+entries; public bundle hash-verified with Users strings.
 
 SCOPE GUARD: no per-service scoping, no operator role, no
 SSO, no password-expiry, no session persistence across

@@ -19,7 +19,7 @@ func seedRollbackAudit(t *testing.T, db *store.DB) {
 	audit := service.NewAudit(store.NewServiceStore(db), store.NewAuditStore(db))
 
 	if _, err := audit.Record(context.Background(), model.AuditRecord{
-		ServiceID: testServiceAPI, Actor: "admin", Action: model.AuditRollback,
+		ServiceID: testServiceAPI, Actor: defaultLoginUsername, Action: model.AuditRollback,
 		Result: model.AuditSuccess, Detail: "rollback to blue: success",
 	}); err != nil {
 		t.Fatalf("Record() error = %v, want nil", err)

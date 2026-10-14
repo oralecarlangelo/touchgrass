@@ -56,8 +56,12 @@ func servicesTestServer(t *testing.T, lister docker.Lister) *Server {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
+	seedTestUsers(t, db)
+
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)
+	audit := service.NewAudit(services, store.NewAuditStore(db))
+	managedUsers := service.NewUsers(store.NewUserStore(db), audit)
 	inv := service.NewInventory(services, lister, stubProber{}, logger)
 
 	return New(Config{
@@ -65,8 +69,9 @@ func servicesTestServer(t *testing.T, lister docker.Lister) *Server {
 		Version:   testVersion,
 		Logger:    logger,
 		Inventory: inv,
-		Audit:     service.NewAudit(services, store.NewAuditStore(db)),
-		Auth:      testAuthenticator(t),
+		Audit:     audit,
+		Auth:      testAuthenticator(t, managedUsers),
+		Users:     managedUsers,
 		Events:    NewHub(logger),
 		Dist:      testDist(),
 	})
@@ -93,7 +98,7 @@ func TestHandleServices(t *testing.T) {
 
 	server := servicesTestServer(t, stubLister{containers: containers})
 
-	req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, "/api/services", nil)
+	req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, testServicesPath, nil)
 	req.AddCookie(authCookie(t, server))
 
 	rec := httptest.NewRecorder()
@@ -173,7 +178,7 @@ func TestHandleCreateService(t *testing.T) {
 	req := httptest.NewRequestWithContext(
 		t.Context(),
 		nethttp.MethodPost,
-		"/api/services",
+		testServicesPath,
 		strings.NewReader(createServiceBody(t)),
 	)
 	req.AddCookie(authCookie(t, server))
@@ -206,7 +211,7 @@ func TestHandleCreateService(t *testing.T) {
 		t.Errorf("created = (%q, %q), want (shop-web, recreate)", got.ID, got.Strategy)
 	}
 
-	listReq := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, "/api/services", nil)
+	listReq := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, testServicesPath, nil)
 	listReq.AddCookie(authCookie(t, server))
 
 	listRec := httptest.NewRecorder()
@@ -280,7 +285,7 @@ func TestHandleCreateServiceErrors(t *testing.T) {
 			req := httptest.NewRequestWithContext(
 				t.Context(),
 				nethttp.MethodPost,
-				"/api/services",
+				testServicesPath,
 				strings.NewReader(tt.body(base)),
 			)
 			req.AddCookie(authCookie(t, server))
@@ -321,7 +326,7 @@ func TestHandleServicesDockerError(t *testing.T) {
 
 	server := servicesTestServer(t, stubLister{err: errors.New("daemon down")})
 
-	req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, "/api/services", nil)
+	req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, testServicesPath, nil)
 	req.AddCookie(authCookie(t, server))
 
 	rec := httptest.NewRecorder()
@@ -362,7 +367,7 @@ func TestHandleDeleteService(t *testing.T) {
 	create := httptest.NewRequestWithContext(
 		t.Context(),
 		nethttp.MethodPost,
-		"/api/services",
+		testServicesPath,
 		strings.NewReader(createServiceBody(t)),
 	)
 	create.AddCookie(authCookie(t, server))

@@ -172,9 +172,11 @@ function memPercent(container: FleetContainer): number | null {
 export default function FleetScreen({
   onUnauthorized,
   onSelectService,
+  isAdmin,
 }: {
   onUnauthorized: () => void;
   onSelectService: (id: string) => void;
+  isAdmin: boolean;
 }) {
   const [system, setSystem] = useState<SystemSnapshot | null>(null);
   const [containers, setContainers] = useState<FleetContainer[] | null>(null);
@@ -518,9 +520,11 @@ export default function FleetScreen({
                           </TableCell>
                           <TableCell className="text-right">
                             {!container.managed ? (
-                              <Button size="sm" onClick={() => setPromoteTarget(container.name)}>
-                                Manage
-                              </Button>
+                              isAdmin ? (
+                                <Button size="sm" onClick={() => setPromoteTarget(container.name)}>
+                                  Manage
+                                </Button>
+                              ) : null
                             ) : (
                               serviceId !== '' && (
                                 <Button

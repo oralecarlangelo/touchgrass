@@ -12,7 +12,7 @@ func TestHandleRecordListDeploys(t *testing.T) {
 
 	server, _ := fullTestServer(t)
 
-	status, body := doRequest(t, server, nethttp.MethodPost, "/api/services/tn-api/deploys",
+	status, body := doRequest(t, server, nethttp.MethodPost, testDeploysPath,
 		`{"sha":"abc123","actor":"carl","outcome":"success","notes":"scripted"}`)
 
 	if status != nethttp.StatusCreated {
@@ -29,7 +29,7 @@ func TestHandleRecordListDeploys(t *testing.T) {
 		t.Fatal("created id = 0, want non-zero")
 	}
 
-	status, body = doRequest(t, server, nethttp.MethodGet, "/api/services/tn-api/deploys", "")
+	status, body = doRequest(t, server, nethttp.MethodGet, testDeploysPath, "")
 
 	if status != nethttp.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
@@ -68,14 +68,14 @@ func TestHandleRecordDeployErrors(t *testing.T) {
 		{
 			name:   "empty sha",
 			method: nethttp.MethodPost,
-			target: "/api/services/tn-api/deploys",
+			target: testDeploysPath,
 			body:   `{"sha":"","actor":"b","outcome":"success"}`,
 			status: nethttp.StatusBadRequest,
 		},
 		{
 			name:   "bad time",
 			method: nethttp.MethodPost,
-			target: "/api/services/tn-api/deploys",
+			target: testDeploysPath,
 			body:   `{"sha":"a","actor":"b","outcome":"success","started_at":"soon"}`,
 			status: nethttp.StatusBadRequest,
 		},

@@ -22,14 +22,14 @@ func TestHandleCutoverValidation(t *testing.T) {
 	}{
 		{
 			name:         "unconfigured script",
-			target:       "/api/services/tn-api/cutover",
+			target:       testCutoverPath,
 			body:         `{"target":"green"}`,
 			expectedCode: testInvalidRequest,
 			status:       nethttp.StatusBadRequest,
 		},
 		{
 			name:         "bad target",
-			target:       "/api/services/tn-api/cutover",
+			target:       testCutoverPath,
 			body:         `{"target":"purple"}`,
 			expectedCode: testInvalidRequest,
 			status:       nethttp.StatusBadRequest,
@@ -50,7 +50,7 @@ func TestHandleCutoverValidation(t *testing.T) {
 		},
 		{
 			name:         "bad json",
-			target:       "/api/services/tn-api/cutover",
+			target:       testCutoverPath,
 			body:         testMalformedJSON,
 			expectedCode: testInvalidRequest,
 			status:       nethttp.StatusBadRequest,
@@ -79,7 +79,7 @@ func TestHandleCutoverValidation(t *testing.T) {
 		})
 	}
 
-	status, body := doRequest(t, server, nethttp.MethodPost, "/api/services/tn-api/cutover", `{"target":"green"}`)
+	status, body := doRequest(t, server, nethttp.MethodPost, testCutoverPath, `{"target":"green"}`)
 
 	if status != nethttp.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", status)

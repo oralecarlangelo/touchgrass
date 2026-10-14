@@ -96,6 +96,8 @@ func writeServiceError(
 		writeError(w, logger, err, "unknown issue rule", "not_found", nethttp.StatusNotFound)
 	case errors.Is(err, store.ErrLogLineNotFound):
 		writeError(w, logger, err, "unknown log line", "not_found", nethttp.StatusNotFound)
+	case errors.Is(err, store.ErrUserNotFound):
+		writeError(w, logger, err, "unknown user", "not_found", nethttp.StatusNotFound)
 	case errors.Is(err, service.ErrUnauthorized):
 		writeError(w, logger, err, "bad api key", "unauthorized", nethttp.StatusUnauthorized)
 	default:

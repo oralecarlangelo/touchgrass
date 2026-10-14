@@ -143,8 +143,11 @@ func newDatabaseFixture(
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
+	seedTestUsers(t, db)
+
 	services := store.NewServiceStore(db)
 	audit := service.NewAudit(services, store.NewAuditStore(db))
+	managedUsers := service.NewUsers(store.NewUserStore(db), audit)
 	stub := &stubExecRunner{handler: handler}
 	dir := t.TempDir()
 
@@ -164,7 +167,8 @@ func newDatabaseFixture(
 
 	server := New(Config{
 		Addr: testDatabaseAddr, Version: testVersion, Logger: logger,
-		Audit: audit, Auth: testAuthenticator(t), Events: NewHub(logger),
+		Audit: audit, Auth: testAuthenticator(t, managedUsers), Users: managedUsers,
+		Events:   NewHub(logger),
 		Database: service.NewDatabase(cfg),
 		Dist:     testDist(), Docs: testDocs(),
 	})

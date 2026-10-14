@@ -38,7 +38,7 @@ Derived from `BRD-touchgrass.md` (requirements), the scope plan
 | Q2 hosting | Same EC2 box |
 | Q3 GitHub org | `oralecarlangelo` → `github.com/oralecarlangelo/touchgrass` |
 | Q4 notifications | In-app web notifications first; webhooks/email post-v1 |
-| Q5 auth | Single admin credential |
+| Q5 auth | Single admin credential (superseded by S28: admin/viewer roles, ADR-0010) |
 | Q6 ambition | Us-first with OSS hygiene |
 
 ## MVP track (S1–S6) — deploy pillar usable
@@ -942,6 +942,91 @@ for service delete).
 
 Validation: docs-site verify+build, redocly, redeploy (docs are
 embedded), live fetch of /docs/deploys.html + /docs/databases.html.
+
+### S28 — Multi-user auth + read-only viewers (2026-10-14)
+
+**Status**: DONE (2026-10-14, code-complete). Two global roles
+end to end: admins hold every power the old single credential
+held plus user management; viewers read everything (services,
+metrics, deploys history, logs, issues, notifications, fleet/
+system, audit, keys list) and mutate nothing. FROZEN CONTRACT:
+
+Store — migration `0015_users.sql`: `users(id, username UNIQUE,
+password_hash, role CHECK admin|viewer, disabled_at,
+created_at)`; audit CHECK rebuilt with `user_create`,
+`user_update`, `user_delete`.
+
+Service (`internal/service/users.go`) — `Create` (username
+`^[a-z0-9-]+$` 1–64, password 12–72 chars, role enum,
+duplicate → 409), `SetRole`/`SetPassword`/`SetDisabled`/
+`Delete` (last-enabled-admin guard → 409 on demote/disable/
+delete), `Verify`/`Lookup` (unknown/disabled/wrong all map to
+`ErrUnauthorized`, indistinguishable), `EnsureAdmin` (seeds or
+repairs the bootstrap admin from `TOUCHGRASS_ADMIN_PASSWORD`
+only when zero enabled admins exist; otherwise untouched).
+Every mutation audits with the acting username.
+
+Auth (`internal/http/auth.go`) — sessions bind random tokens
+to usernames; role + disabled re-resolve per request, so
+disables bite on the next call. Login body
+`{username?, password}` (empty username = admin, v1 clients
+keep working); `GET /api/auth/me` returns
+`{authenticated, username, role}`. Mutating routes wrap in
+`requireAdmin` → 403 `forbidden`; audit `actor` is the real
+username. 403s are not audited (request logs capture them).
+
+API (all admin-only): `GET /api/users` → `{users: [...]}`
+(hash-free); `POST /api/users` → 201; `POST
+/api/users/{id}/password` → 204; `POST /api/users/{id}/role`
+→ 200; `POST /api/users/{id}/disable|enable` → 200; `DELETE
+/api/users/{id}` → 204. Unknown ids 404 `not_found`.
+
+UI — login gains a username field (prefilled `admin`);
+viewers get a read-only badge, land on Logs, see no Users
+nav, and lose every mutating control (deploy/cutover/
+rollback/record, rule/key/service/user/database/image
+actions, notification mark-read, fleet Manage); new Users
+screen (table + create/reset/role/disable/delete dialogs).
+`openapi.yaml` mirrors the routes (49 → 56 operations,
+`Forbidden` response, `User` schema), redocly clean.
+
+Validation: `make vet`/`lint` (0 issues)/`test`/`test-race`/
+`test-int` green; web `verify` green; new coverage —
+service validation + last-admin guard + bootstrap,
+per-request session revalidation, a 25-route viewer 403
+matrix plus a viewer reads-stay-open matrix, user CRUD
+round-trips with hash-leak assertions. EC2 click-through
+pending: create viewer, read prod logs, confirm 403s.
+
+SCOPE GUARD: no per-service scoping, no operator role, no
+SSO, no password-expiry, no session persistence across
+restarts — each a one-sprint follow-up, not S28 creep.
+
+**Goal**: other devs get read-only log access without deploy
+power; every action still audited, per actor.
+
+- S28.1 Users store + migration + bootstrap (1pd) [FR-P1, NFR-5]
+  Acceptance: `users` table + audit actions migrate cleanly;
+  fresh boot seeds admin from env; reboot with users present
+  changes nothing.
+- S28.2 Multi-user sessions + authorization (1.5pd) [FR-P1, NFR-5]
+  Acceptance: named logins work, legacy password-only login
+  still works; viewers read and get 403 on every mutation;
+  disable kills sessions immediately.
+- S28.3 User-management API (1pd) [FR-P1, FR-D4]
+  Acceptance: full CRUD behind admin-only routes with audit
+  entries; last-admin guard proven; hashes never leave the API.
+- S28.4 UI + docs (1.5pd) [NFR-6]
+  Acceptance: viewer console is read-only end to end with a
+  Users screen for admins; ARCHITECTURE/threat-model/OpenAPI/
+  ADR-0010 updated in the same sprint.
+- Standards in play: `golang-database` (parameterized store,
+  sentinel not-found), `golang-security` (bcrypt, session
+  handling, per-route authz), `golang-error-handling`
+  (user-safe envelopes, no credential leaks in errors),
+  `golang-testing` (table-driven matrices).
+- Validation: gate suite green; EC2 viewer walkthrough per the
+  status note.
 
 ## Working agreements
 

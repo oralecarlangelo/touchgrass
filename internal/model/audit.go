@@ -12,6 +12,9 @@ const (
 	AuditDeploy        = "deploy"
 	AuditServiceCreate = "service_create"
 	AuditServiceDelete = "service_delete"
+	AuditUserCreate    = "user_create"
+	AuditUserUpdate    = "user_update"
+	AuditUserDelete    = "user_delete"
 )
 
 // Audit results recorded in the append-only log.

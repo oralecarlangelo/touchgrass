@@ -46,9 +46,11 @@ import {
 export default function AlertsTab({
   serviceId,
   onUnauthorized,
+  isAdmin,
 }: {
   serviceId: string;
   onUnauthorized: () => void;
+  isAdmin: boolean;
 }) {
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [issueRules, setIssueRules] = useState<IssueRule[] | null>(null);
@@ -211,9 +213,11 @@ export default function AlertsTab({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-medium">Metric rules</CardTitle>
-          <Button size="sm" onClick={() => openDialog('metric')}>
-            New rule
-          </Button>
+          {isAdmin && (
+            <Button size="sm" onClick={() => openDialog('metric')}>
+              New rule
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {rules === null ? (
@@ -228,7 +232,7 @@ export default function AlertsTab({
                 <TableRow>
                   <TableHead>Condition</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  {isAdmin && <TableHead className="text-right">Action</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -242,17 +246,19 @@ export default function AlertsTab({
                         {rule.enabled ? 'enabled' : 'disabled'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setPendingDelete({ kind: 'metric', id: rule.id })}
-                        aria-label={`Delete rule ${rule.id}`}
-                      >
-                        Delete
-                      </Button>
-                    </TableCell>
+                    {isAdmin && (
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setPendingDelete({ kind: 'metric', id: rule.id })}
+                          aria-label={`Delete rule ${rule.id}`}
+                        >
+                          Delete
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -264,9 +270,11 @@ export default function AlertsTab({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-medium">Issue rules</CardTitle>
-          <Button size="sm" onClick={() => openDialog('issue')}>
-            New rule
-          </Button>
+          {isAdmin && (
+            <Button size="sm" onClick={() => openDialog('issue')}>
+              New rule
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {issueRules === null ? (
@@ -281,7 +289,7 @@ export default function AlertsTab({
                 <TableRow>
                   <TableHead>Condition</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
+                  {isAdmin && <TableHead className="text-right">Action</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -295,17 +303,19 @@ export default function AlertsTab({
                         {rule.enabled ? 'enabled' : 'disabled'}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setPendingDelete({ kind: 'issue', id: rule.id })}
-                        aria-label={`Delete issue rule ${rule.id}`}
-                      >
-                        Delete
-                      </Button>
-                    </TableCell>
+                    {isAdmin && (
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setPendingDelete({ kind: 'issue', id: rule.id })}
+                          aria-label={`Delete issue rule ${rule.id}`}
+                        >
+                          Delete
+                        </Button>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

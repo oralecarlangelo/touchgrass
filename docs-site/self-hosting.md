@@ -21,7 +21,7 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 
 | Variable                           | Default            | Meaning                                              |
 | ---------------------------------- | ------------------ | ---------------------------------------------------- |
-| `TOUCHGRASS_ADMIN_PASSWORD`        | (required)         | Single admin password, bcrypt-hashed in memory       |
+| `TOUCHGRASS_ADMIN_PASSWORD`        | (required)         | Seeds `admin` on first boot; managed in Users after  |
 | `TOUCHGRASS_DB`                    | `./touchgrass.db`  | SQLite path (WAL sidecars live alongside it)         |
 | `TOUCHGRASS_ADDR`                  | `127.0.0.1:8080`   | Listen address; keep loopback behind a proxy         |
 | `APP_ENV`                          | `prod`             | `dev` enables the Vite proxy; `prod` serves embedded |

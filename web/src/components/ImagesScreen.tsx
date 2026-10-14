@@ -30,7 +30,13 @@ import {
 } from '@/lib/api.ts';
 import { formatBytes, formatTime, shortId } from '@/lib/format.ts';
 
-export default function ImagesScreen({ onUnauthorized }: { onUnauthorized: () => void }) {
+export default function ImagesScreen({
+  onUnauthorized,
+  isAdmin,
+}: {
+  onUnauthorized: () => void;
+  isAdmin: boolean;
+}) {
   const [images, setImages] = useState<ImageView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -89,15 +95,17 @@ export default function ImagesScreen({ onUnauthorized }: { onUnauthorized: () =>
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">Docker images</h1>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="ml-auto"
-          disabled={images === null || dangling.length === 0}
-          onClick={() => setConfirmOpen(true)}
-        >
-          Prune dangling ({dangling.length})
-        </Button>
+        {isAdmin && (
+          <Button
+            variant="destructive"
+            size="sm"
+            className="ml-auto"
+            disabled={images === null || dangling.length === 0}
+            onClick={() => setConfirmOpen(true)}
+          >
+            Prune dangling ({dangling.length})
+          </Button>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

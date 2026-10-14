@@ -32,6 +32,7 @@ type Config struct {
 	Cutover    *service.Cutover
 	Audit      *service.Audit
 	Auth       *Authenticator
+	Users      *service.Users
 	Events     *Hub
 	Ingestor   *service.Ingestor
 	Logs       *service.LogCollector
@@ -55,6 +56,7 @@ type Server struct {
 	cutover    *service.Cutover
 	audit      *service.Audit
 	auth       *Authenticator
+	users      *service.Users
 	events     *Hub
 	ingestor   *service.Ingestor
 	logs       *service.LogCollector
@@ -78,6 +80,7 @@ func New(cfg Config) *Server {
 		cutover:    cfg.Cutover,
 		audit:      cfg.Audit,
 		auth:       cfg.Auth,
+		users:      cfg.Users,
 		events:     cfg.Events,
 		ingestor:   cfg.Ingestor,
 		logs:       cfg.Logs,
@@ -88,53 +91,60 @@ func New(cfg Config) *Server {
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)
-	mux.HandleFunc("POST /api/services", server.handleCreateService)
-	mux.HandleFunc("DELETE /api/services/{id}", server.handleDeleteService)
+	mux.HandleFunc("POST /api/services", server.requireAdmin(server.handleCreateService))
+	mux.HandleFunc("DELETE /api/services/{id}", server.requireAdmin(server.handleDeleteService))
 	mux.HandleFunc("GET /api/onboarding/suggest", server.handleOnboardingSuggest)
 	mux.HandleFunc("GET /api/services/{id}/metrics", server.handleMetrics)
 	mux.HandleFunc("GET /api/services/{id}/deploys", server.handleDeploys)
-	mux.HandleFunc("POST /api/services/{id}/deploys", server.handleRecordDeploy)
-	mux.HandleFunc("POST /api/services/{id}/cutover", server.handleCutover)
-	mux.HandleFunc("POST /api/services/{id}/rollback", server.handleRollback)
-	mux.HandleFunc("POST /api/services/{id}/deploy", server.handleDeploy)
+	mux.HandleFunc("POST /api/services/{id}/deploys", server.requireAdmin(server.handleRecordDeploy))
+	mux.HandleFunc("POST /api/services/{id}/cutover", server.requireAdmin(server.handleCutover))
+	mux.HandleFunc("POST /api/services/{id}/rollback", server.requireAdmin(server.handleRollback))
+	mux.HandleFunc("POST /api/services/{id}/deploy", server.requireAdmin(server.handleDeploy))
 	mux.HandleFunc("GET /api/alerts/rules", server.handleRules)
-	mux.HandleFunc("POST /api/alerts/rules", server.handleCreateRule)
-	mux.HandleFunc("DELETE /api/alerts/rules/{id}", server.handleDeleteRule)
+	mux.HandleFunc("POST /api/alerts/rules", server.requireAdmin(server.handleCreateRule))
+	mux.HandleFunc("DELETE /api/alerts/rules/{id}", server.requireAdmin(server.handleDeleteRule))
 	mux.HandleFunc("GET /api/notifications", server.handleNotifications)
-	mux.HandleFunc("POST /api/notifications/{id}/read", server.handleMarkNotificationRead)
-	mux.HandleFunc("POST /api/notifications/read", server.handleMarkNotificationsRead)
+	mux.HandleFunc("POST /api/notifications/{id}/read", server.requireAdmin(server.handleMarkNotificationRead))
+	mux.HandleFunc("POST /api/notifications/read", server.requireAdmin(server.handleMarkNotificationsRead))
 	mux.HandleFunc("GET /api/audit", server.handleAudit)
 	mux.HandleFunc("GET /api/events", server.handleEvents)
 	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", server.handleMe)
+	mux.HandleFunc("GET /api/users", server.requireAdmin(server.handleUsers))
+	mux.HandleFunc("POST /api/users", server.requireAdmin(server.handleCreateUser))
+	mux.HandleFunc("POST /api/users/{id}/password", server.requireAdmin(server.handleUserPassword))
+	mux.HandleFunc("POST /api/users/{id}/role", server.requireAdmin(server.handleUserRole))
+	mux.HandleFunc("POST /api/users/{id}/disable", server.requireAdmin(server.handleUserDisable))
+	mux.HandleFunc("POST /api/users/{id}/enable", server.requireAdmin(server.handleUserEnable))
+	mux.HandleFunc("DELETE /api/users/{id}", server.requireAdmin(server.handleDeleteUser))
 	mux.HandleFunc("POST /api/ingest", server.handleIngest)
 	mux.HandleFunc("POST /api/ingest/logs", server.handleIngestLogs)
-	mux.HandleFunc("POST /api/keys", server.handleCreateKey)
+	mux.HandleFunc("POST /api/keys", server.requireAdmin(server.handleCreateKey))
 	mux.HandleFunc("GET /api/keys", server.handleKeys)
-	mux.HandleFunc("POST /api/keys/{id}/revoke", server.handleRevokeKey)
+	mux.HandleFunc("POST /api/keys/{id}/revoke", server.requireAdmin(server.handleRevokeKey))
 	mux.HandleFunc("GET /api/issues", server.handleIssues)
 	mux.HandleFunc("GET /api/issues/occurrences", server.handleOccurrences)
 	mux.HandleFunc("GET /api/issues/{id}", server.handleIssue)
 	mux.HandleFunc("GET /api/issues/{id}/logs", server.handleIssueLogs)
-	mux.HandleFunc("POST /api/issues/rules", server.handleCreateIssueRule)
+	mux.HandleFunc("POST /api/issues/rules", server.requireAdmin(server.handleCreateIssueRule))
 	mux.HandleFunc("GET /api/issues/rules", server.handleIssueRules)
-	mux.HandleFunc("DELETE /api/issues/rules/{id}", server.handleDeleteIssueRule)
+	mux.HandleFunc("DELETE /api/issues/rules/{id}", server.requireAdmin(server.handleDeleteIssueRule))
 	mux.HandleFunc("GET /api/logs", server.handleLogs)
 	mux.HandleFunc("GET /api/logs/stats", server.handleLogStats)
 	mux.HandleFunc("GET /api/logs/{id}", server.handleLogContext)
 	mux.HandleFunc("GET /api/docker/images", server.handleDockerImages)
-	mux.HandleFunc("POST /api/docker/images/prune", server.handlePruneImages)
+	mux.HandleFunc("POST /api/docker/images/prune", server.requireAdmin(server.handlePruneImages))
 	mux.HandleFunc("GET /api/system", server.handleSystem)
 	mux.HandleFunc("GET /api/system/containers", server.handleFleetContainers)
 	mux.HandleFunc("GET /api/system/history", server.handleSystemHistory)
 	mux.HandleFunc("GET /api/databases", server.handleDatabases)
 	mux.HandleFunc("GET /api/databases/backups", server.handleBackups)
-	mux.HandleFunc("POST /api/databases/backups", server.handleStartBackup)
+	mux.HandleFunc("POST /api/databases/backups", server.requireAdmin(server.handleStartBackup))
 	mux.HandleFunc("GET /api/databases/jobs", server.handleJobs)
 	mux.HandleFunc("GET /api/databases/jobs/{id}", server.handleJob)
-	mux.HandleFunc("POST /api/databases/backups/{name}/verify", server.handleVerifyBackup)
-	mux.HandleFunc("POST /api/databases/restore", server.handleRestore)
+	mux.HandleFunc("POST /api/databases/backups/{name}/verify", server.requireAdmin(server.handleVerifyBackup))
+	mux.HandleFunc("POST /api/databases/restore", server.requireAdmin(server.handleRestore))
 
 	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Redirect(w, r, "/docs/", nethttp.StatusFound)

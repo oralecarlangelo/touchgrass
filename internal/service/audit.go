@@ -34,10 +34,13 @@ func (a *Audit) Record(ctx context.Context, record model.AuditRecord) (int64, er
 		model.AuditLogin,
 		model.AuditDeploy,
 		model.AuditServiceCreate,
-		model.AuditServiceDelete:
+		model.AuditServiceDelete,
+		model.AuditUserCreate,
+		model.AuditUserUpdate,
+		model.AuditUserDelete:
 	default:
 		return 0, fmt.Errorf(
-			"%w: action %q (want cutover, rollback, login, deploy, service_create, or service_delete)",
+			"%w: action %q (want cutover, rollback, login, deploy, service_create, service_delete, user_create, user_update, or user_delete)",
 			ErrInvalidInput,
 			record.Action,
 		)

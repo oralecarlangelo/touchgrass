@@ -12,6 +12,7 @@ const views: ViewId[] = [
   'rules',
   'keys',
   'databases',
+  'users',
 ];
 
 export interface HashState {

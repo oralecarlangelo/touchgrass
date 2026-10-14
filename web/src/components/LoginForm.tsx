@@ -6,12 +6,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 export default function LoginForm({
+  username,
+  onUsernameChange,
   password,
   onPasswordChange,
   onSubmit,
   submitting,
   error,
 }: {
+  username: string;
+  onUsernameChange: (value: string) => void;
   password: string;
   onPasswordChange: (value: string) => void;
   onSubmit: () => void;
@@ -28,14 +32,24 @@ export default function LoginForm({
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>touchgrass</CardTitle>
-          <CardDescription>Admin login. No vibe check without it.</CardDescription>
+          <CardDescription>Log in. No vibe check without it.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} aria-label="Admin login" className="space-y-4">
+          <form onSubmit={handleSubmit} aria-label="Login" className="space-y-4">
             <div className="grid gap-2">
-              <Label htmlFor="admin-password">Admin password</Label>
+              <Label htmlFor="login-username">Username</Label>
               <Input
-                id="admin-password"
+                id="login-username"
+                type="text"
+                value={username}
+                onChange={(event) => onUsernameChange(event.target.value)}
+                autoComplete="username"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="login-password">Password</Label>
+              <Input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(event) => onPasswordChange(event.target.value)}
@@ -49,7 +63,11 @@ export default function LoginForm({
               </p>
             )}
 
-            <Button type="submit" disabled={submitting || password === ''} className="w-full">
+            <Button
+              type="submit"
+              disabled={submitting || password === ''}
+              className="w-full"
+            >
               {submitting ? 'Checking…' : 'Log in'}
             </Button>
           </form>

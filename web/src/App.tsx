@@ -15,6 +15,7 @@ import RulesScreen from './components/RulesScreen.tsx';
 import ServicesList from './components/ServicesList.tsx';
 import ServiceWorkspace from './components/service/ServiceWorkspace.tsx';
 import FleetScreen from './components/FleetScreen.tsx';
+import UsersScreen from './components/UsersScreen.tsx';
 import AppShell from './components/layout/AppShell.tsx';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -26,6 +27,7 @@ import {
   login,
   logout,
   type ServiceView,
+  type SessionInfo,
 } from './lib/api.ts';
 import type { ViewId } from './lib/views.ts';
 import { parseHash, writeHash } from './lib/hash.ts';
@@ -33,8 +35,9 @@ import { parseHash, writeHash } from './lib/hash.ts';
 const refreshIntervalMs = 30_000;
 
 export default function App() {
-  const [session, setSession] = useState<boolean | null>(null);
+  const [session, setSession] = useState<SessionInfo | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
@@ -67,7 +70,7 @@ export default function App() {
   }, [refreshSession]);
 
   const handleUnauthorized = useCallback(() => {
-    setSession(false);
+    setSession({ authenticated: false, username: '', role: '' });
     setServices(null);
     setSelected(null);
     setView('dashboard');
@@ -106,31 +109,43 @@ export default function App() {
     }
   }, [handleUnauthorized]);
 
+  const authed = session !== null && session.authenticated;
+  const isAdmin = authed && session.role === 'admin';
+
   useEffect(() => {
-    if (!session) {
+    if (!authed || session === null) {
       return;
+    }
+
+    // Viewers live in the logs; land them there unless a deep link says otherwise.
+    if (session.role !== 'admin' && sessionStorage.getItem('tg-landed') === null) {
+      sessionStorage.setItem('tg-landed', '1');
+
+      if (window.location.hash === '' || window.location.hash === '#/dashboard') {
+        setView('logs');
+      }
     }
 
     void load();
     const timer = setInterval(() => void load(), refreshIntervalMs);
 
     return () => clearInterval(timer);
-  }, [session, load]);
+  }, [authed, session, load]);
 
   const handleLogin = useCallback(async () => {
     setLoggingIn(true);
     setLoginError(null);
 
     try {
-      await login(password);
+      await login(username.trim() === '' ? 'admin' : username.trim(), password);
       setPassword('');
-      setSession(true);
+      setSession(await fetchSession());
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoggingIn(false);
     }
-  }, [password]);
+  }, [username, password]);
 
   const handleLogout = useCallback(async () => {
     setError(null);
@@ -144,11 +159,12 @@ export default function App() {
       }
     }
 
-    setSession(false);
+    setSession({ authenticated: false, username: '', role: '' });
     setServices(null);
     setSelected(null);
     setView('dashboard');
     setPassword('');
+    sessionStorage.removeItem('tg-landed');
   }, []);
 
   const handleView = useCallback((next: ViewId) => {
@@ -220,9 +236,11 @@ export default function App() {
     );
   }
 
-  if (!session) {
+  if (!authed || session === null) {
     return (
       <LoginForm
+        username={username}
+        onUsernameChange={setUsername}
         password={password}
         onPasswordChange={setPassword}
         onSubmit={() => void handleLogin()}
@@ -242,6 +260,8 @@ export default function App() {
         onSelectService={handleSelectService}
         onLogout={() => void handleLogout()}
         onUnauthorized={handleUnauthorized}
+        username={session.username}
+        isAdmin={isAdmin}
       >
         {selected !== null ? (
           <ServiceWorkspace
@@ -249,6 +269,7 @@ export default function App() {
             onBack={() => setSelected(null)}
             onServiceChanged={() => void load()}
             onUnauthorized={handleUnauthorized}
+            isAdmin={isAdmin}
           />
         ) : view === 'dashboard' ? (
           <Dashboard
@@ -260,21 +281,39 @@ export default function App() {
         ) : view === 'audit' ? (
           <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'notifications' ? (
-          <NotificationsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <NotificationsScreen
+            services={services ?? []}
+            onUnauthorized={handleUnauthorized}
+            isAdmin={isAdmin}
+          />
         ) : view === 'issues' ? (
           <IssuesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'logs' ? (
           <LogsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'images' ? (
-          <ImagesScreen onUnauthorized={handleUnauthorized} />
+          <ImagesScreen onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
         ) : view === 'fleet' ? (
-          <FleetScreen onUnauthorized={handleUnauthorized} onSelectService={handleSelectService} />
+          <FleetScreen
+            onUnauthorized={handleUnauthorized}
+            onSelectService={handleSelectService}
+            isAdmin={isAdmin}
+          />
         ) : view === 'databases' ? (
-          <DatabasesScreen onUnauthorized={handleUnauthorized} />
+          <DatabasesScreen onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
         ) : view === 'rules' ? (
-          <RulesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <RulesScreen services={services ?? []} onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
         ) : view === 'keys' ? (
-          <KeysScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <KeysScreen services={services ?? []} onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
+        ) : view === 'users' ? (
+          isAdmin ? (
+            <UsersScreen onUnauthorized={handleUnauthorized} />
+          ) : (
+            <ErrorState
+              title="Admins only"
+              message="User management needs the admin role."
+              onRetry={() => handleView('logs')}
+            />
+          )
         ) : (
           <>
             <div className="flex items-center justify-between">
@@ -309,6 +348,7 @@ export default function App() {
                 services={services}
                 onSelect={handleSelectService}
                 onDeleted={handleDeletedService}
+                isAdmin={isAdmin}
               />
             )}
           </>

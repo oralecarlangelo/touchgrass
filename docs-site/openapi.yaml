@@ -7,8 +7,9 @@ info:
     Mirrors `internal/http/server.go` — update both together.
 
     All routes except `/api/health`, `/api/auth/login`,
-    `/api/ingest`, and `/api/ingest/logs` require the admin session
-    cookie from login.
+    `/api/ingest`, and `/api/ingest/logs` require the session
+    cookie from login. Reads accept any role; every mutating
+    route requires the admin role (viewers get 403 `forbidden`).
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -19,7 +20,7 @@ security:
   - cookieAuth: []
 tags:
   - name: auth
-    description: Admin session management
+    description: Session and user management
   - name: ingest
     description: SDK report intake and key management
   - name: services
@@ -54,7 +55,7 @@ paths:
     post:
       operationId: login
       tags: [auth]
-      summary: Start an admin session
+      summary: Start a session
       security: []
       requestBody:
         required: true
@@ -64,6 +65,9 @@ paths:
               type: object
               required: [password]
               properties:
+                username:
+                  type: string
+                  description: Defaults to admin when empty
                 password: { type: string }
       responses:
         '204': { description: Session cookie set }
@@ -72,7 +76,7 @@ paths:
     post:
       operationId: logout
       tags: [auth]
-      summary: End the admin session
+      summary: End the session
       responses:
         '204': { description: Session cleared }
   /auth/me:
@@ -87,9 +91,180 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [authenticated]
+                required: [authenticated, username, role]
                 properties:
                   authenticated: { type: boolean }
+                  username: { type: string }
+                  role: { type: string, enum: [admin, viewer] }
+  /users:
+    get:
+      operationId: listUsers
+      tags: [auth]
+      summary: List managed users (admin only, never includes hashes)
+      responses:
+        '200':
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createUser
+      tags: [auth]
+      summary: Create a user (admin only)
+      description: |
+        Username shape `^[a-z0-9-]+$` (1-64 chars), password 12-72
+        chars, role admin or viewer. Audits `user_create`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, role]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                role: { type: string, enum: [admin, viewer] }
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Username taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /users/{id}/password:
+    post:
+      operationId: resetUserPassword
+      tags: [auth]
+      summary: Reset a password (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        '204': { description: Password reset }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}/role:
+    post:
+      operationId: setUserRole
+      tags: [auth]
+      summary: Change a role (admin only)
+      description: Demoting or removing the last enabled admin is a 409.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [admin, viewer] }
+      responses:
+        '200':
+          description: Role changed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Would remove the last enabled admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /users/{id}/disable:
+    post:
+      operationId: disableUser
+      tags: [auth]
+      summary: Lock an account (admin only)
+      description: Sessions die on the next request. Audits `user_update`.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Account locked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Would remove the last enabled admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /users/{id}/enable:
+    post:
+      operationId: enableUser
+      tags: [auth]
+      summary: Unlock an account (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Account unlocked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}:
+    delete:
+      operationId: deleteUser
+      tags: [auth]
+      summary: Delete a user (admin only)
+      description: Audit history keeps the username as text.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Would remove the last enabled admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /ingest:
     post:
       operationId: ingestReport
@@ -1084,7 +1259,7 @@ components:
       type: apiKey
       in: cookie
       name: touchgrass_session
-      description: Admin session from POST /api/auth/login
+      description: Session cookie from POST /api/auth/login
     keyAuth:
       type: apiKey
       in: header
@@ -1125,6 +1300,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Valid session without the admin role
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     NotFound:
       description: Unknown id
       content:
@@ -1143,6 +1323,15 @@ components:
       properties:
         status: { type: string, example: ok }
         version: { type: string }
+    User:
+      type: object
+      required: [id, username, role, disabled, created_at]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { type: string, enum: [admin, viewer] }
+        disabled: { type: boolean }
+        created_at: { type: string, format: date-time }
     StackFrame:
       type: object
       required: [function, file, line, column]
@@ -1328,7 +1517,7 @@ components:
         id: { type: integer }
         service_id: { type: ['string', 'null'] }
         actor: { type: string }
-        action: { type: string, enum: [cutover, rollback, login, deploy, db_backup, db_restore] }
+        action: { type: string, enum: [cutover, rollback, login, deploy, db_backup, db_restore, service_create, service_delete, user_create, user_update, user_delete] }
         result: { type: string, enum: [success, failure] }
         detail: { type: string }
         created_at: { type: string, format: date-time }

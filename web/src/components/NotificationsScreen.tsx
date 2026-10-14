@@ -30,9 +30,11 @@ const pageSize = 20;
 export default function NotificationsScreen({
   services,
   onUnauthorized,
+  isAdmin,
 }: {
   services: ServiceView[];
   onUnauthorized: () => void;
+  isAdmin: boolean;
 }) {
   const [notes, setNotes] = useState<Notification[] | null>(null);
   const [unread, setUnread] = useState(0);
@@ -187,9 +189,11 @@ export default function NotificationsScreen({
               Unread only
             </Label>
           </div>
-          <Button variant="outline" size="sm" onClick={() => void handleMarkAllRead()}>
-            Mark all read
-          </Button>
+          {isAdmin && (
+            <Button variant="outline" size="sm" onClick={() => void handleMarkAllRead()}>
+              Mark all read
+            </Button>
+          )}
         </div>
       </div>
 
@@ -230,7 +234,7 @@ export default function NotificationsScreen({
                         <span className="hidden sm:inline">({formatTime(item.created_at)})</span>
                       </p>
                     </div>
-                    {item.read_at === null && (
+                    {item.read_at === null && isAdmin && (
                       <Button variant="ghost" size="sm" onClick={() => void handleMarkRead(item.id)}>
                         Mark read
                       </Button>

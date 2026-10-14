@@ -29,8 +29,10 @@ open http://127.0.0.1:8080
 Expected: `{"status":"ok","version":"..."}` (`status` is always `ok`
 on a healthy process; `version` comes from `git describe` at build
 time, `dev` when unset — same value `touchgrass version` prints).
-The dashboard at `/` asks for the admin password, then lists services
-from `GET /api/services`.
+The dashboard at `/` asks for a login (username `admin` plus the
+password above on first boot), then lists services from
+`GET /api/services`. Hand other devs read-only `viewer` accounts
+from the Users screen.
 
 Or run with Docker Compose (binds `127.0.0.1:8080` on the host):
 
@@ -62,7 +64,7 @@ Environment only (no config file):
 | `TOUCHGRASS_DB`                      | `./touchgrass.db`  | SQLite file path                                       |
 | `APP_ENV`                            | `prod`             | `dev` proxies `/` to Vite, else embedded UI             |
 | `DOCKER_HOST`                        | unix socket        | Docker daemon (standard client env)                    |
-| `TOUCHGRASS_ADMIN_PASSWORD`          | required           | Admin password (bcrypt-hashed at boot; never stored)    |
+| `TOUCHGRASS_ADMIN_PASSWORD`          | required           | Seeds the `admin` user on first boot; rotate in the Users screen after |
 | `TOUCHGRASS_COOKIE_SECURE`           | `false`            | Set `true` when serving behind TLS                     |
 | `TOUCHGRASS_METRICS_INTERVAL`        | `30s`              | Metric sample cadence                                  |
 | `TOUCHGRASS_RETENTION_METRICS`       | `168h`             | Metric max age                                         |

@@ -1,13 +1,11 @@
 package http
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"strings"
@@ -17,7 +15,7 @@ import (
 	nethttp "net/http"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/oralecarlangelo/touchgrass/internal/service"
 )
 
 // Session and rate-limit policy.
@@ -31,49 +29,65 @@ const (
 	errAuthMessage = "authentication required"
 )
 
-// errAuthRequired reports a missing or expired session.
-var errAuthRequired = errors.New("missing or expired session")
+// Login and authorization policy.
+const (
+	// defaultLoginUsername keeps password-only logins working: an
+	// empty username means the bootstrap admin.
+	defaultLoginUsername = "admin"
+	// errForbiddenMessage reports a valid session without the role.
+	errForbiddenMessage = "admin role required"
+	// unknownActor attributes requests that never passed auth.
+	unknownActor = "unknown"
+)
 
-// Authenticator holds the admin session store and login rate limiting.
+// Auth errors, translated to user-safe envelopes at the boundary.
+var (
+	errAuthRequired = errors.New("missing or expired session")
+	errForbidden    = errors.New("role lacks permission")
+)
+
+// Identity is the authenticated caller attached to request contexts.
+type Identity struct {
+	Username string
+	Role     model.Role
+}
+
+// Admin reports full-power access.
+func (i Identity) Admin() bool {
+	return i.Role == model.RoleAdmin
+}
+
+// session binds a token to a username with an expiry. Role and
+// disabled state always re-resolve from the store, so role changes
+// and disables bite on the very next request.
+type session struct {
+	username string
+	expires  time.Time
+}
+
+// Authenticator holds multi-user sessions and login rate limiting.
 type Authenticator struct {
-	password     []byte
+	users        *service.Users
 	secureCookie bool
 	mutex        sync.Mutex
-	sessions     map[string]time.Time
+	sessions     map[string]session
 	failures     map[string][]time.Time
 }
 
-// HashPassword hashes the configured admin password with bcrypt.
-func HashPassword(password string) ([]byte, error) {
-	if password == "" {
-		return nil, errors.New("admin password is required")
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, fmt.Errorf("hashing admin password: %w", err)
-	}
-
-	return hash, nil
-}
-
-// NewAuthenticator builds an Authenticator for one bcrypt password hash.
-func NewAuthenticator(passwordHash []byte, secureCookie bool) *Authenticator {
+// NewAuthenticator builds an Authenticator over managed users.
+func NewAuthenticator(users *service.Users, secureCookie bool) *Authenticator {
 	return &Authenticator{
-		password:     bytes.Clone(passwordHash),
+		users:        users,
 		secureCookie: secureCookie,
-		sessions:     map[string]time.Time{},
+		sessions:     map[string]session{},
 		failures:     map[string][]time.Time{},
 	}
 }
 
-// Login verifies the password and mints a session token.
-func (a *Authenticator) Login(password string) (string, bool) {
-	if len(a.password) == 0 {
-		return "", false
-	}
-
-	if err := bcrypt.CompareHashAndPassword(a.password, []byte(password)); err != nil {
+// Login verifies credentials and mints a session token.
+func (a *Authenticator) Login(ctx context.Context, username, password string) (string, bool) {
+	user, err := a.users.Verify(ctx, username, password)
+	if err != nil {
 		return "", false
 	}
 
@@ -83,37 +97,46 @@ func (a *Authenticator) Login(password string) (string, bool) {
 		return "", false
 	}
 
-	session := hex.EncodeToString(token)
+	sessionID := hex.EncodeToString(token)
 
 	a.mutex.Lock()
-	a.sessions[session] = time.Now().Add(sessionExpiry)
+	a.sessions[sessionID] = session{username: user.Username, expires: time.Now().Add(sessionExpiry)}
 	a.mutex.Unlock()
 
-	return session, true
+	return sessionID, true
 }
 
-// Authenticate validates the request cookie.
-func (a *Authenticator) Authenticate(r *nethttp.Request) bool {
+// Authenticate validates the request cookie against the live user
+// row, dropping sessions whose account vanished or was disabled.
+func (a *Authenticator) Authenticate(r *nethttp.Request) (Identity, bool) {
 	cookie, err := r.Cookie(sessionCookie)
 	if err != nil || cookie.Value == "" {
-		return false
+		return Identity{}, false
 	}
 
 	a.mutex.Lock()
-	defer a.mutex.Unlock()
 
-	expires, ok := a.sessions[cookie.Value]
-	if !ok {
-		return false
-	}
+	sess, ok := a.sessions[cookie.Value]
 
-	if time.Now().After(expires) {
+	if !ok || time.Now().After(sess.expires) {
 		delete(a.sessions, cookie.Value)
+		a.mutex.Unlock()
 
-		return false
+		return Identity{}, false
 	}
 
-	return true
+	a.mutex.Unlock()
+
+	user, err := a.users.Lookup(r.Context(), sess.username)
+	if err != nil {
+		if errors.Is(err, service.ErrUnauthorized) {
+			a.Logout(cookie.Value)
+		}
+
+		return Identity{}, false
+	}
+
+	return Identity{Username: user.Username, Role: user.Role}, true
 }
 
 // Logout drops a session token.
@@ -172,7 +195,8 @@ func (a *Authenticator) RegisterFailure(ip string, failed bool) {
 	a.failures[ip] = append(a.failures[ip], time.Now())
 }
 
-// Middleware rejects unauthenticated API requests outside the public set.
+// Middleware rejects unauthenticated API requests outside the public
+// set and attaches the caller identity to the request context.
 func (a *Authenticator) Middleware(logger *slog.Logger, next nethttp.Handler) nethttp.Handler {
 	return nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if isPublic(r.URL.Path) || !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -181,14 +205,50 @@ func (a *Authenticator) Middleware(logger *slog.Logger, next nethttp.Handler) ne
 			return
 		}
 
-		if a.Authenticate(r) {
-			next.ServeHTTP(w, r)
+		identity, ok := a.Authenticate(r)
+		if !ok {
+			writeError(w, logger, errAuthRequired, errAuthMessage, "unauthorized", nethttp.StatusUnauthorized)
 
 			return
 		}
 
-		writeError(w, logger, errAuthRequired, errAuthMessage, "unauthorized", nethttp.StatusUnauthorized)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, identity)))
 	})
+}
+
+// requireAdmin rejects authenticated callers without the admin role.
+// It runs inside the auth middleware, so identity is always present.
+func (s *Server) requireAdmin(next nethttp.HandlerFunc) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		identity, _ := identityFrom(r)
+
+		if !identity.Admin() {
+			writeError(w, s.logger, errForbidden, errForbiddenMessage, "forbidden", nethttp.StatusForbidden)
+
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// identityKey carries the caller identity in request contexts.
+type identityKey struct{}
+
+// identityFrom returns the authenticated caller.
+func identityFrom(r *nethttp.Request) (Identity, bool) {
+	identity, ok := r.Context().Value(identityKey{}).(Identity)
+
+	return identity, ok
+}
+
+// requestActor returns the username for audit attribution.
+func requestActor(r *nethttp.Request) string {
+	if identity, ok := identityFrom(r); ok {
+		return identity.Username
+	}
+
+	return unknownActor
 }
 
 // isPublic reports API paths that need no session.
@@ -207,27 +267,21 @@ func clientIP(r *nethttp.Request) string {
 	return host
 }
 
-// loginRequest is the login body.
+// loginRequest is the login body. An empty username means admin.
 type loginRequest struct {
+	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
 // meResponse is the session probe payload.
 type meResponse struct {
-	Authenticated bool `json:"authenticated"`
+	Authenticated bool   `json:"authenticated"`
+	Username      string `json:"username"`
+	Role          string `json:"role"`
 }
 
 // handleLogin mints a session cookie.
 func (s *Server) handleLogin(w nethttp.ResponseWriter, r *nethttp.Request) {
-	ip := clientIP(r)
-
-	if s.auth.AttemptsExceeded(ip) {
-		s.auditLogin(r.Context(), model.AuditFailure, "rate-limited login from "+ip)
-		writeError(w, s.logger, errAuthRequired, "too many attempts, try again later", "rate_limited", nethttp.StatusTooManyRequests)
-
-		return
-	}
-
 	var body loginRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -236,25 +290,39 @@ func (s *Server) handleLogin(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	token, ok := s.auth.Login(body.Password)
-	s.auth.RegisterFailure(ip, !ok)
+	username := body.Username
+	if username == "" {
+		username = defaultLoginUsername
+	}
 
-	if !ok {
-		s.auditLogin(r.Context(), model.AuditFailure, "failed login from "+ip)
-		writeError(w, s.logger, errAuthRequired, "invalid password", "unauthorized", nethttp.StatusUnauthorized)
+	ip := clientIP(r)
+
+	if s.auth.AttemptsExceeded(ip) {
+		s.auditLogin(r.Context(), username, model.AuditFailure, "rate-limited login from "+ip)
+		writeError(w, s.logger, errAuthRequired, "too many attempts, try again later", "rate_limited", nethttp.StatusTooManyRequests)
 
 		return
 	}
 
-	s.auditLogin(r.Context(), model.AuditSuccess, "login from "+ip)
+	token, ok := s.auth.Login(r.Context(), username, body.Password)
+	s.auth.RegisterFailure(ip, !ok)
+
+	if !ok {
+		s.auditLogin(r.Context(), username, model.AuditFailure, "failed login from "+ip)
+		writeError(w, s.logger, errAuthRequired, "invalid username or password", "unauthorized", nethttp.StatusUnauthorized)
+
+		return
+	}
+
+	s.auditLogin(r.Context(), username, model.AuditSuccess, "login from "+ip)
 	nethttp.SetCookie(w, s.auth.cookie(token, int(sessionExpiry.Seconds())))
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
 // auditLogin records a login attempt without logging the password.
-func (s *Server) auditLogin(ctx context.Context, result, detail string) {
+func (s *Server) auditLogin(ctx context.Context, username, result, detail string) {
 	if _, err := s.audit.Record(ctx, model.AuditRecord{
-		Actor: actorAdmin, Action: model.AuditLogin, Result: result, Detail: detail,
+		Actor: username, Action: model.AuditLogin, Result: result, Detail: detail,
 	}); err != nil {
 		s.logger.Warn("login audit failed", "error", err)
 	}
@@ -271,6 +339,9 @@ func (s *Server) handleLogout(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 // handleMe reports the session state.
-func (s *Server) handleMe(w nethttp.ResponseWriter, _ *nethttp.Request) {
-	writeJSON(w, s.logger, nethttp.StatusOK, meResponse{Authenticated: true})
+func (s *Server) handleMe(w nethttp.ResponseWriter, r *nethttp.Request) {
+	identity, _ := identityFrom(r)
+	writeJSON(w, s.logger, nethttp.StatusOK, meResponse{
+		Authenticated: true, Username: identity.Username, Role: string(identity.Role),
+	})
 }

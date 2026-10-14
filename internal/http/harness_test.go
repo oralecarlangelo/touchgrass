@@ -11,6 +11,8 @@ import (
 
 	nethttp "net/http"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
@@ -23,10 +25,19 @@ const testVersion = "test-version"
 // testPassword is the harness admin password.
 const testPassword = "test-password"
 
+// testViewerUsername and testViewerPassword are the harness read-only login.
+const (
+	testViewerUsername = "viewer"
+	testViewerPassword = "viewer-password-1"
+)
+
 const (
 	testHealthPath     = "/api/health"
 	testKeysPath       = "/api/keys"
 	testIssueRulesPath = "/api/issues/rules"
+	testServicesPath   = "/api/services"
+	testDeploysPath    = "/api/services/tn-api/deploys"
+	testCutoverPath    = "/api/services/tn-api/cutover"
 	testInvalidRequest = "invalid_request"
 	testServiceAPI     = "tn-api"
 	testUnknownService = "unknown service"
@@ -36,21 +47,53 @@ const (
 	testMalformedJSON  = "{oops"
 )
 
-// hashTestPassword generates the harness bcrypt hash once.
+// hashTestPassword generates the harness admin bcrypt hash once.
 var hashTestPassword = sync.OnceValues(func() ([]byte, error) {
-	return HashPassword(testPassword)
+	return bcrypt.GenerateFromPassword([]byte(testPassword), bcrypt.DefaultCost)
 })
 
-// testAuthenticator builds an Authenticator for the harness password.
-func testAuthenticator(t *testing.T) *Authenticator {
+// hashViewerPassword generates the harness viewer bcrypt hash once.
+var hashViewerPassword = sync.OnceValues(func() ([]byte, error) {
+	return bcrypt.GenerateFromPassword([]byte(testViewerPassword), bcrypt.DefaultCost)
+})
+
+// testAuthenticator builds an Authenticator over managed users.
+func testAuthenticator(t *testing.T, users *service.Users) *Authenticator {
 	t.Helper()
 
-	hash, err := hashTestPassword()
-	if err != nil {
-		t.Fatalf("HashPassword() error = %v, want nil", err)
+	if users == nil {
+		t.Fatal("testAuthenticator users = nil, want service")
 	}
 
-	return NewAuthenticator(hash, false)
+	return NewAuthenticator(users, false)
+}
+
+// seedTestUsers inserts the harness admin and viewer rows. Hashes are
+// precomputed once per package run so seeding stays fast.
+func seedTestUsers(t *testing.T, db *store.DB) {
+	t.Helper()
+
+	adminHash, err := hashTestPassword()
+	if err != nil {
+		t.Fatalf("hashing admin password: %v", err)
+	}
+
+	viewerHash, err := hashViewerPassword()
+	if err != nil {
+		t.Fatalf("hashing viewer password: %v", err)
+	}
+
+	users := store.NewUserStore(db)
+	ctx := context.Background()
+
+	for _, user := range []model.User{
+		{Username: defaultLoginUsername, PasswordHash: string(adminHash), Role: model.RoleAdmin},
+		{Username: testViewerUsername, PasswordHash: string(viewerHash), Role: model.RoleViewer},
+	} {
+		if _, err := users.Create(ctx, user); err != nil {
+			t.Fatalf("Create(%s) error = %v, want nil", user.Username, err)
+		}
+	}
 }
 
 // stubStatsLister fakes docker listing plus stats with empty data.
@@ -111,6 +154,8 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
+	seedTestUsers(t, db)
+
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)
 
@@ -137,6 +182,7 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 
 	deploys := service.NewDeploys(services, store.NewDeployStore(db))
 	audit := service.NewAudit(services, store.NewAuditStore(db))
+	managedUsers := service.NewUsers(store.NewUserStore(db), audit)
 
 	server := New(Config{
 		Addr:      testDatabaseAddr,
@@ -159,7 +205,8 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 			Logger:        logger,
 		}),
 		Audit:  audit,
-		Auth:   testAuthenticator(t),
+		Auth:   testAuthenticator(t, managedUsers),
+		Users:  managedUsers,
 		Events: NewHub(logger),
 		Ingestor: service.NewIngestor(service.IngestorConfig{
 			Services:       services,
@@ -198,15 +245,30 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 	return server, db
 }
 
-// authCookie logs in and returns the session cookie.
+// authCookie logs in as admin and returns the session cookie. The
+// password-only body pins backward compatibility with v1 clients.
 func authCookie(t *testing.T, server *Server) *nethttp.Cookie {
+	t.Helper()
+
+	return loginCookie(t, server, `{"password":"test-password"}`)
+}
+
+// viewerCookie logs in as the read-only viewer.
+func viewerCookie(t *testing.T, server *Server) *nethttp.Cookie {
+	t.Helper()
+
+	return loginCookie(t, server, `{"username":"viewer","password":"viewer-password-1"}`)
+}
+
+// loginCookie posts one login body and returns the session cookie.
+func loginCookie(t *testing.T, server *Server, body string) *nethttp.Cookie {
 	t.Helper()
 
 	req := httptest.NewRequestWithContext(
 		t.Context(),
 		nethttp.MethodPost,
 		"/api/auth/login",
-		strings.NewReader(`{"password":"test-password"}`),
+		strings.NewReader(body),
 	)
 	rec := httptest.NewRecorder()
 

@@ -13,9 +13,11 @@ import type { ServiceView } from '@/lib/api.ts';
 export default function RulesScreen({
   services,
   onUnauthorized,
+  isAdmin,
 }: {
   services: ServiceView[];
   onUnauthorized: () => void;
+  isAdmin: boolean;
 }) {
   const [serviceId, setServiceId] = useState(services[0]?.id ?? '');
 
@@ -44,7 +46,12 @@ export default function RulesScreen({
       {effectiveId === '' ? (
         <p className="text-muted-foreground text-sm">No services on the radar yet.</p>
       ) : (
-        <AlertsTab key={effectiveId} serviceId={effectiveId} onUnauthorized={onUnauthorized} />
+        <AlertsTab
+          key={effectiveId}
+          serviceId={effectiveId}
+          onUnauthorized={onUnauthorized}
+          isAdmin={isAdmin}
+        />
       )}
     </div>
   );

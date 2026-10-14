@@ -20,11 +20,13 @@ export default function ServiceWorkspace({
   onBack,
   onServiceChanged,
   onUnauthorized,
+  isAdmin,
 }: {
   service: ServiceView;
   onBack: () => void;
   onServiceChanged: () => void;
   onUnauthorized: () => void;
+  isAdmin: boolean;
 }) {
   const [tab, setTab] = useState<Tab>('overview');
 
@@ -75,6 +77,7 @@ export default function ServiceWorkspace({
               service={service}
               onServiceChanged={onServiceChanged}
               onUnauthorized={onUnauthorized}
+              isAdmin={isAdmin}
             />
           )}
         </TabsContent>
@@ -98,7 +101,7 @@ export default function ServiceWorkspace({
         </TabsContent>
         <TabsContent value="alerts">
           {tab === 'alerts' && (
-            <AlertsTab serviceId={service.id} onUnauthorized={onUnauthorized} />
+            <AlertsTab serviceId={service.id} onUnauthorized={onUnauthorized} isAdmin={isAdmin} />
           )}
         </TabsContent>
         <TabsContent value="audit">

@@ -10,7 +10,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-export default function UserMenu({ onLogout }: { onLogout: () => void }) {
+export default function UserMenu({
+  username,
+  isAdmin,
+  onLogout,
+}: {
+  username: string;
+  isAdmin: boolean;
+  onLogout: () => void;
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -19,7 +27,9 @@ export default function UserMenu({ onLogout }: { onLogout: () => void }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Admin</DropdownMenuLabel>
+        <DropdownMenuLabel>
+          {username} · {isAdmin ? 'admin' : 'viewer'}
+        </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={onLogout}>
           <LogOut className="h-4 w-4" aria-hidden />

@@ -21,6 +21,7 @@ const (
 // Shared fake values used across service tests.
 const (
 	testAdminActor         = "admin"
+	testUserPassword       = "correct-horse-1"
 	testRecreateService    = "fe"
 	testRecreateHealthURL  = "http://127.0.0.1:3200/health"
 	testUnknownServiceID   = "no-such-service"

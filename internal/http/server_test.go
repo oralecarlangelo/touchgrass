@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -10,6 +11,9 @@ import (
 	"testing/fstest"
 
 	nethttp "net/http"
+
+	"github.com/oralecarlangelo/touchgrass/internal/service"
+	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
 func testDist() fs.FS {
@@ -33,13 +37,36 @@ func testDocs() fs.FS {
 func testServer(t *testing.T) *Server {
 	t.Helper()
 
+	db, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open() error = %v, want nil", err)
+	}
+
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close() error = %v, want nil", err)
+		}
+	})
+
+	if _, err := db.MigrateUp(context.Background()); err != nil {
+		t.Fatalf("MigrateUp() error = %v, want nil", err)
+	}
+
+	seedTestUsers(t, db)
+
 	logger := slog.New(slog.DiscardHandler)
+	services := store.NewServiceStore(db)
+	managedUsers := service.NewUsers(
+		store.NewUserStore(db),
+		service.NewAudit(services, store.NewAuditStore(db)),
+	)
 
 	return New(Config{
 		Addr:    testDatabaseAddr,
 		Version: testVersion,
 		Logger:  logger,
-		Auth:    testAuthenticator(t),
+		Auth:    testAuthenticator(t, managedUsers),
+		Users:   managedUsers,
 		Events:  NewHub(logger),
 		Dist:    testDist(),
 	})

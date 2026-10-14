@@ -130,6 +130,7 @@ type serveServices struct {
 	cutover    *service.Cutover
 	audit      *service.Audit
 	auth       *http.Authenticator
+	users      *service.Users
 	events     *http.Hub
 	ingestor   *service.Ingestor
 	logs       *service.LogCollector
@@ -171,6 +172,7 @@ func newServeServer(
 		Cutover:    services.cutover,
 		Audit:      services.audit,
 		Auth:       services.auth,
+		Users:      services.users,
 		Events:     services.events,
 		Ingestor:   services.ingestor,
 		Logs:       services.logs,
@@ -241,24 +243,18 @@ func runServe(args []string) error {
 	ingestor := newIngestor(serviceStore, db, cfg.MaxOccurrences, logger)
 	collector := newLogCollector(wiring)
 	sdkLogs := newLogIngestor(serviceStore, db)
-	sys := service.NewSystem(service.SystemConfig{
-		Docker:    dockerClient,
-		Version:   version,
-		DBPath:    cfg.DB,
-		StartedAt: time.Now(),
-		Logger:    logger,
-	})
+	sys := newServeSystem(dockerClient, cfg.DB, logger)
 	databases := newDatabase(db, cfg, logger)
 	reconcileDatabases(databases, logger)
 
 	onboarding := newOnboarding(wiring, prober, audit)
 
-	passwordHash, err := http.HashPassword(cfg.AdminPassword)
+	managedUsers, err := ensureUsers(ctx, db, audit, cfg.AdminPassword, logger)
 	if err != nil {
 		return err
 	}
 
-	auth := http.NewAuthenticator(passwordHash, cfg.CookieSecure)
+	auth := http.NewAuthenticator(managedUsers, cfg.CookieSecure)
 	hub := http.NewHub(logger)
 	cutover := service.NewCutover(service.CutoverConfig{
 		Services:      serviceStore,
@@ -290,7 +286,7 @@ func runServe(args []string) error {
 
 	server, err := newServeServer(cfg, logger, serveServices{
 		inventory: inv, sampler: sampler, deploys: deploys,
-		cutover: cutover, audit: audit, auth: auth, events: hub,
+		cutover: cutover, audit: audit, auth: auth, users: managedUsers, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
 		database: databases, onboarding: onboarding,
 	}, version)
@@ -308,6 +304,28 @@ func runServe(args []string) error {
 	}
 
 	return nil
+}
+
+// ensureUsers wires managed accounts and guarantees a usable admin.
+func ensureUsers(
+	ctx context.Context,
+	db *store.DB,
+	audit *service.Audit,
+	adminPassword string,
+	logger *slog.Logger,
+) (*service.Users, error) {
+	users := service.NewUsers(store.NewUserStore(db), audit)
+
+	seeded, err := users.EnsureAdmin(ctx, adminPassword)
+	if err != nil {
+		return nil, fmt.Errorf("ensuring admin account: %w", err)
+	}
+
+	if seeded {
+		logger.Warn("no enabled admin found; seeded admin from TOUCHGRASS_ADMIN_PASSWORD")
+	}
+
+	return users, nil
 }
 
 // applyMigrations brings the serve database current, logging what applied.
@@ -407,6 +425,21 @@ func reconcileDatabases(databases *service.Database, logger *slog.Logger) {
 	if err := databases.Reconcile(context.Background()); err != nil {
 		logger.Warn("database job reconcile failed", "error", err)
 	}
+}
+
+// newServeSystem wires host telemetry.
+func newServeSystem(
+	daemon service.DaemonQuerier,
+	dbPath string,
+	logger *slog.Logger,
+) *service.System {
+	return service.NewSystem(service.SystemConfig{
+		Docker:    daemon,
+		Version:   version,
+		DBPath:    dbPath,
+		StartedAt: time.Now(),
+		Logger:    logger,
+	})
 }
 
 // newLogIngestor wires structured-log ingestion on the shared key store.

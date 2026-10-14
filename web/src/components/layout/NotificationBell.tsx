@@ -24,9 +24,11 @@ const previewLimit = 5;
 export default function NotificationBell({
   onViewAll,
   onUnauthorized,
+  isAdmin,
 }: {
   onViewAll: () => void;
   onUnauthorized: () => void;
+  isAdmin: boolean;
 }) {
   const [items, setItems] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
@@ -82,7 +84,7 @@ export default function NotificationBell({
       <DropdownMenuContent align="end" className="w-80">
         <DropdownMenuLabel className="flex items-center">
           Notifications
-          {unread > 0 && (
+          {unread > 0 && isAdmin && (
             <Button
               variant="ghost"
               size="sm"

@@ -71,7 +71,8 @@ POSTs webhooks / sends email.
   (also the uptime probe
   target); services (CRUD incl. `DELETE`, metrics, deploys, deploy,
   cutover, rollback); onboarding suggest; alert rules; notifications;
-  audit; issues (+ occurrences, rules, per-issue logs); container logs
+  audit; users (admin-only account CRUD); issues (+ occurrences,
+  rules, per-issue logs); container logs
   (+ stats, context); SDK logs ingest; API keys; fleet/system
   (containers, host history); databases (health, backups, restore,
   jobs); docker images (+ prune); `POST /api/ingest` (SDK error
@@ -83,7 +84,7 @@ POSTs webhooks / sends email.
 - Errors: internal chain with `%w`; boundary translates to
   `{error: <user-safe message>, code: <machine code>}` + status;
   technical detail goes to logs only.
-- Middleware: admin auth (session cookie, v1 single credential),
+- Middleware: multi-user auth (session cookie, admin/viewer roles),
   structured request logging (method, path, status, duration).
 
 ## Data
@@ -101,7 +102,8 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 | log_lines | collected container log lines (short retention) |
 | sdk_logs | SDK structured logs: level, severity, attrs, trace/span, release |
 | db_jobs | backup/restore job rows (dumps live on disk, not in SQLite) |
-| audit | append-only action log (cutover, rollback, deploy, login, db_*, service_*) |
+| audit | append-only action log (cutover, rollback, deploy, login, db_*, service_*, user_*) |
+| users | managed login accounts: username, bcrypt hash, role, disabled flag |
 | settings | alert rules, notifications, API keys, retention caps |
 
 - Migrations: versioned `migrations/*.sql` applied in order by an internal
@@ -111,9 +113,16 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 
 ## Auth (v1)
 
-- UI/API: single admin password from `TOUCHGRASS_ADMIN_PASSWORD`,
-  bcrypt-hashed at boot and verified with bcrypt, plus a session cookie.
-  Binds localhost by default; public listen requires explicit config.
+- UI/API: managed users with two global roles — `admin` (full
+  power) and `viewer` (read-only: every `GET` plus login/logout;
+  every mutating route answers 403). Passwords are bcrypt-hashed
+  in SQLite; sessions are server-side random tokens bound to a
+  username, with role and disabled state re-resolved per request.
+  `TOUCHGRASS_ADMIN_PASSWORD` seeds the bootstrap admin on first
+  boot only (ignored once an enabled admin exists). A
+  last-enabled-admin guard rejects orphaning demotes, disables,
+  and deletes. Binds localhost by default; public listen requires
+  explicit config.
 - Ingestion: per-project API keys (`tg_<random>`), revocable, stored hashed.
 
 ## Config (12-factor)
@@ -177,5 +186,6 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
 - `service`/`store` interfaces stay host-agnostic so multi-host agents can
   slot behind them; `docker/` is the seam an agent would remote.
 - Tracing/APM stays out except OTel log correlation (ADR-0009);
-  browser/mobile SDKs, RBAC, and secrets management are explicitly
-  out — don't half-build them.
+  browser/mobile SDKs, per-service RBAC scoping, SSO, and secrets
+  management are explicitly out — don't half-build them. The
+  admin/viewer split (ADR-0010) is the whole role model.

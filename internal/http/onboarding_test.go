@@ -39,9 +39,12 @@ func onboardingTestServer(t *testing.T, lister docker.Lister, prober service.Pro
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
+	seedTestUsers(t, db)
+
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)
 	audit := service.NewAudit(services, store.NewAuditStore(db))
+	managedUsers := service.NewUsers(store.NewUserStore(db), audit)
 
 	onboarding := service.NewOnboarding(service.OnboardingConfig{
 		Services:   services,
@@ -63,7 +66,8 @@ func onboardingTestServer(t *testing.T, lister docker.Lister, prober service.Pro
 		Logger:     logger,
 		Inventory:  service.NewInventory(services, lister, prober, logger),
 		Audit:      audit,
-		Auth:       testAuthenticator(t),
+		Auth:       testAuthenticator(t, managedUsers),
+		Users:      managedUsers,
 		Events:     NewHub(logger),
 		Onboarding: onboarding,
 		Dist:       testDist(),

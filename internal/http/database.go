@@ -55,7 +55,7 @@ type jobAcceptedResponse struct {
 
 // handleStartBackup begins an async pg_dump backup.
 func (s *Server) handleStartBackup(w nethttp.ResponseWriter, r *nethttp.Request) {
-	id, err := s.database.StartBackup(context.WithoutCancel(r.Context()), actorAdmin)
+	id, err := s.database.StartBackup(context.WithoutCancel(r.Context()), requestActor(r))
 	if err != nil {
 		writeDatabaseError(w, s.logger, err, "failed to start backup")
 
@@ -125,7 +125,7 @@ func (s *Server) handleRestore(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	id, err := s.database.StartRestore(context.WithoutCancel(r.Context()), body.Name, actorAdmin)
+	id, err := s.database.StartRestore(context.WithoutCancel(r.Context()), body.Name, requestActor(r))
 	if err != nil {
 		writeDatabaseError(w, s.logger, err, "failed to start restore")
 

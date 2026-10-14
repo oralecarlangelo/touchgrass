@@ -88,7 +88,13 @@ function jobDuration(job: DatabaseJob): string {
   return formatDuration((finished - started) / 1000);
 }
 
-export default function DatabasesScreen({ onUnauthorized }: { onUnauthorized: () => void }) {
+export default function DatabasesScreen({
+  onUnauthorized,
+  isAdmin,
+}: {
+  onUnauthorized: () => void;
+  isAdmin: boolean;
+}) {
   const [databases, setDatabases] = useState<DatabaseView[] | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
   const [backups, setBackups] = useState<DatabaseBackup[] | null>(null);
@@ -408,7 +414,7 @@ export default function DatabasesScreen({ onUnauthorized }: { onUnauthorized: ()
                   {postgres.reachable ? 'reachable' : 'unreachable'}
                 </Badge>
               )}
-              {postgres !== null && postgres.configured && postgres.reachable && (
+              {isAdmin && postgres !== null && postgres.configured && postgres.reachable && (
                 <Button
                   size="sm"
                   className="ml-auto"
@@ -624,23 +630,27 @@ export default function DatabasesScreen({ onUnauthorized }: { onUnauthorized: ()
                         {verify[backup.name] === 'bad' && (
                           <Badge variant="destructive">checksum mismatch</Badge>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => void handleVerify(backup.name)}
-                          disabled={verify[backup.name] === 'verifying'}
-                        >
-                          {verify[backup.name] === 'verifying' ? 'Verifying…' : 'Verify'}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => openRestore(backup.name)}
-                          disabled={backupRunning}
-                        >
-                          Restore
-                        </Button>
+                        {isAdmin && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void handleVerify(backup.name)}
+                            disabled={verify[backup.name] === 'verifying'}
+                          >
+                            {verify[backup.name] === 'verifying' ? 'Verifying…' : 'Verify'}
+                          </Button>
+                        )}
+                        {isAdmin && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => openRestore(backup.name)}
+                            disabled={backupRunning}
+                          >
+                            Restore
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

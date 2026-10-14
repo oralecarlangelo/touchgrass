@@ -24,6 +24,30 @@ func defaultTestConfig() Config {
 	}
 }
 
+// mutateCustomTestConfig applies the custom-values case expectations.
+func mutateCustomTestConfig(cfg *Config) {
+	cfg.Addr = ":8080"
+	cfg.DB = "/data/t.db"
+	cfg.Env = "dev"
+	cfg.MetricsInterval = 10 * time.Second
+	cfg.CookieSecure = true
+	cfg.WatchInterval = 2 * time.Second
+	cfg.RetentionErrors = 24 * time.Hour
+	cfg.MaxOccurrences = 500
+	cfg.RetentionLogs = 48 * time.Hour
+	cfg.MaxLogLines = 1000
+	cfg.LogPollInterval = 2 * time.Second
+	cfg.RetentionSDKLogs = 3 * 24 * time.Hour
+	cfg.PostgresContainer = "pg"
+	cfg.PostgresUser = "app"
+	cfg.PostgresDB = "ticketnation"
+	cfg.BackupDir = "/opt/backups"
+	cfg.BackupKeep = 30
+	cfg.BackupInterval = 6 * time.Hour
+	cfg.RedisContainer = "redis"
+	cfg.ScriptsDir = "/opt/touchgrass/scripts"
+}
+
 func TestLoad(t *testing.T) {
 	t.Parallel()
 
@@ -48,32 +72,11 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_LOG_POLL_INTERVAL": "2s", "TOUCHGRASS_RETENTION_SDK_LOGS": "3",
 				"TOUCHGRASS_POSTGRES_CONTAINER": "pg", "TOUCHGRASS_POSTGRES_USER": "app",
 				"TOUCHGRASS_POSTGRES_DB": "ticketnation", "TOUCHGRASS_DB_BACKUP_DIR": "/opt/backups",
-				"TOUCHGRASS_DB_BACKUP_KEEP": "30", "TOUCHGRASS_DB_BACKUP_INTERVAL": "6h",
+				"TOUCHGRASS_DB_BACKUP_KEEP": "30", backupIntervalEnvVar: "6h",
 				"TOUCHGRASS_REDIS_CONTAINER": "redis",
 				"TOUCHGRASS_SCRIPTS_DIR":     "/opt/touchgrass/scripts",
 			},
-			mutate: func(cfg *Config) {
-				cfg.Addr = ":8080"
-				cfg.DB = "/data/t.db"
-				cfg.Env = "dev"
-				cfg.MetricsInterval = 10 * time.Second
-				cfg.CookieSecure = true
-				cfg.WatchInterval = 2 * time.Second
-				cfg.RetentionErrors = 24 * time.Hour
-				cfg.MaxOccurrences = 500
-				cfg.RetentionLogs = 48 * time.Hour
-				cfg.MaxLogLines = 1000
-				cfg.LogPollInterval = 2 * time.Second
-				cfg.RetentionSDKLogs = 3 * 24 * time.Hour
-				cfg.PostgresContainer = "pg"
-				cfg.PostgresUser = "app"
-				cfg.PostgresDB = "ticketnation"
-				cfg.BackupDir = "/opt/backups"
-				cfg.BackupKeep = 30
-				cfg.BackupInterval = 6 * time.Hour
-				cfg.RedisContainer = "redis"
-				cfg.ScriptsDir = "/opt/touchgrass/scripts"
-			},
+			mutate: mutateCustomTestConfig,
 		},
 		{
 			name:        "missing password",
@@ -107,19 +110,19 @@ func TestLoad(t *testing.T) {
 		},
 		{
 			name: "zero backup interval disables",
-			env:  map[string]string{"TOUCHGRASS_DB_BACKUP_INTERVAL": "0", adminPasswordEnvVar: testAdminPassword},
+			env:  map[string]string{backupIntervalEnvVar: "0", adminPasswordEnvVar: testAdminPassword},
 			mutate: func(cfg *Config) {
 				cfg.BackupInterval = 0
 			},
 		},
 		{
 			name:        "invalid backup interval",
-			env:         map[string]string{"TOUCHGRASS_DB_BACKUP_INTERVAL": "nightly", adminPasswordEnvVar: "s"},
+			env:         map[string]string{backupIntervalEnvVar: "nightly", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 		{
 			name:        "negative backup interval",
-			env:         map[string]string{"TOUCHGRASS_DB_BACKUP_INTERVAL": "-1h", adminPasswordEnvVar: "s"},
+			env:         map[string]string{backupIntervalEnvVar: "-1h", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 	}

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { ChevronDown, Menu } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -28,6 +29,8 @@ export default function AppShell({
   onSelectService,
   onLogout,
   onUnauthorized,
+  username,
+  isAdmin,
   children,
 }: {
   view: ViewId;
@@ -37,10 +40,19 @@ export default function AppShell({
   onSelectService: (id: string | null) => void;
   onLogout: () => void;
   onUnauthorized: () => void;
+  username: string;
+  isAdmin: boolean;
   children: ReactNode;
 }) {
+  const visibleGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((tab) => tab.id !== 'users' || isAdmin),
+    }))
+    .filter((group) => group.items.length > 0);
+
   const activeGroup = (groupId: string): boolean =>
-    navGroups.some((group) => group.id === groupId && group.items.some((tab) => tab.id === view));
+    visibleGroups.some((group) => group.id === groupId && group.items.some((tab) => tab.id === view));
 
   return (
     <TooltipProvider>
@@ -48,6 +60,11 @@ export default function AppShell({
         <header className="border-border bg-card sticky top-0 z-40 border-b">
           <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
             <span className="text-sm font-semibold tracking-tight">touchgrass</span>
+            {!isAdmin && (
+              <Badge variant="secondary" title="Your account is read-only">
+                read-only
+              </Badge>
+            )}
             <Separator orientation="vertical" className="mx-1 hidden h-5 md:block" />
 
             <div className="hidden md:block">
@@ -55,7 +72,7 @@ export default function AppShell({
             </div>
 
             <nav aria-label="Primary" className="ml-2 hidden items-center gap-1 lg:flex">
-              {navGroups.map((group) => (
+              {visibleGroups.map((group) => (
                 <DropdownMenu key={group.id}>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -83,9 +100,13 @@ export default function AppShell({
             </nav>
 
             <div className="ml-auto flex items-center gap-1">
-              <NotificationBell onViewAll={() => onView('notifications')} onUnauthorized={onUnauthorized} />
+              <NotificationBell
+                onViewAll={() => onView('notifications')}
+                onUnauthorized={onUnauthorized}
+                isAdmin={isAdmin}
+              />
               <ThemeToggle />
-              <UserMenu onLogout={onLogout} />
+              <UserMenu username={username} isAdmin={isAdmin} onLogout={onLogout} />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" aria-label="Menu" className="lg:hidden">
@@ -93,7 +114,7 @@ export default function AppShell({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
-                  {navGroups.map((group, index) => (
+                  {visibleGroups.map((group, index) => (
                     <DropdownMenuGroup key={group.id}>
                       {index > 0 && <DropdownMenuSeparator />}
                       <DropdownMenuLabel>{group.label}</DropdownMenuLabel>

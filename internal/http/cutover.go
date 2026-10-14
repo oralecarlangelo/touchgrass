@@ -9,9 +9,6 @@ import (
 	nethttp "net/http"
 )
 
-// actorAdmin is the single v1 identity.
-const actorAdmin = "admin"
-
 // cutoverRequest is the cutover body; empty target means auto.
 type cutoverRequest struct {
 	Target string `json:"target"`
@@ -27,7 +24,7 @@ func (s *Server) handleRollback(w nethttp.ResponseWriter, r *nethttp.Request) {
 	target, err := s.cutover.StartRollback(
 		context.WithoutCancel(r.Context()),
 		r.PathValue("id"),
-		actorAdmin,
+		requestActor(r),
 	)
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to start rollback")
@@ -43,7 +40,7 @@ func (s *Server) handleDeploy(w nethttp.ResponseWriter, r *nethttp.Request) {
 	target, err := s.cutover.StartDeploy(
 		context.WithoutCancel(r.Context()),
 		r.PathValue("id"),
-		actorAdmin,
+		requestActor(r),
 	)
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to start deploy")
@@ -68,7 +65,7 @@ func (s *Server) handleCutover(w nethttp.ResponseWriter, r *nethttp.Request) {
 		context.WithoutCancel(r.Context()),
 		r.PathValue("id"),
 		body.Target,
-		actorAdmin,
+		requestActor(r),
 	)
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to start cutover")

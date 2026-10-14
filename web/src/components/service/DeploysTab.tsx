@@ -62,10 +62,12 @@ export default function DeploysTab({
   service,
   onServiceChanged,
   onUnauthorized,
+  isAdmin,
 }: {
   service: ServiceView;
   onServiceChanged: () => void;
   onUnauthorized: () => void;
+  isAdmin: boolean;
 }) {
   const [deploys, setDeploys] = useState<Deploy[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -161,15 +163,15 @@ export default function DeploysTab({
 
   return (
     <div className="space-y-4">
-      {service.strategy === 'bluegreen' && (
+      {isAdmin && service.strategy === 'bluegreen' && (
         <CutoverPanel service={service} onFinished={handleOperationFinished} />
       )}
 
-      {service.strategy === 'recreate' && (
+      {isAdmin && service.strategy === 'recreate' && (
         <DeployPanel service={service} onFinished={handleOperationFinished} />
       )}
 
-      {(service.strategy === 'bluegreen' || service.strategy === 'recreate') && (
+      {isAdmin && (service.strategy === 'bluegreen' || service.strategy === 'recreate') && (
         <RollbackPanel service={service} onFinished={handleOperationFinished} />
       )}
 
@@ -280,12 +282,13 @@ export default function DeploysTab({
             </div>
           )}
 
-          {formError !== null && (
+          {isAdmin && formError !== null && (
             <p role="alert" className="text-destructive text-sm">
               {formError}
             </p>
           )}
 
+          {isAdmin && (
           <div className="flex flex-wrap items-end gap-2 border-t pt-4">
             <div className="space-y-1">
               <Label htmlFor={`sha-${service.id}`}>Image SHA</Label>
@@ -329,6 +332,7 @@ export default function DeploysTab({
               {recording ? 'Recording…' : 'Record deploy'}
             </Button>
           </div>
+          )}
         </CardContent>
       </Card>
 

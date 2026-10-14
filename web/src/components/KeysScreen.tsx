@@ -45,9 +45,11 @@ const sampleRates = ['1', '0.5', '0.1', '0.01'];
 export default function KeysScreen({
   services,
   onUnauthorized,
+  isAdmin,
 }: {
   services: ServiceView[];
   onUnauthorized: () => void;
+  isAdmin: boolean;
 }) {
   const [serviceId, setServiceId] = useState(services[0]?.id ?? '');
   const [keys, setKeys] = useState<ApiKey[] | null>(null);
@@ -167,28 +169,30 @@ export default function KeysScreen({
             <p className="text-muted-foreground text-sm">No services on the radar yet.</p>
           ) : (
             <>
-              <div className="flex flex-wrap items-end gap-2">
-                <div className="space-y-1">
-                  <label htmlFor="sample-rate" className="text-sm font-medium">
-                    Sample rate
-                  </label>
-                  <Select value={sampleRate} onValueChange={setSampleRate}>
-                    <SelectTrigger id="sample-rate" className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sampleRates.map((rate) => (
-                        <SelectItem key={rate} value={rate}>
-                          {rate}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {isAdmin && (
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="space-y-1">
+                    <label htmlFor="sample-rate" className="text-sm font-medium">
+                      Sample rate
+                    </label>
+                    <Select value={sampleRate} onValueChange={setSampleRate}>
+                      <SelectTrigger id="sample-rate" className="w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {sampleRates.map((rate) => (
+                          <SelectItem key={rate} value={rate}>
+                            {rate}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={() => void handleCreate()} disabled={working}>
+                    {working ? 'Creating…' : 'Create key'}
+                  </Button>
                 </div>
-                <Button onClick={() => void handleCreate()} disabled={working}>
-                  {working ? 'Creating…' : 'Create key'}
-                </Button>
-              </div>
+              )}
 
               {keys === null ? (
                 <div className="space-y-2" aria-label="Loading keys">
@@ -206,7 +210,7 @@ export default function KeysScreen({
                       <TableHead className="text-right">Sample rate</TableHead>
                       <TableHead>Created</TableHead>
                       <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
+                      {isAdmin && <TableHead className="text-right">Action</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -224,19 +228,21 @@ export default function KeysScreen({
                             <Badge variant="secondary">revoked</Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-right">
-                          {key.revoked_at === null && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => setPendingRevoke(key)}
-                              aria-label={`Revoke key ${key.key_prefix}`}
-                            >
-                              Revoke
-                            </Button>
-                          )}
-                        </TableCell>
+                        {isAdmin && (
+                          <TableCell className="text-right">
+                            {key.revoked_at === null && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => setPendingRevoke(key)}
+                                aria-label={`Revoke key ${key.key_prefix}`}
+                              >
+                                Revoke
+                              </Button>
+                            )}
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>

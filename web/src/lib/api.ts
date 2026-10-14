@@ -197,22 +197,26 @@ export async function recordDeploy(
   );
 }
 
-export async function fetchSession(): Promise<boolean> {
-  try {
-    const body = await request<{ authenticated: boolean }>('/api/auth/me');
+export interface SessionInfo {
+  authenticated: boolean;
+  username: string;
+  role: string;
+}
 
-    return body.authenticated;
+export async function fetchSession(): Promise<SessionInfo> {
+  try {
+    return await request<SessionInfo>('/api/auth/me');
   } catch (err) {
     if (isUnauthorized(err)) {
-      return false;
+      return { authenticated: false, username: '', role: '' };
     }
 
     throw err;
   }
 }
 
-export async function login(password: string): Promise<void> {
-  await request<undefined>('/api/auth/login', jsonBody({ password }));
+export async function login(username: string, password: string): Promise<void> {
+  await request<undefined>('/api/auth/login', jsonBody({ username, password }));
 }
 
 export async function logout(): Promise<void> {
@@ -694,6 +698,52 @@ export async function createKey(serviceId: string, sampleRate: number): Promise<
 
 export async function revokeKey(id: number): Promise<void> {
   await request<void>(`/api/keys/${id}/revoke`, { method: 'POST' });
+}
+
+export interface ManagedUser {
+  id: number;
+  username: string;
+  role: string;
+  disabled: boolean;
+  created_at: string;
+}
+
+interface UsersResponse {
+  users: ManagedUser[];
+}
+
+export async function fetchUsers(): Promise<ManagedUser[]> {
+  const body = await request<UsersResponse>('/api/users');
+
+  return body.users ?? [];
+}
+
+export async function createUser(input: {
+  username: string;
+  password: string;
+  role: string;
+}): Promise<ManagedUser> {
+  return request<ManagedUser>('/api/users', jsonBody(input));
+}
+
+export async function setUserRole(id: number, role: string): Promise<ManagedUser> {
+  return request<ManagedUser>(`/api/users/${id}/role`, jsonBody({ role }));
+}
+
+export async function resetUserPassword(id: number, password: string): Promise<void> {
+  await request<undefined>(`/api/users/${id}/password`, jsonBody({ password }));
+}
+
+export async function disableUser(id: number): Promise<ManagedUser> {
+  return request<ManagedUser>(`/api/users/${id}/disable`, { method: 'POST' });
+}
+
+export async function enableUser(id: number): Promise<ManagedUser> {
+  return request<ManagedUser>(`/api/users/${id}/enable`, { method: 'POST' });
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  await request<undefined>(`/api/users/${id}`, { method: 'DELETE' });
 }
 
 export interface ImageView {

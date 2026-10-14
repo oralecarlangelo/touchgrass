@@ -1,9 +1,9 @@
 # Threat model
 
 What touchgrass trusts, what it doesn't, and where the sharp edges
-are. v1 scope: single-host, single admin credential, in-app
-notifications only. Covers everything through S27 (fleet, SDK
-logs/OTel, databases, onboarding, service delete).
+are. v1 scope: single-host, managed users (admin/viewer),
+in-app notifications only. Covers everything through S28 (fleet,
+SDK logs/OTel, databases, onboarding, service delete, RBAC).
 
 ## Trust boundaries
 
@@ -18,14 +18,32 @@ logs/OTel, databases, onboarding, service delete).
 
 ## Authentication and sessions
 
-- One admin password from `TOUCHGRASS_ADMIN_PASSWORD` (required,
-  env-only). Stored in memory as bcrypt (`DefaultCost`); compared with
-  `CompareHashAndPassword`.
+- Managed users in SQLite (`users` table): username, bcrypt hash
+  (`DefaultCost`), role (`admin` or `viewer`), disabled flag.
+  `TOUCHGRASS_ADMIN_PASSWORD` (required, env-only) seeds the
+  bootstrap admin on first boot only — later rotations happen
+  through user management, and the env is ignored once an enabled
+  admin exists. With zero enabled admins (fresh DB or manual
+  surgery — unreachable through the API), boot reseeds admin from
+  the env and logs a warning.
+- Roles: admins hold full power; viewers are read-only (every
+  `GET` plus login/logout; every mutating route answers 403
+  `forbidden`). UI controls hide for viewers, but enforcement is
+  server-side per route — a raw HTTP client gains nothing.
+- Sessions are server-side random tokens bound to a username; role
+  and disabled state re-resolve from the store on every request,
+  so disables and role changes bite immediately. Password resets
+  do not kill existing sessions — disable first to lock out.
 - Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` behind
   `TOUCHGRASS_COOKIE_SECURE=true` (set it whenever TLS terminates in
-  front). Sessions are server-side random tokens; logout destroys.
-- Every `/api/*` route except `/api/health` and login requires the
-  session. The SPA is useless without it.
+  front). Logout destroys the token. Per-IP login rate limiting
+  (5/minute) with 429s; every attempt is audited with the
+  attempted username.
+- Every `/api/*` route except `/api/health`, login, and ingest
+  requires the session. The last-enabled-admin guard rejects
+  demotes, disables, and deletes that would orphan management.
+- User management (`user_create`, `user_update`, `user_delete`)
+  is admin-only and audited with the acting username.
 
 ## SDK keys
 
@@ -97,13 +115,20 @@ session plus confirm-gating in the UI, with an audit entry per run:
   published localhost ports for a health URL (short timeouts,
   first 2xx wins). Admin-gated; it never probes arbitrary hosts.
 - **Fleet/system views** expose every container on the daemon,
-  including other teams' stacks. Same admin boundary as services —
-  no separate reader role exists to leak across.
+  including other teams' stacks. Viewers can read them too, so
+  treat fleet visibility as team-wide — that is the point of the
+  reader role, but don't be surprised by it.
+- **User management** creates admins, who are root-equivalent via
+  the deploy engine. Only trust operators with admin; hand devs
+  the viewer role.
 
 ## What v1 deliberately lacks
 
 - No TLS listener (terminate in nginx/Caddy/ALB in front).
-- No RBAC, no second operator role — one admin credential.
+- No per-service scoping, no operator/deployer role, no SSO — two
+  global roles (admin/viewer) only.
+- No password rotation expiry and no session persistence across
+  restarts (restart logs everyone out, same as before).
 - No webhook/email egress — alerts stay in-app, so a compromised box
   can't spam from here.
 - No secrets manager — env vars only, documented in README/CONTRIBUTING.

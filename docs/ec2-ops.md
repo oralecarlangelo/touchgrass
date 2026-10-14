@@ -23,9 +23,14 @@ Installed 2026-09-21 on the shared TicketNation box (`52.74.121.228`).
 - Session cookie: `HttpOnly; Secure; SameSite=Lax`
   (`TOUCHGRASS_COOKIE_SECURE=true` — required behind TLS).
 - `/api/auth/login` rate-limited in nginx: 5 req/min, burst 3.
-- Single admin password, bcrypt-hashed in memory, env-only. Fetch it
-  with `ssh -i ~/.ssh/ticketnation-api.pem ubuntu@52.74.121.228
-  'cat ~/touchgrass/.admin-pass'` — never commit or chat it.
+- Managed users (admin/viewer roles, S28): bcrypt hashes in the
+  DB, never in logs. `TOUCHGRASS_ADMIN_PASSWORD` seeded `admin` on
+  first boot and is ignored since. Fetch the bootstrap value with
+  `ssh -i ~/.ssh/ticketnation-api.pem ubuntu@52.74.121.228
+  'cat ~/touchgrass/.admin-pass'` — never commit or chat it. If the
+  admin password was rotated in the Users screen, that backup is
+  stale; recovery is deleting all admin rows and restarting (boot
+  reseeds from the env with a warning).
 - Full model: `docs/threat-model.md`.
 
 ## Operating

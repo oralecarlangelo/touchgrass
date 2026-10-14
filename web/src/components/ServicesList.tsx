@@ -31,10 +31,12 @@ export default function ServicesList({
   services,
   onSelect,
   onDeleted,
+  isAdmin,
 }: {
   services: ServiceView[] | null;
   onSelect: (id: string) => void;
   onDeleted: (id: string) => void;
+  isAdmin: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [health, setHealth] = useState<(typeof healthOptions)[number]>('all');
@@ -132,15 +134,17 @@ export default function ServicesList({
                       <Button variant="outline" size="sm" onClick={() => onSelect(service.id)}>
                         Open
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => setPendingDelete(service)}
-                        aria-label={`Remove ${service.id}`}
-                      >
-                        Delete
-                      </Button>
+                      {isAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => setPendingDelete(service)}
+                          aria-label={`Remove ${service.id}`}
+                        >
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

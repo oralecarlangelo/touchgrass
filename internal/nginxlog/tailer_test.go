@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
@@ -97,6 +98,84 @@ func TestTailerCountsMalformedAndIncompleteRecords(t *testing.T) {
 	}
 	if len(got) != 0 || cursor.DroppedRecords != 1 || cursor.Offset != int64(len("not-json\n")) {
 		t.Fatalf("partial read = (%+v, %+v)", got, cursor)
+	}
+}
+
+func TestTailerBoundsEachReadBatch(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "timing.jsonl")
+
+	body := strings.Repeat(validTimingLine+"\n", maxRecordsPerRead+1)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	first := NewTailer(path, Parser{}, "nginx", model.CollectorCursor{Source: "nginx"})
+
+	got, cursor, err := first.Read(context.Background())
+	if err != nil {
+		t.Fatalf("first Read() error = %v", err)
+	}
+
+	if len(got) != maxRecordsPerRead || cursor.Offset >= int64(len(body)) {
+		t.Fatalf("first Read() = (%d records, offset %d), want bounded batch before EOF", len(got), cursor.Offset)
+	}
+
+	second := NewTailer(path, Parser{}, "nginx", cursor)
+
+	got, cursor, err = second.Read(context.Background())
+	if err != nil {
+		t.Fatalf("second Read() error = %v", err)
+	}
+
+	if len(got) != 1 || cursor.Offset != int64(len(body)) {
+		t.Fatalf("second Read() = (%d records, offset %d), want final record and EOF", len(got), cursor.Offset)
+	}
+}
+
+func TestTailerDropsOversizedLineAndContinues(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "timing.jsonl")
+	oversized := strings.Repeat("x", maxTimingLineBytes+1) + "\n"
+
+	body := oversized + validTimingLine + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tailer := NewTailer(path, Parser{}, "nginx", model.CollectorCursor{Source: "nginx"})
+
+	got, cursor, err := tailer.Read(context.Background())
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	if len(got) != 1 || cursor.DroppedRecords != 1 || cursor.Offset != int64(len(body)) {
+		t.Fatalf("Read() = (%+v, %+v), want oversized line dropped and valid record retained", got, cursor)
+	}
+}
+
+func TestTailerLeavesOversizedIncompleteLineUnread(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "timing.jsonl")
+
+	body := strings.Repeat("x", maxTimingLineBytes+1)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tailer := NewTailer(path, Parser{}, "nginx", model.CollectorCursor{Source: "nginx"})
+
+	got, cursor, err := tailer.Read(context.Background())
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	if len(got) != 0 || cursor.DroppedRecords != 0 || cursor.Offset != 0 {
+		t.Fatalf("Read() = (%+v, %+v), want incomplete line left unread", got, cursor)
 	}
 }
 

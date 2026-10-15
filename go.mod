@@ -2,7 +2,7 @@ module github.com/oralecarlangelo/touchgrass
 
 go 1.26.0
 
-toolchain go1.26.6
+toolchain go1.26.9
 
 require (
 	github.com/docker/docker v28.5.2+incompatible

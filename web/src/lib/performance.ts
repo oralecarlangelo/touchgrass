@@ -120,7 +120,7 @@ export function formatPercentile(value: number | null | undefined): string {
 }
 
 export function collectorState(status: CollectorStatusView): CollectorState {
-  if (normalizedTime(status.last_success_at) === null) {
+  if (collectorLastSuccessAt(status) === null) {
     return 'not-configured';
   }
 
@@ -133,6 +133,10 @@ export function collectorState(status: CollectorStatusView): CollectorState {
   }
 
   return 'healthy';
+}
+
+export function collectorLastSuccessAt(status: CollectorStatusView): string | null {
+  return normalizedTime(status.last_success_at);
 }
 
 export function servicePerformanceState(input: {

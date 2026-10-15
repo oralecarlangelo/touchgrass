@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectorLastSuccessAt,
   collectorState,
   formatPercentile,
   mergeTimelineSeries,
@@ -177,6 +178,21 @@ describe('collectorState', () => {
         stale: false,
       }),
     ).toBe('healthy');
+  });
+
+  it('normalizes the Go zero-time sentinel before rendering freshness copy', () => {
+    expect(collectorLastSuccessAt({
+      source: 'postgres',
+      last_success_at: '0001-01-01T00:00:00Z',
+      dropped_records: 0,
+      stale: true,
+    })).toBeNull();
+    expect(collectorLastSuccessAt({
+      source: 'nginx',
+      last_success_at: '2026-10-16T02:00:00Z',
+      dropped_records: 0,
+      stale: false,
+    })).toBe('2026-10-16T02:00:00.000Z');
   });
 });
 

@@ -276,13 +276,14 @@ func (c *PerformanceCollector) collectHTTP(ctx context.Context, minute time.Time
 func aggregateHTTP(observations []model.HTTPObservation, minute time.Time, serviceID, environment string, cursor model.CollectorCursor) []model.HTTPMetricBucket {
 	buckets := map[string]model.HTTPMetricBucket{}
 	for _, observation := range observations {
-		statusClass := observation.Status / 100
-		key := fmt.Sprintf("%s\x1f%s\x1f%s\x1f%d", observation.Method, observation.RouteFamily, observation.Upstream, statusClass)
-		bucket := buckets[key]
-		bucket.BucketStart, bucket.ServiceID, bucket.Environment = observation.Timestamp.UTC().Truncate(time.Minute), serviceID, environment
-		if bucket.BucketStart.IsZero() {
-			bucket.BucketStart = minute
+		bucketStart := observation.Timestamp.UTC().Truncate(time.Minute)
+		if bucketStart.IsZero() {
+			bucketStart = minute
 		}
+		statusClass := observation.Status / 100
+		key := fmt.Sprintf("%s\x1f%s\x1f%s\x1f%s\x1f%d", bucketStart.Format(time.RFC3339), observation.Method, observation.RouteFamily, observation.Upstream, statusClass)
+		bucket := buckets[key]
+		bucket.BucketStart, bucket.ServiceID, bucket.Environment = bucketStart, serviceID, environment
 		bucket.Method, bucket.RouteFamily, bucket.Upstream, bucket.StatusClass = observation.Method, observation.RouteFamily, observation.Upstream, statusClass
 		bucket.RequestCount++
 		if observation.Status >= 500 {

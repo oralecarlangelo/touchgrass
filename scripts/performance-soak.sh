@@ -11,6 +11,7 @@ email_fixture="privacy-soak-alice@example.invalid"
 token_fixture="tg-secret-soak-token-9482"
 query_fixture="private-query-soak-7319"
 max_cpu=${TOUCHGRASS_SOAK_MAX_CPU_PERCENT:-5}
+max_rss_growth_kib=${TOUCHGRASS_SOAK_MAX_RSS_GROWTH_KIB:-32768}
 max_growth=${TOUCHGRASS_SOAK_MAX_DB_GROWTH_BYTES:-8388608}
 max_api_ms=${TOUCHGRASS_SOAK_MAX_API_P95_MS:-500}
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/touchgrass-performance-soak.XXXXXX")
@@ -92,6 +93,19 @@ sample_cpu() {
   awk '{sum += $1; count += 1} END {if (count == 0) print "0"; else printf "%.2f", sum/count}' "$samples"
 }
 
+sample_rss_kib() {
+  pid=$1
+  samples="$work_dir/rss"
+  : >"$samples"
+  count=0
+  while [ "$count" -lt 8 ]; do
+    ps -p "$pid" -o rss= | awk '{$1=$1; print}' >>"$samples"
+    count=$((count + 1))
+    sleep 0.25
+  done
+  awk '{sum += $1; count += 1} END {if (count == 0) print "0"; else printf "%.0f", sum/count}' "$samples"
+}
+
 [ -f "$timing_conf" ] || fail "missing deploy/nginx/timing-log.conf"
 [ -f "$route_map" ] || fail "missing deploy/nginx/route-families.map"
 [ -x "$binary" ] || fail "missing bin/touchgrass (run make build first)"
@@ -106,6 +120,7 @@ done
 
 start_server baseline
 baseline_cpu=$(sample_cpu "$server_pid")
+baseline_rss_kib=$(sample_rss_kib "$server_pid")
 stop_server
 
 sqlite3 "$db_path" <<'SQL'
@@ -130,6 +145,7 @@ curl -fsS -c "$cookie_jar" -H 'Content-Type: application/json' \
 curl -sS "$base_url/privacy/$email_fixture?token=$token_fixture&search=$query_fixture" >/dev/null
 sleep 1
 performance_cpu=$(sample_cpu "$server_pid")
+performance_rss_kib=$(sample_rss_kib "$server_pid")
 request_total=$(sqlite3 "$db_path" "SELECT COALESCE(SUM(request_count), 0) FROM http_metric_buckets WHERE service_id = 'soak-api';")
 [ "$request_total" -ge 500 ] || fail "collector stored $request_total of 500 fixture requests"
 
@@ -147,6 +163,10 @@ stop_server
 size_after=$(file_size "$db_path")
 growth=$((size_after - size_before))
 cpu_overhead=$(awk -v baseline="$baseline_cpu" -v enabled="$performance_cpu" 'BEGIN {value=enabled-baseline; if (value < 0) value=0; printf "%.2f", value}')
+rss_growth_kib=$((performance_rss_kib - baseline_rss_kib))
+if [ "$rss_growth_kib" -lt 0 ]; then
+  rss_growth_kib=0
+fi
 
 for fixture in "$email_fixture" "$token_fixture" "$query_fixture"; do
   if grep -aF "$fixture" "$db_path" "$server_log" >/dev/null 2>&1; then
@@ -156,12 +176,17 @@ done
 
 awk -v value="$cpu_overhead" -v limit="$max_cpu" 'BEGIN {exit !(value < limit)}' || \
   fail "collector CPU overhead ${cpu_overhead}% is not under ${max_cpu}%"
+[ "$rss_growth_kib" -le "$max_rss_growth_kib" ] || \
+  fail "collector RSS growth ${rss_growth_kib} KiB exceeds ${max_rss_growth_kib} KiB"
 [ "$growth" -le "$max_growth" ] || fail "SQLite growth $growth exceeds $max_growth bytes"
 awk -v value="$api_p95_ms" -v limit="$max_api_ms" 'BEGIN {exit !(value <= limit)}' || \
   fail "performance API p95 ${api_p95_ms}ms exceeds ${max_api_ms}ms"
 
 echo "performance soak: PASS"
+echo "  baseline / enabled CPU: ${baseline_cpu}% / ${performance_cpu}%"
 echo "  collector CPU overhead: ${cpu_overhead}% (< ${max_cpu}%)"
+echo "  baseline / enabled RSS: ${baseline_rss_kib} KiB / ${performance_rss_kib} KiB"
+echo "  collector RSS growth: ${rss_growth_kib} KiB (<= ${max_rss_growth_kib} KiB)"
 echo "  SQLite growth: ${growth} bytes (<= ${max_growth})"
 echo "  performance API p95: ${api_p95_ms}ms (<= ${max_api_ms}ms)"
 echo "  timing observations stored: ${request_total}"

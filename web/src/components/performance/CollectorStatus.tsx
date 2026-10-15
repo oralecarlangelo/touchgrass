@@ -4,7 +4,11 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { CollectorStatusView } from '@/lib/api.ts';
 import { timeAgo } from '@/lib/format.ts';
-import { collectorState, type CollectorState as State } from '@/lib/performance.ts';
+import {
+  collectorLastSuccessAt,
+  collectorState,
+  type CollectorState as State,
+} from '@/lib/performance.ts';
 
 const stateLabel: Record<State, string> = {
   healthy: 'healthy',
@@ -40,6 +44,7 @@ export default function CollectorStatus({ collectors }: { collectors: CollectorS
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {collectors.map((collector) => {
               const state = collectorState(collector);
+              const lastSuccessAt = collectorLastSuccessAt(collector);
 
               return (
                 <div key={collector.source} className="rounded-md border p-3">
@@ -53,9 +58,9 @@ export default function CollectorStatus({ collectors }: { collectors: CollectorS
                     </Badge>
                   </div>
                   <p className="text-muted-foreground mt-2 text-xs">
-                    {collector.last_success_at === undefined || collector.last_success_at === ''
+                    {lastSuccessAt === null
                       ? 'No successful sample yet. Check source setup and permissions.'
-                      : `Last success ${timeAgo(collector.last_success_at)}`}
+                      : `Last success ${timeAgo(lastSuccessAt)}`}
                   </p>
                   {collector.dropped_records > 0 && (
                     <p className="text-destructive mt-1 text-xs">

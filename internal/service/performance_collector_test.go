@@ -145,6 +145,33 @@ func TestPerformanceCollectorComputesDeltasAndResetsWithoutNegatives(t *testing.
 	}
 }
 
+func TestAggregateHTTPSplitsIdenticalRoutesAcrossMinuteBuckets(t *testing.T) {
+	t.Parallel()
+
+	firstMinute := time.Date(2026, 10, 16, 3, 4, 0, 0, time.UTC)
+	observations := []model.HTTPObservation{
+		{Timestamp: firstMinute.Add(10 * time.Second), Method: "GET", RouteFamily: "public_events", Upstream: "api", Status: 200, DurationMS: 25},
+		{Timestamp: firstMinute.Add(time.Minute + 10*time.Second), Method: "GET", RouteFamily: "public_events", Upstream: "api", Status: 200, DurationMS: 50},
+	}
+	cursor := model.CollectorCursor{Identity: "fixture", Offset: 2}
+
+	buckets := aggregateHTTP(observations, firstMinute, "tn-api", "prod", cursor)
+
+	if len(buckets) != 2 {
+		t.Fatalf("buckets = %+v, want one bucket per minute", buckets)
+	}
+
+	seen := map[time.Time]int64{}
+
+	for _, bucket := range buckets {
+		seen[bucket.BucketStart] += bucket.RequestCount
+	}
+
+	if seen[firstMinute] != 1 || seen[firstMinute.Add(time.Minute)] != 1 {
+		t.Fatalf("requests by minute = %+v, want 1 in each minute", seen)
+	}
+}
+
 func TestPerformanceCollectorRunStopsOnCancellation(t *testing.T) {
 	t.Parallel()
 

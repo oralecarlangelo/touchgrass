@@ -24,6 +24,7 @@ func defaultTestConfig() Config {
 		MaintenanceInterval: 5 * time.Minute, SQLiteMaxBytes: 1 << 30,
 		SQLiteBackupDir:      defaultSQLiteBackupDir,
 		RetentionPerformance: 168 * time.Hour, RetentionPerformanceHourly: 720 * time.Hour,
+		NginxTimingLog: "", PerformanceServiceID: "", PerformanceInterval: 30 * time.Second,
 	}
 }
 
@@ -54,6 +55,9 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.SQLiteBackupDir = "/var/backups/touchgrass"
 	cfg.RetentionPerformance = 24 * time.Hour
 	cfg.RetentionPerformanceHourly = 240 * time.Hour
+	cfg.NginxTimingLog = "/var/log/nginx/ticketnation-performance/requests.jsonl"
+	cfg.PerformanceServiceID = "tn-api"
+	cfg.PerformanceInterval = 15 * time.Second
 }
 
 func TestLoad(t *testing.T) {
@@ -86,6 +90,8 @@ func TestLoad(t *testing.T) {
 				maintenanceIntervalEnvVar:    "2m", sqliteMaxBytesEnvVar: "2097152",
 				sqliteBackupDirEnvVar:      "/var/backups/touchgrass",
 				retentionPerformanceEnvVar: "24h", retentionPerformanceHourlyEnvVar: "240h",
+				nginxTimingLogEnvVar:       "/var/log/nginx/ticketnation-performance/requests.jsonl",
+				performanceServiceIDEnvVar: "tn-api", performanceIntervalEnvVar: "15s",
 			},
 			mutate: mutateCustomTestConfig,
 		},
@@ -330,6 +336,63 @@ func TestLoadMaintenance(t *testing.T) {
 			t.Parallel()
 			env := map[string]string{adminPasswordEnvVar: testAdminPassword, tt.key: tt.value}
 			if _, err := load(func(key string) string { return env[key] }); err == nil {
+				t.Fatal("load() error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestLoadPerformanceCollector(t *testing.T) {
+	t.Parallel()
+
+	t.Run("disabled nginx defaults", func(t *testing.T) {
+		t.Parallel()
+		cfg, err := load(func(key string) string {
+			if key == adminPasswordEnvVar {
+				return testAdminPassword
+			}
+			return ""
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.NginxTimingLog != "" || cfg.PerformanceServiceID != "" || cfg.PerformanceInterval != 30*time.Second {
+			t.Fatalf("performance defaults = %+v", cfg)
+		}
+	})
+
+	t.Run("enabled nginx", func(t *testing.T) {
+		t.Parallel()
+		env := map[string]string{
+			adminPasswordEnvVar:        testAdminPassword,
+			nginxTimingLogEnvVar:       "/var/log/nginx/timing.jsonl",
+			performanceServiceIDEnvVar: "tn-api",
+			performanceIntervalEnvVar:  "15s",
+		}
+		cfg, err := load(func(key string) string { return env[key] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.NginxTimingLog != env[nginxTimingLogEnvVar] || cfg.PerformanceServiceID != "tn-api" || cfg.PerformanceInterval != 15*time.Second {
+			t.Fatalf("performance config = %+v", cfg)
+		}
+	})
+
+	for _, tt := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "relative timing path", env: map[string]string{nginxTimingLogEnvVar: "logs/timing.jsonl", performanceServiceIDEnvVar: "tn-api"}},
+		{name: "missing service for nginx", env: map[string]string{nginxTimingLogEnvVar: "/var/log/nginx/timing.jsonl"}},
+		{name: "missing service for postgres", env: map[string]string{postgresContainerEnvVar: "postgres"}},
+		{name: "missing service for redis", env: map[string]string{redisContainerEnvVar: "redis"}},
+		{name: "invalid interval", env: map[string]string{performanceIntervalEnvVar: "often"}},
+		{name: "non-positive interval", env: map[string]string{performanceIntervalEnvVar: "0s"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tt.env[adminPasswordEnvVar] = testAdminPassword
+			if _, err := load(func(key string) string { return tt.env[key] }); err == nil {
 				t.Fatal("load() error = nil, want error")
 			}
 		})

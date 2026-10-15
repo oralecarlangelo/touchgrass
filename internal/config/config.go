@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -36,6 +38,7 @@ const (
 	defaultSQLiteBackupDir           = "./backups/sqlite"
 	defaultRetentionPerformance      = "168h"
 	defaultRetentionPerfHourly       = "720h"
+	defaultPerformanceInterval       = "30s"
 	addrEnvVar                       = "TOUCHGRASS_ADDR"
 	dbEnvVar                         = "TOUCHGRASS_DB"
 	envEnvVar                        = "APP_ENV"
@@ -66,6 +69,9 @@ const (
 	sqliteBackupDirEnvVar            = "TOUCHGRASS_SQLITE_BACKUP_DIR"
 	retentionPerformanceEnvVar       = "TOUCHGRASS_RETENTION_PERFORMANCE"
 	retentionPerformanceHourlyEnvVar = "TOUCHGRASS_RETENTION_PERFORMANCE_HOURLY"
+	nginxTimingLogEnvVar             = "TOUCHGRASS_NGINX_TIMING_LOG"
+	performanceServiceIDEnvVar       = "TOUCHGRASS_PERFORMANCE_SERVICE_ID"
+	performanceIntervalEnvVar        = "TOUCHGRASS_PERFORMANCE_INTERVAL"
 	envDev                           = "dev"
 	envProd                          = "prod"
 )
@@ -130,6 +136,14 @@ type Config struct {
 	// RetentionPerformance bounds minute and hourly aggregate history.
 	RetentionPerformance       time.Duration
 	RetentionPerformanceHourly time.Duration
+	// NginxTimingLog is an absolute path to the dedicated privacy-safe JSONL
+	// source. Empty disables only the Nginx collector.
+	NginxTimingLog string
+	// PerformanceServiceID attaches native source aggregates to one known
+	// service. Runtime wiring verifies that the service exists.
+	PerformanceServiceID string
+	// PerformanceInterval paces native source sampling.
+	PerformanceInterval time.Duration
 }
 
 // Load reads configuration from the environment.
@@ -191,6 +205,12 @@ type storageConfig struct {
 	retentionPerformanceHourly time.Duration
 }
 
+type performanceConfig struct {
+	nginxTimingLog string
+	serviceID      string
+	interval       time.Duration
+}
+
 // load resolves configuration using getenv so tests can stub the environment.
 func load(getenv func(string) string) (Config, error) {
 	listen, err := loadListen(getenv)
@@ -219,6 +239,11 @@ func load(getenv func(string) string) (Config, error) {
 	}
 
 	storage, err := loadStorage(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+
+	performance, err := loadPerformance(getenv, database)
 	if err != nil {
 		return Config{}, err
 	}
@@ -254,7 +279,28 @@ func load(getenv func(string) string) (Config, error) {
 		SQLiteBackupDir:            storage.backupDir,
 		RetentionPerformance:       storage.retentionPerformance,
 		RetentionPerformanceHourly: storage.retentionPerformanceHourly,
+		NginxTimingLog:             performance.nginxTimingLog,
+		PerformanceServiceID:       performance.serviceID,
+		PerformanceInterval:        performance.interval,
 	}, nil
+}
+
+func loadPerformance(getenv func(string) string, database databaseConfig) (performanceConfig, error) {
+	interval, err := parseDuration(getenv, performanceIntervalEnvVar, defaultPerformanceInterval)
+	if err != nil {
+		return performanceConfig{}, err
+	}
+
+	path := getenv(nginxTimingLogEnvVar)
+	if path != "" && !filepath.IsAbs(path) {
+		return performanceConfig{}, fmt.Errorf("invalid %s %q: want absolute path", nginxTimingLogEnvVar, path)
+	}
+	serviceID := strings.TrimSpace(getenv(performanceServiceIDEnvVar))
+	if (path != "" || database.container != "" || database.redisContainer != "") && serviceID == "" {
+		return performanceConfig{}, fmt.Errorf("%s is required when a performance source is enabled", performanceServiceIDEnvVar)
+	}
+
+	return performanceConfig{nginxTimingLog: path, serviceID: serviceID, interval: interval}, nil
 }
 
 // loadStorage validates bounded SQLite maintenance settings.

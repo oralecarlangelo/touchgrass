@@ -145,6 +145,14 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		{table: "deploy_probes", timestamp: "sampled_at", retention: policy.RetentionDeploys},
 		{table: "deploys", timestamp: "created_at", retention: policy.RetentionDeploys},
 		{table: "db_jobs", timestamp: "created_at", retention: policy.RetentionDeploys},
+		{table: "http_metric_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
+		{table: "postgres_metric_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
+		{table: "postgres_statement_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
+		{table: "redis_metric_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
+		{table: "log_volume_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
+		{table: "performance_hourly_rollups", timestamp: "bucket_start", retention: policy.RetentionPerformanceHourly},
+		{table: "container_events", timestamp: "occurred_at", retention: policy.RetentionPerformanceHourly},
+		{table: "performance_ingest_batches", timestamp: "bucket_start", retention: policy.RetentionPerformance},
 	}
 
 	remaining := policy.BatchSize
@@ -175,6 +183,14 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		{name: "performance", limit: policy.PerformanceMaxBytes, targets: []retentionTarget{
 			{table: "metrics", timestamp: "sampled_at"}, {table: "host_samples", timestamp: "sampled_at"},
 			{table: "container_samples", timestamp: "sampled_at"},
+			{table: "http_metric_buckets", timestamp: "bucket_start"},
+			{table: "postgres_metric_buckets", timestamp: "bucket_start"},
+			{table: "postgres_statement_buckets", timestamp: "bucket_start"},
+			{table: "redis_metric_buckets", timestamp: "bucket_start"},
+			{table: "log_volume_buckets", timestamp: "bucket_start"},
+			{table: "performance_hourly_rollups", timestamp: "bucket_start"},
+			{table: "container_events", timestamp: "occurred_at"},
+			{table: "performance_ingest_batches", timestamp: "bucket_start"},
 		}},
 		{name: "issues", limit: policy.IssueMaxBytes, targets: []retentionTarget{
 			{table: "occurrences", timestamp: "created_at"}, {table: "issues", timestamp: "last_seen"},
@@ -317,7 +333,15 @@ func (s *MaintenanceStore) classBytes(ctx context.Context) (map[string]int64, er
 		"performance": `SELECT
 			(SELECT COUNT(*) * 128 FROM metrics) +
 			(SELECT COUNT(*) * 96 FROM host_samples) +
-			(SELECT COUNT(*) * 128 FROM container_samples)`,
+			(SELECT COUNT(*) * 128 FROM container_samples) +
+			(SELECT COUNT(*) * 256 FROM http_metric_buckets) +
+			(SELECT COUNT(*) * 96 FROM postgres_metric_buckets) +
+			(SELECT COUNT(*) * 160 FROM postgres_statement_buckets) +
+			(SELECT COUNT(*) * 96 FROM redis_metric_buckets) +
+			(SELECT COUNT(*) * 80 FROM log_volume_buckets) +
+			(SELECT COUNT(*) * 256 FROM performance_hourly_rollups) +
+			(SELECT COUNT(*) * 128 FROM container_events) +
+			(SELECT COUNT(*) * 96 FROM performance_ingest_batches)`,
 		"issues": `SELECT
 			COALESCE((SELECT SUM(length(type)+length(message)+length(stack)+length(breadcrumbs)+length(service_id)) FROM occurrences), 0) +
 			COALESCE((SELECT SUM(length(title)+length(fingerprint)+length(service_id)) FROM issues), 0)`,

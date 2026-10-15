@@ -29,14 +29,18 @@ enforce retention.
                          │   ├─ logs + sdk_logs (search)│
                          │   ├─ fleet/system (sampling) │
                          │   ├─ database (pg/redis)     │
+                         │   ├─ performance (correlate) │
                          │   ├─ onboarding (promote)    │
                          │   ├─ notify (webhook/email)  │
                          │   └─ audit (append-only)     │
                          │                              │
                          │  internal/store (SQLite)     │
-                         │  internal/{docker,probe}     │
+                         │  source adapters             │
+                         │   ├─ nginxlog (HTTP timing)  │
+                         │   ├─ dbstats (pg/redis)      │
+                         │   └─ docker/probe            │
                          │  schedulers (sample, probe,  │
-                         │   collect, retention)        │
+                         │   collect, roll up, retain)  │
                          └──────┬───────────────┬───────┘
                                 │               │
                     Docker socket│               │SQLite file
@@ -61,6 +65,10 @@ POSTs webhooks / sends email.
 - **Don't**: no business logic in `cmd/` or handlers; no SQL outside
   `store/`; no cross-service imports (services share `model/`, not each
   other).
+- Performance source adapters accept native Nginx, Docker, PostgreSQL,
+  Redis, and log signals through narrow interfaces. They normalize data;
+  services schedule collection and correlate aggregates; stores own cursors,
+  buckets, rollups, and retention.
 
 ## HTTP design
 
@@ -79,8 +87,11 @@ POSTs webhooks / sends email.
   reports, per-project API key header); `POST /api/ingest/logs` (SDK
   structured-log batches, same key model); `GET /api/events` (SSE:
   metrics ticks, deploy progress, alerts); `/docs` (embedded docs
-  site); `/*` (embedded SPA fallback). JSON everywhere, `[]` never
-  `null`.
+  site); global Performance summary/timeline/routes/PostgreSQL/Redis and
+  collector-status reads; service-scoped Performance reads; `/*` (embedded
+  SPA fallback). JSON everywhere, `[]` never `null`. Performance ranges,
+  dimensions, sort fields, bucket counts, and page sizes are capped and
+  validated at the HTTP/service boundary.
 - Errors: internal chain with `%w`; boundary translates to
   `{error: <user-safe message>, code: <machine code>}` + status;
   technical detail goes to logs only.
@@ -101,6 +112,9 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 | issues | fingerprinted error groups + occurrences (+ releases, issue rules) |
 | log_lines | collected container log lines (short retention) |
 | sdk_logs | SDK structured logs: level, severity, attrs, trace/span, release |
+| performance buckets | one-minute HTTP, PostgreSQL, Redis, and log-volume aggregates plus bounded hourly rollups |
+| collector_cursors | persisted source identity/offset, freshness, safe errors, and dropped-record counters |
+| container_events | bounded Docker lifecycle, OOM, restart, and health-transition history |
 | db_jobs | backup/restore job rows (dumps live on disk, not in SQLite) |
 | audit | append-only action log (cutover, rollback, deploy, login, db_*, service_*, user_*) |
 | users | managed login accounts: username, bcrypt hash, role, disabled flag |
@@ -109,7 +123,30 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 - Migrations: versioned `migrations/*.sql` applied in order by an internal
   runner tracking `schema_migrations`. Forward-only in v1.
 - Retention: max-age + max-bytes per area, enforced on a schedule by the
-  binary itself. Mandatory (BRD NFR-2), tested with a volume soak.
+  binary itself. Minute Performance buckets default to seven days; hourly
+  rollups and runtime events default to 30 days. Deletion is batched and the
+  total SQLite budget plus per-class byte ceilings are enforced. Mandatory
+  (BRD NFR-2), tested with a volume soak and online backup/recovery checks.
+
+## Agentless Performance diagnostics
+
+ADR-0011 defines the boundary. A dedicated Nginx timing log, Docker stats and
+events, read-only PostgreSQL statistics, read-only Redis statistics, and
+existing log ingestion feed independent collectors. They store approved route
+families and numeric aggregates only—never a raw URI, query string, SQL text,
+Redis key, request payload, address, or user identifier. Unknown or sensitive
+paths become `other`.
+
+The Performance service selects bounded minute or hourly ranges and aligns
+HTTP latency/error volume with resource, dependency, log, deployment, and
+runtime markers. It describes evidence as correlation, not source-level
+causality. A failed or stale collector reports its own status while historical
+data and the other collectors remain available.
+
+The web application exposes **Performance** under **Signals** and a
+service-scoped **Performance** tab that reuses the same aggregate contracts.
+Both views link to existing Logs, Issues, Deployments, Fleet, and Database
+workflows for investigation.
 
 ## Auth (v1)
 
@@ -134,6 +171,9 @@ Environment variables only in v1 (no config file, no Viper):
   `TOUCHGRASS_DATA_RETENTION_*` overrides.
 - Logs to stdout, JSON via `slog`. Graceful shutdown on SIGTERM
   (drain HTTP + stop schedulers).
+- Performance, maintenance, and each native source have independent enable
+  conditions and bounded intervals. Empty source configuration disables only
+  that collector; it never blocks application boot.
 
 ## CLI
 
@@ -180,6 +220,9 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
   templates with IDs as attributes (per `golang-error-handling`).
 - Own `/api/health` doubles as the canary endpoint for external uptime
   checks.
+- Collector status records last success, last safe error category, parse and
+  persistence failures, and dropped records. These internal signals must not
+  include rejected payload contents.
 
 ## Seams left for Phase 8
 

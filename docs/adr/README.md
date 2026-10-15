@@ -16,3 +16,4 @@ standards (`AGENTS.md`, `docs/ARCHITECTURE.md`,
 | [0008](0008-product-voice.md) | Product voice — Gen Z tone, credible core | Accepted |
 | [0009](0009-otel-log-support.md) | OTel log support in the Node SDK | Accepted |
 | [0010](0010-two-role-auth.md) | Two-role auth — admin and viewer | Accepted |
+| [0011](0011-agentless-performance-diagnostics.md) | Agentless performance diagnostics | Accepted |

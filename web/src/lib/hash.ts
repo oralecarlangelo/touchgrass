@@ -3,6 +3,7 @@ import type { ViewId } from './views.ts';
 const views: ViewId[] = [
   'dashboard',
   'services',
+  'performance',
   'issues',
   'logs',
   'notifications',

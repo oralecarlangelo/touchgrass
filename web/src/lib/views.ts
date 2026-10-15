@@ -1,6 +1,7 @@
 export type ViewId =
   | 'dashboard'
   | 'services'
+  | 'performance'
   | 'issues'
   | 'logs'
   | 'notifications'
@@ -41,6 +42,7 @@ export const navGroups: NavGroup[] = [
     id: 'signals',
     label: 'Signals',
     items: [
+      { id: 'performance', label: 'Performance' },
       { id: 'issues', label: 'Issues' },
       { id: 'logs', label: 'Logs' },
       { id: 'notifications', label: 'Notifications' },

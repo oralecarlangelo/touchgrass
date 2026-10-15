@@ -28,6 +28,108 @@ export interface ServiceView {
   containers: ContainerView[];
 }
 
+export type PerformanceResolution = 'auto' | 'minute' | 'hour';
+export type PerformanceRouteSort = 'p95_ms' | 'request_count' | 'error_rate' | 'route_family';
+
+export interface PerformanceFilters {
+  serviceId?: string;
+  start?: string;
+  end?: string;
+  resolution?: PerformanceResolution;
+  routeFamily?: string;
+  sort?: PerformanceRouteSort;
+  limit?: number;
+}
+
+export interface PerformanceSnapshot {
+  request_count: number;
+  error_count: number;
+  error_rate: number;
+  average_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+}
+
+export interface PerformanceAnomaly {
+  kind: string;
+  score: number;
+  summary: string;
+}
+
+export interface PerformanceSummaryView extends PerformanceSnapshot {
+  start: string;
+  end: string;
+  resolution: Exclude<PerformanceResolution, 'auto'>;
+  previous: PerformanceSnapshot;
+  anomalies: PerformanceAnomaly[];
+}
+
+export interface PerformanceTimelinePoint {
+  bucket_start: string;
+  request_count: number;
+  error_count: number;
+  error_rate: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  log_errors: number;
+  log_warnings: number;
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  postgres_connection_pct: number | null;
+  redis_evictions: number | null;
+}
+
+export interface RuntimeMarker {
+  source_event_id: string;
+  occurred_at: string;
+  service_id: string;
+  environment: string;
+  event_type: string;
+  container_name: string;
+  compose_service: string;
+  expected: boolean;
+}
+
+export interface PerformanceTimelineView {
+  start: string;
+  end: string;
+  resolution: Exclude<PerformanceResolution, 'auto'>;
+  points: PerformanceTimelinePoint[];
+  events: RuntimeMarker[];
+  deployments: Deploy[];
+}
+
+export interface PerformanceRouteRow extends PerformanceSnapshot {
+  method: string;
+  route_family: string;
+  previous: PerformanceSnapshot;
+}
+
+export interface PostgresPerformanceRow {
+  bucket_start: string;
+  service_id: string;
+  environment: string;
+  metric: string;
+  value: number;
+  delta: number;
+  reset: boolean;
+}
+
+export interface RedisPerformanceRow extends PostgresPerformanceRow {
+  command_family?: string;
+}
+
+export interface CollectorStatusView {
+  source: string;
+  last_success_at?: string;
+  last_recorded_at?: string;
+  last_error?: string;
+  dropped_records: number;
+  stale: boolean;
+}
+
 interface ServicesResponse {
   services: ServiceView[];
 }
@@ -144,6 +246,122 @@ export async function fetchServices(): Promise<ServiceView[]> {
   const body = await request<ServicesResponse>('/api/services');
 
   return body.services ?? [];
+}
+
+const performanceResolutions = new Set<PerformanceResolution>(['auto', 'minute', 'hour']);
+const performanceSorts = new Set<PerformanceRouteSort>([
+  'p95_ms',
+  'request_count',
+  'error_rate',
+  'route_family',
+]);
+
+function performanceQuery(filters: PerformanceFilters): string {
+  const params = new URLSearchParams();
+  const start = filters.start === undefined ? null : new Date(filters.start);
+  const end = filters.end === undefined ? null : new Date(filters.end);
+
+  if (start !== null && !Number.isNaN(start.getTime())) {
+    params.set('start', start.toISOString());
+  }
+  if (end !== null && !Number.isNaN(end.getTime())) {
+    params.set('end', end.toISOString());
+  }
+  if (filters.resolution !== undefined && performanceResolutions.has(filters.resolution)) {
+    params.set('resolution', filters.resolution);
+  }
+  if (
+    filters.routeFamily !== undefined &&
+    filters.routeFamily.trim() !== '' &&
+    filters.routeFamily.length <= 160
+  ) {
+    params.set('route_family', filters.routeFamily.trim());
+  }
+  if (filters.sort !== undefined && performanceSorts.has(filters.sort)) {
+    params.set('sort', filters.sort);
+  }
+  if (
+    filters.limit !== undefined &&
+    Number.isInteger(filters.limit) &&
+    filters.limit >= 1 &&
+    filters.limit <= 100
+  ) {
+    params.set('limit', String(filters.limit));
+  }
+
+  const encoded = params.toString();
+
+  return encoded === '' ? '' : `?${encoded}`;
+}
+
+export function performanceApiPath(
+  resource: 'summary' | 'timeline' | 'routes' | 'postgres' | 'redis',
+  filters: PerformanceFilters = {},
+): string {
+  const service = filters.serviceId?.trim();
+  const base =
+    service === undefined || service === ''
+      ? `/api/performance/${resource}`
+      : `/api/services/${encodeURIComponent(service)}/performance/${resource}`;
+
+  return `${base}${performanceQuery(filters)}`;
+}
+
+export async function fetchPerformanceSummary(
+  filters: PerformanceFilters = {},
+): Promise<PerformanceSummaryView> {
+  const result = await request<PerformanceSummaryView>(performanceApiPath('summary', filters));
+
+  return { ...result, anomalies: result.anomalies ?? [] };
+}
+
+export async function fetchPerformanceTimeline(
+  filters: PerformanceFilters = {},
+): Promise<PerformanceTimelineView> {
+  const result = await request<PerformanceTimelineView>(performanceApiPath('timeline', filters));
+
+  return {
+    ...result,
+    points: result.points ?? [],
+    events: result.events ?? [],
+    deployments: result.deployments ?? [],
+  };
+}
+
+export async function fetchPerformanceRoutes(
+  filters: PerformanceFilters = {},
+): Promise<PerformanceRouteRow[]> {
+  const result = await request<{ routes: PerformanceRouteRow[] }>(
+    performanceApiPath('routes', filters),
+  );
+
+  return result.routes ?? [];
+}
+
+export async function fetchPerformancePostgres(
+  filters: PerformanceFilters = {},
+): Promise<PostgresPerformanceRow[]> {
+  const result = await request<{ metrics: PostgresPerformanceRow[] }>(
+    performanceApiPath('postgres', filters),
+  );
+
+  return result.metrics ?? [];
+}
+
+export async function fetchPerformanceRedis(
+  filters: PerformanceFilters = {},
+): Promise<RedisPerformanceRow[]> {
+  const result = await request<{ metrics: RedisPerformanceRow[] }>(
+    performanceApiPath('redis', filters),
+  );
+
+  return result.metrics ?? [];
+}
+
+export async function fetchCollectorStatuses(): Promise<CollectorStatusView[]> {
+  const result = await request<{ collectors: CollectorStatusView[] }>('/api/collectors/status');
+
+  return result.collectors ?? [];
 }
 
 export async function deleteService(serviceId: string): Promise<void> {

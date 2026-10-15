@@ -11,6 +11,7 @@ import KeysScreen from './components/KeysScreen.tsx';
 import LoginForm from './components/LoginForm.tsx';
 import LogsScreen from './components/LogsScreen.tsx';
 import NotificationsScreen from './components/NotificationsScreen.tsx';
+import PerformanceScreen from './components/PerformanceScreen.tsx';
 import RulesScreen from './components/RulesScreen.tsx';
 import ServicesList from './components/ServicesList.tsx';
 import ServiceWorkspace from './components/service/ServiceWorkspace.tsx';
@@ -286,6 +287,8 @@ export default function App() {
             onUnauthorized={handleUnauthorized}
             isAdmin={isAdmin}
           />
+        ) : view === 'performance' ? (
+          <PerformanceScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'issues' ? (
           <IssuesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'logs' ? (

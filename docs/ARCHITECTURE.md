@@ -17,7 +17,7 @@ enforce retention.
                          │                              │
  browsers ──► :8080 ──►  │  internal/http               │
                          │   ├─ REST API (stdlib mux)   │
- tn-api etc.             │   ├─ SPA (embedded web/dist) │
+ managed apps            │   ├─ SPA (embedded web/dist) │
    │ SDK ──► :8080/ingest│   ├─ docs (embedded site)    │
                          │   ├─ SSE (/events)           │
                          │   └─ middleware (auth, log)  │
@@ -49,9 +49,37 @@ enforce retention.
                          containers      touchgrass.db
 ```
 
-Outbound: deploy engine shells out to service cutover scripts for
-cutovers and rollbacks (tn-api's `bluegreen-*.sh` in v1); notifier
-POSTs webhooks / sends email.
+Outbound: the deploy engine shells out to service-configured cutover scripts
+for cutovers and rollbacks. Repository examples may include a Ticketnation
+blue-green adapter, but the engine has no Ticketnation-specific branch.
+Notification providers POST webhooks or send email through generic contracts.
+
+## Project-agnostic boundary (decided)
+
+Touch Grass core models deployments, services, signals, incidents, and
+notification channels without knowing which application it monitors.
+Ticketnation is the first production dogfood environment, not a product
+dependency.
+
+- Service identity, compose ownership, health URLs, cutover commands, source
+  locations, and routing dimensions are data or configuration.
+- Core packages must not branch on service IDs, customer names, domains,
+  repository names, or specific email/cloud providers.
+- Infrastructure integrations enter through narrow adapters. Standards-based
+  contracts such as Docker, HTTP, SMTP, signed webhooks, PostgreSQL, Redis,
+  and JSONL are preferred over project APIs.
+- A provider-specific adapter may add capabilities but cannot become required
+  for alert generation, storage, delivery routing, or dashboard rendering.
+- Monitored services remain outside the Touch Grass trust and availability
+  boundary. Failure or removal of a monitored project cannot prevent Touch
+  Grass from starting or managing other services.
+- Examples and fixtures may use Ticketnation names, but reusable behavior must
+  also be covered by a generic fixture and must work unchanged when the service
+  record is renamed.
+
+Adding a project-specific exception to core behavior requires an ADR that
+explains why configuration or an adapter is insufficient. Deployment overlays
+and private runbooks do not require an ADR because they are not product logic.
 
 ## Layering and DI (decided)
 
@@ -64,7 +92,7 @@ POSTs webhooks / sends email.
   genuinely hurts (ADR required).
 - **Don't**: no business logic in `cmd/` or handlers; no SQL outside
   `store/`; no cross-service imports (services share `model/`, not each
-  other).
+  other); no project/customer checks in core packages.
 - Performance source adapters accept native Nginx, Docker, PostgreSQL,
   Redis, and log signals through narrow interfaces. They normalize data;
   services schedule collection and correlate aggregates; stores own cursors,

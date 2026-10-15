@@ -64,6 +64,13 @@ Plan/BRD/architecture drift is a bug: update the doc in the same PR
 that introduces the change. New services onboard as data (see
 `docs/service-graduation.md`), never as code forks.
 
+Touch Grass features are project-agnostic. Ticketnation is a dogfood
+deployment, not a special product mode. Do not hardcode customer names,
+service IDs, domains, repository paths, route families, or provider
+credentials in core behavior. Put deployment-specific behavior behind stored
+configuration or a narrow adapter, and include a generic fixture or test that
+still passes after the example service is renamed.
+
 ## Security
 
 Found a vulnerability? See `docs/threat-model.md` for the trust

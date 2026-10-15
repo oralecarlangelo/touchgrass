@@ -5,6 +5,12 @@ agentless performance diagnostics, container metrics + alerts (view-only),
 and Sentry-style error tracking unified with log search. One Go binary
 (UI embedded) + one SQLite file.
 
+Touch Grass is project-agnostic. Services and providers are configured as
+data or connected through adapters; the core does not depend on Ticketnation
+or another monitored application's API, schema, credentials, or release
+process. Project names in dogfood runbooks and validation evidence are examples
+only.
+
 > Status: v1 code-complete (Sprints 0–11). The login-gated dashboard
 > manages services end to end: live color, health, metrics + history,
 > confirmation-gated cutover/rollback/recreate with streamed progress

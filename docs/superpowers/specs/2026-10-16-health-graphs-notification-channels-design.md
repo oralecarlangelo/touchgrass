@@ -22,6 +22,8 @@ Urgent delivery will reuse Touch Grass's existing alert rules and notifications.
 - Keep provider credentials out of logs, API responses, audit details, and browser storage.
 - Deliver asynchronously with deduplication, retries, recovery notices, and visible delivery state.
 - Preserve Touch Grass's existing single-binary, SQLite, agentless architecture.
+- Keep every graph, alert event, channel, provider, and API contract usable
+  without Ticketnation-specific code, identifiers, credentials, or services.
 
 ## Non-goals
 
@@ -33,6 +35,27 @@ Urgent delivery will reuse Touch Grass's existing alert rules and notifications.
 - Automatically remediating incidents from an email or webhook.
 - Adding OpenTelemetry or an application agent to monitored services.
 - Supporting arbitrary executable notification plugins in the first release.
+
+## Project-agnostic requirements
+
+This feature is part of the open-source Touch Grass product. Ticketnation is a
+production validation environment only.
+
+- The provider registry accepts generic provider kinds and configuration; it
+  has no Ticketnation provider or implicit Ticketnation fallback.
+- SMTP, webhook, routing, outbox, health graphs, and APIs operate on generic
+  service IDs and bounded event types.
+- Provider credentials are supplied by each deployment. Touch Grass never
+  reads credentials from a monitored application's container or calls that
+  application's email endpoint.
+- Route-family labels and metric dimensions come from collector data or
+  operator configuration, not a compiled list of Ticketnation routes.
+- Documentation examples cover generic SMTP plus SES and Mailgun as optional
+  provider examples. No one provider is required.
+- Tests include generic services whose IDs and compose projects differ from
+  Ticketnation. Renaming a service record must not change behavior.
+- Ticketnation-specific production setup belongs in a deployment runbook or
+  evidence document, not this feature's core defaults.
 
 ## Considered approaches
 
@@ -332,4 +355,6 @@ Open-source documentation will include:
 - Permanent failures become visible without causing recursive alerts.
 - Non-admin users cannot mutate or reveal channel configuration.
 - Existing in-app notifications, alert rules, dashboards, and agentless collectors continue working when no outbound channel is configured.
+- The same binary can monitor a non-Ticketnation service and deliver through
+  a user-selected SMTP or webhook provider with configuration changes only.
 

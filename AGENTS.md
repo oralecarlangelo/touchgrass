@@ -5,6 +5,29 @@ blue-green deploys, container metrics + alerts (view-only), and
 Sentry-style error tracking unified with log search. Single Go binary
 (UI embedded) + single SQLite file. Full context: `BRD-touchgrass.md`.
 
+## Project-agnostic boundary (binding)
+
+Touch Grass is a general open-source product, not a Ticketnation component.
+Ticketnation is a dogfood deployment and test fixture only. New features must:
+
+- Avoid branching on a customer, repository, service ID, compose project,
+  domain, route name, or provider name.
+- Express deployment-specific behavior through stored service configuration,
+  narrow interfaces, adapters, or documented extension points.
+- Prefer standards-based integrations and provider-neutral contracts. A
+  vendor adapter may implement a contract, but must not define core behavior.
+- Keep monitored applications optional and fail-open. Touch Grass must not
+  require an application-specific API, schema, credential, or release process.
+- Include at least one generic/non-Ticketnation fixture or test for reusable
+  behavior. Ticketnation-only evidence does not prove a feature is portable.
+- Keep product configuration names generic. Project-specific examples belong
+  in examples, deployment overlays, runbooks, or validation evidence—not core
+  defaults or business logic.
+
+Historical specs and evidence may name Ticketnation because it is the first
+production deployment. Those references are context, not an architectural
+dependency or permission to add a project-specific code path.
+
 Before any Go coding, review, debugging, troubleshooting, or setup task, load the `samber/cc-skills-golang@golang-how-to` skill first — it routes to whichever other Go skills the task needs.
 
 ## Required Go skills

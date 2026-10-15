@@ -1,0 +1,16 @@
+# Install in Nginx's http context before timing-log.conf. This is a bounded,
+# privacy-reviewed vocabulary: unmatched and sensitive paths become `other`.
+# `$uri` excludes the query string; never change this map to a query-bearing variable.
+map $uri $touchgrass_route_family {
+    default                                         other;
+
+    ~^/(api/)?(health|ready|live)/?$                health;
+    ~^/api/auth(?:/|$)                              auth;
+    ~^/api/public/events(?:/|$)                     public_events;
+    ~^/api/account/orders(?:/|$)                    account_orders;
+    ~^/api/(checkout|payments?)(?:/|$)              checkout;
+    ~^/api/(callbacks?|webhooks?)(?:/|$)            callbacks;
+    ~^/api/admin(?:/|$)                             admin;
+    ~^/api/(organizations?|organizer)(?:/|$)        organization;
+    ~^/(assets|static|_next)(?:/|$)                 static;
+}

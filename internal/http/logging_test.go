@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	nethttp "net/http"
@@ -12,6 +13,34 @@ import (
 // captureHandler records log records for assertions.
 type captureHandler struct {
 	records *[]capturedRecord
+}
+
+func TestWithLoggingRedactsUntrustedPaths(t *testing.T) {
+	t.Parallel()
+
+	records := []capturedRecord{}
+	logger := slog.New(captureHandler{records: &records})
+	next := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+		w.WriteHeader(nethttp.StatusNotFound)
+	})
+	secret := "privacy-soak-alice@example.invalid"
+	req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, "/privacy/"+secret+"?token=secret", nil)
+
+	WithLogging(logger, next).ServeHTTP(httptest.NewRecorder(), req)
+
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+
+	path, _ := records[0].attrs["path"].(string)
+
+	if strings.Contains(path, secret) || strings.Contains(path, "token") {
+		t.Fatalf("logged path %q contains sensitive request data", path)
+	}
+
+	if path != "web" {
+		t.Fatalf("logged path = %q, want web", path)
+	}
 }
 
 // capturedRecord is one log record with its attributes.

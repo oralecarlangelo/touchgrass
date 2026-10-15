@@ -15,6 +15,11 @@ container, so touchgrass holds no database credentials.
   `TOUCHGRASS_REDIS_CONTAINER` is empty).
 - **SQLite**: touchgrass's own database file size + integrity verdict.
 
+The Performance workspace reads additional bounded numeric PostgreSQL and
+Redis statistics when `TOUCHGRASS_PERFORMANCE_SERVICE_ID` is set. These reads
+use the same container configuration and do not add database credentials,
+write access, raw SQL text, Redis keys, or values.
+
 ## Backups
 
 `POST /api/databases/backups` (Backup button) streams
@@ -83,3 +88,30 @@ TOUCHGRASS_DB_BACKUP_KEEP=14
 TOUCHGRASS_DB_BACKUP_INTERVAL=24h
 TOUCHGRASS_REDIS_CONTAINER=ticketnation-redis-1
 ```
+
+## Performance-statistics behavior
+
+- A PostgreSQL restart, failover, `pg_stat_reset`, or counter wrap starts a new
+  baseline. Touch Grass marks the bucket as reset and never calculates a
+  negative rate across it.
+- `pg_stat_statements` is not a zero-restart change: enabling
+  `shared_preload_libraries` requires a planned database restart followed by
+  `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`. Touch Grass stores only
+  query IDs and numeric deltas. See `docs/performance-operations.md` for the
+  staged enable and rollback sequence.
+- Redis collection uses `INFO` and bounded command families. Evictions,
+  blocked clients, and persistence errors are pressure indicators; no key or
+  value inspection is performed.
+
+## Touch Grass SQLite recovery
+
+The operational database is separate from the Ticketnation PostgreSQL backup
+flow above. Online snapshots are written under
+`TOUCHGRASS_SQLITE_BACKUP_DIR`; bounded maintenance runs passive WAL
+checkpoints and enforces `TOUCHGRASS_SQLITE_MAX_BYTES`.
+
+On corruption or disk failure, stop Touch Grass, preserve the DB plus `-wal`
+and `-shm` files together, copy the newest snapshot to a new path, and require
+`PRAGMA integrity_check` to return `ok` before starting against the copy. Never
+delete a live WAL or repair the only copy. The full disk-pressure, checkpoint,
+and recovery procedure is in `docs/performance-operations.md`.

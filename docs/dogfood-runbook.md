@@ -145,3 +145,28 @@ the box). Proven 2026-09-22; key id 4, revoked after the run.
 4. Revoke the key: `POST /api/keys/{id}/revoke`. Rows remain as
    history; `TOUCHGRASS_RETENTION_SDK_LOGS` (whole days, default 7)
    trims them.
+
+## 10. Agentless Performance rollout
+
+This is separate from SDK/OTel error and log ingestion. Ticketnation does not
+receive a tracing or APM agent. Follow `docs/performance-operations.md` and turn
+on one native source at a time:
+
+1. Capture Touch Grass CPU, memory, SQLite size, and dashboard API p95.
+2. Enable only the dedicated Nginx timing stream. Send a fixture path containing
+   a fake email, token, and query, then prove none appears in Touch Grass logs or
+   SQLite. Confirm unmatched paths aggregate as `other`.
+3. Exercise rename rotation, copy-truncate, and an unreadable source. Existing
+   history must stay readable while status becomes stale/error and loss is
+   counted.
+4. Enable PostgreSQL numeric statistics, then Redis `INFO`, separately. Stop
+   each source once and confirm it does not suppress the others.
+5. Run `./scripts/performance-soak.sh` on the candidate image. Require under 5%
+   Touch Grass CPU overhead, bounded SQLite growth, responsive bounded API
+   reads, and zero sensitive fixture matches.
+6. Keep raw SQL, Redis keys/values, request paths, query strings, headers,
+   cookies, user identifiers, client addresses, and bodies out of all evidence.
+
+Rollback is configuration-only: disable the failing source, restart Touch
+Grass, and leave historical aggregates to retention. Nginx configuration is
+removed only after `nginx -t` succeeds with the prior configuration.

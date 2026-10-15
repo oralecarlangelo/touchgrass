@@ -2,6 +2,7 @@ package http
 
 import (
 	"log/slog"
+	"strings"
 	"time"
 
 	nethttp "net/http"
@@ -17,11 +18,43 @@ func WithLogging(logger *slog.Logger, next nethttp.Handler) nethttp.Handler {
 
 		logger.Info("request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", safeRequestPath(r.URL.Path),
 			"status", wrapped.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	})
+}
+
+var loggedAPIFamilies = map[string]bool{
+	"alerts": true, "audit": true, "auth": true, "collectors": true,
+	"databases": true, "docker": true, "health": true, "images": true,
+	"ingest": true, "issues": true, "keys": true, "logs": true,
+	"notifications": true, "onboarding": true, "performance": true,
+	"services": true, "system": true, "users": true,
+}
+
+// safeRequestPath keeps request logging useful without copying attacker- or
+// user-controlled path segments. Query strings are never considered.
+func safeRequestPath(path string) string {
+	if path == "/api/health" {
+		return path
+	}
+
+	if rest, ok := strings.CutPrefix(path, "/api/"); ok {
+		family, _, _ := strings.Cut(rest, "/")
+
+		if loggedAPIFamilies[family] {
+			return "/api/" + family
+		}
+
+		return "/api/other"
+	}
+
+	if path == "/docs" || strings.HasPrefix(path, "/docs/") {
+		return "docs"
+	}
+
+	return "web"
 }
 
 // WithSecurityHeaders sets baseline response headers.

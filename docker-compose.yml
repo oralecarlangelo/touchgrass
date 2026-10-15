@@ -8,11 +8,28 @@ services:
       # published port stays localhost-only on the host.
       TOUCHGRASS_ADDR: ":8080"
       TOUCHGRASS_DB: "/data/touchgrass.db"
+      TOUCHGRASS_HOST_ROOT: "/hostfs"
+      # Native performance sources are opt-in. Set the service id to an
+      # existing Touch Grass service before enabling any source.
+      TOUCHGRASS_PERFORMANCE_SERVICE_ID: "${TOUCHGRASS_PERFORMANCE_SERVICE_ID:-}"
+      TOUCHGRASS_NGINX_TIMING_LOG: "${TOUCHGRASS_NGINX_TIMING_LOG:-}"
+      TOUCHGRASS_PERFORMANCE_INTERVAL: "${TOUCHGRASS_PERFORMANCE_INTERVAL:-30s}"
+      TOUCHGRASS_POSTGRES_CONTAINER: "${TOUCHGRASS_POSTGRES_CONTAINER:-}"
+      TOUCHGRASS_POSTGRES_USER: "${TOUCHGRASS_POSTGRES_USER:-postgres}"
+      TOUCHGRASS_POSTGRES_DB: "${TOUCHGRASS_POSTGRES_DB:-postgres}"
+      TOUCHGRASS_REDIS_CONTAINER: "${TOUCHGRASS_REDIS_CONTAINER:-}"
       # Required: the single admin password. Export it before up:
       #   export TOUCHGRASS_ADMIN_PASSWORD='choose-a-strong-password'
       TOUCHGRASS_ADMIN_PASSWORD: "${TOUCHGRASS_ADMIN_PASSWORD:?set TOUCHGRASS_ADMIN_PASSWORD first}"
     volumes:
       - touchgrass-data:/data
+      # Host telemetry and the dedicated Nginx stream are read-only. Override
+      # the host paths for non-Linux Docker installations.
+      - ${TOUCHGRASS_HOST_ROOT_PATH:-/}:/hostfs:ro
+      - ${TOUCHGRASS_NGINX_TIMING_DIR:-./runtime/nginx-performance}:/var/log/nginx/ticketnation-performance:ro
+      # Mounted only as a reviewable copy of the active allowlist. Install the
+      # file into Nginx separately; Touch Grass never edits it.
+      - ./deploy/nginx/route-families.map:/etc/touchgrass/nginx/route-families.map:ro
       # Daemon access for inventory, metrics, and log tails. This socket
       # is root-equivalent on the host (:ro is hygiene, not enforcement)
       # — see docs/threat-model.md. Never publish the API port beyond
@@ -24,6 +41,11 @@ services:
       interval: 30s
       timeout: 3s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   touchgrass-data:

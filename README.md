@@ -1,8 +1,9 @@
 # touchgrass
 
-Self-hosted server-management platform: blue-green deploys, container
-metrics + alerts (view-only), and Sentry-style error tracking unified
-with log search. One Go binary (UI embedded) + one SQLite file.
+Self-hosted server-management platform: blue-green deploys, bounded
+agentless performance diagnostics, container metrics + alerts (view-only),
+and Sentry-style error tracking unified with log search. One Go binary
+(UI embedded) + one SQLite file.
 
 > Status: v1 code-complete (Sprints 0–11). The login-gated dashboard
 > manages services end to end: live color, health, metrics + history,
@@ -78,6 +79,19 @@ Environment only (no config file):
 | `TOUCHGRASS_LOGS_MAX_LINES`          | `50000`            | Stored log lines per service (newest kept)             |
 | `TOUCHGRASS_RETENTION_SDK_LOGS`      | `7`                | SDK log max age, in whole days                         |
 | `TOUCHGRASS_LOG_POLL_INTERVAL`       | `5s`               | Container log poll cadence                             |
+| `TOUCHGRASS_HOST_ROOT`               | `/`                | Host filesystem root (`/hostfs` in Compose)            |
+| `TOUCHGRASS_MAINTENANCE_INTERVAL`    | `5m`               | Bounded SQLite retention/checkpoint cadence            |
+| `TOUCHGRASS_SQLITE_MAX_BYTES`        | `1073741824`       | SQLite storage budget                                  |
+| `TOUCHGRASS_SQLITE_BACKUP_DIR`       | `./backups/sqlite` | Online SQLite snapshot directory                       |
+| `TOUCHGRASS_RETENTION_PERFORMANCE`   | `168h`             | Minute performance aggregate max age                   |
+| `TOUCHGRASS_RETENTION_PERFORMANCE_HOURLY` | `720h`        | Hourly performance aggregate max age                   |
+| `TOUCHGRASS_PERFORMANCE_SERVICE_ID`  | empty              | Existing service that owns enabled native-source data  |
+| `TOUCHGRASS_NGINX_TIMING_LOG`        | empty              | Absolute dedicated JSONL path; empty disables this source |
+| `TOUCHGRASS_PERFORMANCE_INTERVAL`    | `30s`              | Native-source collection cadence                       |
+| `TOUCHGRASS_POSTGRES_CONTAINER`      | empty              | PostgreSQL container; empty disables its health/collector |
+| `TOUCHGRASS_POSTGRES_USER`           | `postgres`         | Local-trust role used through `docker exec`            |
+| `TOUCHGRASS_POSTGRES_DB`             | `postgres`         | PostgreSQL database inspected by native collection     |
+| `TOUCHGRASS_REDIS_CONTAINER`         | empty              | Redis container; empty disables its health/collector   |
 
 New knobs land in this table in the same PR that introduces them.
 
@@ -99,7 +113,15 @@ make migrate    # schema migrations (up|status)
 make help       # list targets
 ```
 
-Web UI checks: `npm run verify --prefix web` (type-check + lint).
+Web UI checks: `npm run test --prefix web` (pure view-model tests) and
+`npm run verify --prefix web` (type-check + lint).
+
+The Performance workspace is intentionally agentless: it correlates bounded
+Nginx, Docker, PostgreSQL, Redis, and existing-log aggregates, but it is not a
+distributed trace and does not prove causation. Read
+[`docs/performance-operations.md`](docs/performance-operations.md) before
+enabling a source. The Nginx fixtures in `deploy/nginx/` exclude raw paths,
+queries, headers, cookies, and client identity.
 
 Binary subcommands: `touchgrass serve` (default), `touchgrass migrate`,
 `touchgrass version`.
@@ -125,6 +147,7 @@ The authoritative map is `docs/PROJECT_STRUCTURE.md`.
 - `docs/PROJECT_STRUCTURE.md` — folder structure standard
 - `docs/threat-model.md` — trust boundaries and sharp edges
 - `docs/dogfood-runbook.md` — S9 staging-first SDK rollout + S10 log validation
+- `docs/performance-operations.md` — collector privacy, rollout, recovery, and rollback
 - `docs/v1-acceptance.md` — BRD AC-1..6 live sweep checklist
 - `docs/service-graduation.md` — S12–S13 per-service onboarding checklist
 - `docs/adr/` — architecture decision records

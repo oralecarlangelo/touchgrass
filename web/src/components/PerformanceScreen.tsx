@@ -37,7 +37,7 @@ import {
   type RedisPerformanceRow,
   type ServiceView,
 } from '@/lib/api.ts';
-import { collectorState } from '@/lib/performance.ts';
+import { collectorState, performanceDrilldownHref } from '@/lib/performance.ts';
 
 const ranges = [
   { hours: 1, label: '1h' },
@@ -158,6 +158,11 @@ export default function PerformanceScreen({
     (data.routes?.length ?? 0) === 0 &&
     (data.postgres?.length ?? 0) === 0 &&
     (data.redis?.length ?? 0) === 0;
+  const drilldownFilters: PerformanceFilters = {
+    serviceId: serviceId === 'all' ? undefined : serviceId,
+    start: data.summary?.start,
+    end: data.summary?.end,
+  };
 
   return (
     <div className="space-y-4">
@@ -296,10 +301,10 @@ export default function PerformanceScreen({
                     </div>
                     <div className="flex gap-2">
                       <Button asChild size="sm" variant="outline">
-                        <a href="#/logs">Open logs</a>
+                        <a href={performanceDrilldownHref('logs', drilldownFilters)}>Open logs</a>
                       </Button>
                       <Button asChild size="sm" variant="outline">
-                        <a href="#/issues">Open issues</a>
+                        <a href={performanceDrilldownHref('issues', drilldownFilters)}>Open issues</a>
                       </Button>
                     </div>
                   </div>

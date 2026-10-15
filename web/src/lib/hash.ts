@@ -23,7 +23,8 @@ export interface HashState {
 
 // parseHash reads `#/issues` or `#/services/<id>`; anything else is home.
 export function parseHash(hash: string): HashState {
-  const parts = hash.replace(/^#\/?/, '').split('/').filter((part) => part !== '');
+  const [path] = hash.replace(/^#\/?/, '').split('?', 1);
+  const parts = path.split('/').filter((part) => part !== '');
   const view = views.includes(parts[0] as ViewId) ? (parts[0] as ViewId) : 'dashboard';
 
   if (view === 'services' && parts[1] !== undefined && parts[1] !== '') {

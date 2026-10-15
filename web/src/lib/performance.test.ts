@@ -4,7 +4,10 @@ import {
   collectorState,
   formatPercentile,
   mergeTimelineSeries,
+  performanceDrilldownHref,
+  servicePerformanceState,
 } from './performance.ts';
+import { performanceApiPath } from './api.ts';
 
 describe('mergeTimelineSeries', () => {
   it('sorts mismatched buckets and preserves unavailable sources', () => {
@@ -174,5 +177,48 @@ describe('collectorState', () => {
         stale: false,
       }),
     ).toBe('healthy');
+  });
+});
+
+describe('service performance view model', () => {
+  it('scopes every performance request to the selected service', () => {
+    for (const resource of ['summary', 'timeline', 'routes', 'postgres', 'redis'] as const) {
+      expect(performanceApiPath(resource, { serviceId: 'ticketnation api', limit: 50 })).toBe(
+        `/api/services/ticketnation%20api/performance/${resource}?limit=50`,
+      );
+    }
+  });
+
+  it('keeps safe unknown-service and container-only states', () => {
+    expect(
+      servicePerformanceState({
+        serviceId: '',
+        loading: false,
+        metricCount: 0,
+        signalCount: 0,
+        failureCount: 0,
+      }),
+    ).toBe('unknown-service');
+    expect(
+      servicePerformanceState({
+        serviceId: 'api',
+        loading: false,
+        metricCount: 12,
+        signalCount: 0,
+        failureCount: 5,
+      }),
+    ).toBe('container-only');
+  });
+
+  it('retains service and time range in drill-down links', () => {
+    expect(
+      performanceDrilldownHref('logs', {
+        serviceId: 'api blue',
+        start: '2026-10-16T01:00:00Z',
+        end: '2026-10-16T02:00:00Z',
+      }),
+    ).toBe(
+      '#/logs?service_id=api+blue&start=2026-10-16T01%3A00%3A00.000Z&end=2026-10-16T02%3A00%3A00.000Z',
+    );
   });
 });

@@ -1,11 +1,19 @@
 import type {
   CollectorStatusView,
   Deploy,
+  PerformanceFilters,
   PerformanceTimelinePoint,
   RuntimeMarker,
 } from './api.ts';
 
 export type CollectorState = 'healthy' | 'degraded' | 'stale' | 'not-configured';
+export type ServicePerformanceState =
+  | 'unknown-service'
+  | 'loading'
+  | 'ready'
+  | 'container-only'
+  | 'error'
+  | 'empty';
 
 export interface TimelineMarker {
   id: string;
@@ -125,4 +133,60 @@ export function collectorState(status: CollectorStatusView): CollectorState {
   }
 
   return 'healthy';
+}
+
+export function servicePerformanceState(input: {
+  serviceId: string;
+  loading: boolean;
+  metricCount: number;
+  signalCount: number;
+  failureCount: number;
+}): ServicePerformanceState {
+  if (input.serviceId.trim() === '') {
+    return 'unknown-service';
+  }
+  if (input.loading) {
+    return 'loading';
+  }
+  if (input.signalCount > 0) {
+    return 'ready';
+  }
+  if (input.metricCount > 0) {
+    return 'container-only';
+  }
+  if (input.failureCount > 0) {
+    return 'error';
+  }
+  return 'empty';
+}
+
+export function performanceDrilldownHref(
+  view: 'logs' | 'issues' | 'audit' | 'databases' | 'fleet',
+  filters: PerformanceFilters,
+): string {
+  const params = new URLSearchParams();
+  const serviceId = filters.serviceId?.trim();
+
+  if (serviceId !== undefined && serviceId !== '') {
+    params.set('service_id', serviceId);
+  }
+
+  for (const [key, value] of [
+    ['start', filters.start],
+    ['end', filters.end],
+  ] as const) {
+    if (value === undefined) {
+      continue;
+    }
+
+    const parsed = new Date(value);
+
+    if (!Number.isNaN(parsed.getTime())) {
+      params.set(key, parsed.toISOString());
+    }
+  }
+
+  const query = params.toString();
+
+  return `#/${view}${query === '' ? '' : `?${query}`}`;
 }

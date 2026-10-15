@@ -9,11 +9,19 @@ import ActivityTab from './ActivityTab.tsx';
 import AlertsTab from './AlertsTab.tsx';
 import DeploysTab from './DeploysTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
-import MetricsTab from './MetricsTab.tsx';
 import OverviewTab from './OverviewTab.tsx';
+import PerformanceTab from './PerformanceTab.tsx';
 import type { ServiceView } from '@/lib/api.ts';
 
-type Tab = 'overview' | 'deploys' | 'metrics' | 'logs' | 'activity' | 'issues' | 'alerts' | 'audit';
+type Tab =
+  | 'overview'
+  | 'deploys'
+  | 'performance'
+  | 'logs'
+  | 'activity'
+  | 'issues'
+  | 'alerts'
+  | 'audit';
 
 export default function ServiceWorkspace({
   service,
@@ -58,7 +66,7 @@ export default function ServiceWorkspace({
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="deploys">Deploys</TabsTrigger>
-          <TabsTrigger value="metrics">Metrics</TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
           <TabsTrigger value="issues">Issues</TabsTrigger>
@@ -81,9 +89,9 @@ export default function ServiceWorkspace({
             />
           )}
         </TabsContent>
-        <TabsContent value="metrics">
-          {tab === 'metrics' && (
-            <MetricsTab serviceId={service.id} onUnauthorized={onUnauthorized} />
+        <TabsContent value="performance">
+          {tab === 'performance' && (
+            <PerformanceTab serviceId={service.id} onUnauthorized={onUnauthorized} />
           )}
         </TabsContent>
         <TabsContent value="logs">

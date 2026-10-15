@@ -175,6 +175,20 @@ type LogVolumeBucket struct {
 	Severity     string    `json:"severity"`
 	LineCount    int64     `json:"line_count"`
 	DroppedCount int64     `json:"dropped_count"`
+	IngestKey    string    `json:"-"`
+}
+
+// ContainerEvent is a bounded lifecycle or health transition. Expected marks
+// deployment-controlled replacement so UI alerting can suppress routine noise.
+type ContainerEvent struct {
+	SourceEventID  string    `json:"source_event_id"`
+	OccurredAt     time.Time `json:"occurred_at"`
+	ServiceID      string    `json:"service_id"`
+	Environment    string    `json:"environment"`
+	EventType      string    `json:"event_type"`
+	ContainerName  string    `json:"container_name"`
+	ComposeService string    `json:"compose_service"`
+	Expected       bool      `json:"expected"`
 }
 
 // PerformanceRange bounds aggregate reads.

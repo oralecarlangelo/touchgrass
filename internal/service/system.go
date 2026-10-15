@@ -32,6 +32,7 @@ type SystemConfig struct {
 	Docker    DaemonQuerier
 	Version   string
 	DBPath    string
+	HostRoot  string
 	StartedAt time.Time
 	Logger    *slog.Logger
 }
@@ -49,6 +50,7 @@ type System struct {
 	docker    DaemonQuerier
 	version   string
 	dbPath    string
+	hostRoot  string
 	startedAt time.Time
 	logger    *slog.Logger
 
@@ -58,10 +60,15 @@ type System struct {
 
 // NewSystem builds a System.
 func NewSystem(cfg SystemConfig) *System {
+	hostRoot := cfg.HostRoot
+	if hostRoot == "" {
+		hostRoot = "/"
+	}
 	return &System{
 		docker:    cfg.Docker,
 		version:   cfg.Version,
 		dbPath:    cfg.DBPath,
+		hostRoot:  hostRoot,
 		startedAt: cfg.StartedAt,
 		logger:    cfg.Logger,
 	}
@@ -117,7 +124,7 @@ func (s *System) Snapshot(ctx context.Context) (model.SystemSnapshot, error) {
 	}
 
 	memUsed, memTotal := hostMem()
-	diskUsed, diskTotal := hostDisk()
+	diskUsed, diskTotal := hostDisk(s.hostRoot)
 
 	snapshot := model.SystemSnapshot{
 		Hostname:       hostname,
@@ -381,10 +388,13 @@ func parseMeminfo(raw string) (int64, int64, error) {
 
 // hostDisk reports used/total bytes of the root filesystem; nils on
 // failure. Statfs is stdlib and portable, so this works off-Linux too.
-func hostDisk() (*int64, *int64) {
+func hostDisk(root string) (*int64, *int64) {
 	var stat syscall.Statfs_t
 
-	if err := syscall.Statfs("/", &stat); err != nil {
+	if root == "" {
+		return nil, nil
+	}
+	if err := syscall.Statfs(root, &stat); err != nil {
 		return nil, nil
 	}
 

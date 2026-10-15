@@ -226,6 +226,35 @@ func TestPerformanceStoreRejectsUnboundedNativeDimensions(t *testing.T) {
 	}
 }
 
+func TestPerformanceStoreLogVolumeAndEventsAreIdempotent(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	performance := NewPerformanceStore(db)
+	ctx := context.Background()
+	minute := time.Date(2026, 10, 16, 4, 5, 0, 0, time.UTC)
+	volume := model.LogVolumeBucket{BucketStart: minute, ServiceID: "tn-api", Environment: "prod",
+		Severity: "error", LineCount: 2, IngestKey: "batch-1"}
+	event := model.ContainerEvent{SourceEventID: "event-1", OccurredAt: minute,
+		ServiceID: "tn-api", Environment: "prod", EventType: "oom", ContainerName: "api-1"}
+	for range 2 {
+		if err := performance.UpsertLogVolume(ctx, volume); err != nil {
+			t.Fatal(err)
+		}
+		if err := performance.UpsertContainerEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	volumes, err := performance.ListLogVolume(ctx, model.PerformanceRange{Start: minute, End: minute.Add(time.Minute)})
+	if err != nil || len(volumes) != 1 || volumes[0].LineCount != 2 {
+		t.Fatalf("log volumes = %+v, %v", volumes, err)
+	}
+	events, err := performance.ListContainerEvents(ctx, model.PerformanceRange{Start: minute, End: minute.Add(time.Minute)})
+	if err != nil || len(events) != 1 || events[0].EventType != "oom" {
+		t.Fatalf("container events = %+v, %v", events, err)
+	}
+}
+
 func testHTTPBucket(ingestKey string) model.HTTPMetricBucket {
 	return model.HTTPMetricBucket{
 		BucketStart: time.Date(2026, 10, 16, 1, 2, 0, 0, time.UTC),

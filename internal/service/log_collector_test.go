@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -11,6 +13,14 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
+
+type failingLogCursorStore struct{}
+
+func (failingLogCursorStore) Get(context.Context, string) (model.CollectorCursor, error) {
+	return model.CollectorCursor{}, errors.New("cursor unavailable")
+}
+
+func (failingLogCursorStore) Upsert(context.Context, model.CollectorCursor) error { return nil }
 
 // fakeLogLister emulates daemon log tailing over scripted lines.
 type fakeLogLister struct {
@@ -79,6 +89,9 @@ func testLogCollector(t *testing.T, lister LogLister, maxLines int) (*LogCollect
 		Services:           store.NewServiceStore(db),
 		Docker:             lister,
 		Logs:               store.NewLogStore(db),
+		Cursors:            store.NewCursorStore(db),
+		Performance:        store.NewPerformanceStore(db),
+		Environment:        "prod",
 		Interval:           time.Hour,
 		MaxLinesPerService: maxLines,
 		Logger:             slog.New(slog.DiscardHandler),
@@ -148,6 +161,139 @@ func TestCollectStoresLines(t *testing.T) {
 
 	if len(all) != 2 {
 		t.Errorf("Search() = %d lines, want 2 without duplicates", len(all))
+	}
+}
+
+func TestCollectRestoresDurableCursorAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	lister := &fakeLogLister{containers: []docker.Container{testLogContainer()},
+		lines: map[string][]docker.LogLine{testBlueContainerID: scriptLines(base, 3)}, inclusive: true}
+	collector, db := testLogCollector(t, lister, 1000)
+	if err := collector.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := NewLogCollector(LogCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: lister, Logs: store.NewLogStore(db),
+		Cursors: store.NewCursorStore(db), Performance: store.NewPerformanceStore(db),
+		Environment: "prod", Interval: time.Hour, MaxLinesPerService: 1000,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := restarted.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.NewLogStore(db).CountByService(context.Background(), testServiceAPI)
+	if err != nil || count != 3 {
+		t.Fatalf("count after restart = %d, %v", count, err)
+	}
+}
+
+func TestLoadLogCursorMakesReadFailureVisible(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	collector := NewLogCollector(LogCollectorConfig{
+		Cursors: failingLogCursorStore{}, Logger: slog.New(slog.NewTextHandler(&output, nil)),
+	})
+	collector.loadLogCursor(context.Background(), "container-1")
+	if !strings.Contains(output.String(), "cursor_read_failed") {
+		t.Fatalf("log output = %q, want safe cursor failure category", output.String())
+	}
+}
+
+func TestCollectRestoresInclusiveTimestampMultiplicity(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	lister := &fakeLogLister{containers: []docker.Container{testLogContainer()}, inclusive: true,
+		lines: map[string][]docker.LogLine{testBlueContainerID: {
+			{Timestamp: base, Stream: model.LogStdout, Message: "first"},
+			{Timestamp: base, Stream: model.LogStderr, Message: "second"},
+		}}}
+	collector, db := testLogCollector(t, lister, 1000)
+	if err := collector.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewLogCollector(LogCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: lister, Logs: store.NewLogStore(db),
+		Cursors: store.NewCursorStore(db), Performance: store.NewPerformanceStore(db), Environment: "prod",
+		Interval: time.Hour, MaxLinesPerService: 1000, Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := restarted.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.NewLogStore(db).CountByService(context.Background(), testServiceAPI)
+	if err != nil || count != 2 {
+		t.Fatalf("same-timestamp count after restart = %d, %v", count, err)
+	}
+}
+
+func TestCollectTreatsRecreatedContainerAsNewLogSource(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	first := testLogContainer()
+	lister := &fakeLogLister{containers: []docker.Container{first}, lines: map[string][]docker.LogLine{
+		first.ID: scriptLines(base, 1),
+	}}
+	collector, db := testLogCollector(t, lister, 1000)
+	if err := collector.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recreated := first
+	recreated.ID = "replacement-container-id"
+	lister.containers = []docker.Container{recreated}
+	lister.lines[recreated.ID] = scriptLines(base, 1)
+	if err := collector.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.NewLogStore(db).CountByService(context.Background(), testServiceAPI)
+	if err != nil || count != 2 {
+		t.Fatalf("recreated container count = %d, %v", count, err)
+	}
+}
+
+func TestCollectAggregatesSeverityVolumeByMinute(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	lister := &fakeLogLister{containers: []docker.Container{testLogContainer()}, lines: map[string][]docker.LogLine{
+		testBlueContainerID: {
+			{Timestamp: base, Stream: model.LogStdout, Message: "listening"},
+			{Timestamp: base.Add(time.Second), Stream: model.LogStderr, Message: "ERROR database down"},
+			{Timestamp: base.Add(2 * time.Second), Stream: model.LogStdout, Message: "WARN slow"},
+		},
+	}}
+	collector, db := testLogCollector(t, lister, 1000)
+	if err := collector.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.NewPerformanceStore(db).ListLogVolume(context.Background(), model.PerformanceRange{
+		ServiceID: testServiceAPI, Start: base, End: base.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int64{}
+	for _, row := range rows {
+		counts[row.Severity] = row.LineCount
+	}
+	if counts[model.LogLevelInfo] != 1 || counts[model.LogLevelWarn] != 1 || counts[model.LogLevelError] != 1 {
+		t.Fatalf("volume counts = %v", counts)
+	}
+	if err := collector.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = store.NewPerformanceStore(db).ListLogVolume(context.Background(), model.PerformanceRange{ServiceID: testServiceAPI, Start: base, End: base.Add(time.Minute)})
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("idempotent volume rows = %+v, %v", rows, err)
+	}
+	for _, row := range rows {
+		if row.LineCount != 1 {
+			t.Fatalf("duplicate volume row = %+v", row)
+		}
 	}
 }
 
@@ -401,7 +547,7 @@ func TestCollectPrunesCursors(t *testing.T) {
 		t.Fatalf("collect() error = %v, want nil", err)
 	}
 
-	// The container returns with a fresh id: the pruned cursor retails.
+	// The same container id returns: its durable cursor prevents retally.
 	lister.containers = []docker.Container{testLogContainer()}
 
 	if err := collector.collect(ctx); err != nil {
@@ -413,8 +559,8 @@ func TestCollectPrunesCursors(t *testing.T) {
 		t.Fatalf("CountByService() error = %v, want nil", err)
 	}
 
-	if count != 4 {
-		t.Errorf("CountByService() = %d, want 4 after cursor prune retally", count)
+	if count != 2 {
+		t.Errorf("CountByService() = %d, want 2 after durable cursor restore", count)
 	}
 }
 
@@ -443,6 +589,31 @@ func TestCollectTruncatesLongLines(t *testing.T) {
 
 	if len(found) != 1 || len(found[0].Line) != maxLogLineBytes {
 		t.Fatalf("Search() line len = %d, want truncated %d", len(found[0].Line), maxLogLineBytes)
+	}
+}
+
+func TestCollectRestoresPersistentTruncationCount(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	lister := &fakeLogLister{containers: []docker.Container{testLogContainer()}, lines: map[string][]docker.LogLine{
+		testBlueContainerID: {{Timestamp: base, Stream: model.LogStdout, Message: strings.Repeat("x", maxLogLineBytes+1)}},
+	}}
+	collector, db := testLogCollector(t, lister, 1000)
+	if err := collector.collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := NewLogCollector(LogCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: lister, Logs: store.NewLogStore(db),
+		Cursors: store.NewCursorStore(db), Performance: store.NewPerformanceStore(db), Environment: "prod",
+		Interval: time.Hour, MaxLinesPerService: 1000, Logger: slog.New(slog.DiscardHandler),
+	})
+	stats, err := restarted.Stats(context.Background(), testServiceAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Truncations != 1 {
+		t.Fatalf("truncations after restart = %d, want 1", stats.Truncations)
 	}
 }
 

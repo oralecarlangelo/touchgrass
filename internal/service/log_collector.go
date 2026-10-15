@@ -2,7 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"hash"
 	"log/slog"
 	"slices"
 	"sync"
@@ -30,25 +34,28 @@ type LogLister interface {
 
 // LogCollectorConfig wires a LogCollector.
 type LogCollectorConfig struct {
-	Services           *store.ServiceStore
-	Docker             LogLister
-	Logs               *store.LogStore
+	Services *store.ServiceStore
+	Docker   LogLister
+	Logs     *store.LogStore
+	Cursors  interface {
+		Get(context.Context, string) (model.CollectorCursor, error)
+		Upsert(context.Context, model.CollectorCursor) error
+	}
+	Performance interface {
+		UpsertLogVolume(context.Context, model.LogVolumeBucket) error
+	}
+	Environment        string
 	Interval           time.Duration
 	MaxLinesPerService int
 	Logger             *slog.Logger
 }
 
-// logCursor tracks one container's tail position: the newest kept
-// timestamp plus that line's identity, so an inclusive --since
-// boundary never duplicates. The daemon returns stdout-then-stderr
-// blocks (not chronological), so the cursor must be the max stamp,
-// never the last line.
+// logCursor tracks the newest kept timestamp plus the number of lines at that
+// exact boundary. It deliberately retains no raw log text.
 type logCursor struct {
-	since      string
-	maxTs      time.Time
-	lastTs     string
-	lastStream string
-	lastLine   string
+	since    string
+	maxTs    time.Time
+	boundary int64
 }
 
 // logLossCounters tracks one service's backpressure losses.
@@ -60,9 +67,17 @@ type logLossCounters struct {
 // LogCollector tails managed containers into the log store on a poll
 // loop and serves log reads.
 type LogCollector struct {
-	services           *store.ServiceStore
-	docker             LogLister
-	logs               *store.LogStore
+	services     *store.ServiceStore
+	docker       LogLister
+	logs         *store.LogStore
+	cursorsStore interface {
+		Get(context.Context, string) (model.CollectorCursor, error)
+		Upsert(context.Context, model.CollectorCursor) error
+	}
+	performance interface {
+		UpsertLogVolume(context.Context, model.LogVolumeBucket) error
+	}
+	environment        string
 	interval           time.Duration
 	maxLinesPerService int
 	logger             *slog.Logger
@@ -77,6 +92,9 @@ func NewLogCollector(cfg LogCollectorConfig) *LogCollector {
 		services:           cfg.Services,
 		docker:             cfg.Docker,
 		logs:               cfg.Logs,
+		cursorsStore:       cfg.Cursors,
+		performance:        cfg.Performance,
+		environment:        cfg.Environment,
 		interval:           cfg.Interval,
 		maxLinesPerService: cfg.MaxLinesPerService,
 		logger:             cfg.Logger,
@@ -136,7 +154,12 @@ func (c *LogCollector) Stats(ctx context.Context, serviceID string) (model.LogSt
 
 	stats := model.LogStats{ServiceID: serviceID, Lines: lines}
 
-	if counters, ok := c.losses[serviceID]; ok {
+	counters, ok := c.losses[serviceID]
+	if !ok {
+		counters = c.loadLosses(ctx, serviceID)
+		c.losses[serviceID] = counters
+	}
+	if counters != nil {
 		stats.Drops = counters.drops
 		stats.Truncations = counters.truncations
 	}
@@ -145,7 +168,7 @@ func (c *LogCollector) Stats(ctx context.Context, serviceID string) (model.LogSt
 }
 
 // addDrops records poll-cap drops for a service.
-func (c *LogCollector) addDrops(serviceID string, rows int64) {
+func (c *LogCollector) addDrops(ctx context.Context, serviceID string, rows int64) {
 	c.lossMu.Lock()
 	defer c.lossMu.Unlock()
 
@@ -156,10 +179,11 @@ func (c *LogCollector) addDrops(serviceID string, rows int64) {
 	}
 
 	counters.drops += rows
+	c.persistLoss(ctx, "drops", serviceID, counters.drops)
 }
 
 // addTruncations records line truncations for a service.
-func (c *LogCollector) addTruncations(serviceID string, rows int64) {
+func (c *LogCollector) addTruncations(ctx context.Context, serviceID string, rows int64) {
 	c.lossMu.Lock()
 	defer c.lossMu.Unlock()
 
@@ -170,7 +194,38 @@ func (c *LogCollector) addTruncations(serviceID string, rows int64) {
 	}
 
 	counters.truncations += rows
+	c.persistLoss(ctx, "truncations", serviceID, counters.truncations)
 }
+
+func (c *LogCollector) loadLosses(ctx context.Context, serviceID string) *logLossCounters {
+	counters := &logLossCounters{}
+	if c.cursorsStore == nil {
+		return counters
+	}
+	if cursor, err := c.cursorsStore.Get(ctx, logLossSource("drops", serviceID)); err == nil {
+		counters.drops = cursor.Offset
+	}
+	if cursor, err := c.cursorsStore.Get(ctx, logLossSource("truncations", serviceID)); err == nil {
+		counters.truncations = cursor.Offset
+	}
+	return counters
+}
+
+func (c *LogCollector) persistLoss(ctx context.Context, kind, serviceID string, value int64) {
+	if c.cursorsStore == nil {
+		return
+	}
+	now := time.Now().UTC()
+	cursor := model.CollectorCursor{Source: logLossSource(kind, serviceID), Identity: serviceID,
+		Offset: value, LastRecordedAt: now, LastSuccessAt: now, UpdatedAt: now}
+	if err := c.cursorsStore.Upsert(ctx, cursor); err != nil {
+		c.logger.Warn("persisting log loss counter", "service", serviceID, "error_category", "cursor_write_failed")
+	}
+}
+
+func logLossSource(kind, serviceID string) string { return "docker_log_" + kind + ":" + serviceID }
+
+func logCursorSource(containerID string) string { return "docker_log:" + containerID }
 
 // LogSearch carries log search options. Empty Stream selects all
 // streams; empty Level selects all levels, otherwise a comma-separated
@@ -303,13 +358,18 @@ func (c *LogCollector) collect(ctx context.Context) error {
 		return fmt.Errorf("listing containers: %w", err)
 	}
 
-	batch, touched, err := c.tailManaged(ctx, defs, containers)
+	batch, touched, pending, err := c.tailManaged(ctx, defs, containers)
 	if err != nil {
 		return err
 	}
 
 	if err := c.flush(ctx, batch); err != nil {
 		return err
+	}
+	c.flushLogVolume(ctx, batch)
+	for containerID, cursor := range pending {
+		c.cursors[containerID] = cursor
+		c.persistLogCursor(ctx, containerID, cursor)
 	}
 
 	for serviceID := range touched {
@@ -342,6 +402,7 @@ type tailAccum struct {
 	batch   []model.LogLine
 	seen    map[string]bool
 	touched map[string]bool
+	pending map[string]logCursor
 }
 
 // tailManaged tails every container owned by a service definition,
@@ -350,16 +411,17 @@ func (c *LogCollector) tailManaged(
 	ctx context.Context,
 	defs []model.Service,
 	containers []docker.Container,
-) ([]model.LogLine, map[string]bool, error) {
+) ([]model.LogLine, map[string]bool, map[string]logCursor, error) {
 	accum := tailAccum{
 		batch:   []model.LogLine{},
 		seen:    make(map[string]bool, len(containers)),
 		touched: map[string]bool{},
+		pending: make(map[string]logCursor, len(containers)),
 	}
 
 	for _, def := range defs {
 		if err := c.tailService(ctx, def, containers, &accum); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
@@ -369,7 +431,7 @@ func (c *LogCollector) tailManaged(
 		}
 	}
 
-	return accum.batch, accum.touched, nil
+	return accum.batch, accum.touched, accum.pending, nil
 }
 
 // tailService tails one definition's containers, recording seen and touched ids.
@@ -396,7 +458,9 @@ func (c *LogCollector) tailService(
 
 		accum.seen[container.ID] = true
 		accum.touched[def.ID] = true
-		accum.batch = c.tailOne(ctx, def.ID, container, accum.batch)
+		var cursor logCursor
+		accum.batch, cursor = c.tailOne(ctx, def.ID, container, accum.batch)
+		accum.pending[container.ID] = cursor
 	}
 
 	return nil
@@ -419,21 +483,21 @@ func (c *LogCollector) tailOne(
 	serviceID string,
 	container docker.Container,
 	batch []model.LogLine,
-) []model.LogLine {
-	cursor := c.cursors[container.ID]
+) ([]model.LogLine, logCursor) {
+	cursor := c.loadLogCursor(ctx, container.ID)
 
 	lines, err := c.docker.Logs(ctx, container.ID, cursor.since, maxLinesPerPoll)
 	if err != nil {
 		c.logger.Warn("container log tail failed", "container", container.Name, "error", err)
 
-		return batch
+		return batch, cursor
 	}
 
 	keep := newTailKeep(cursor, serviceID, container.Name, time.Now())
 
 	for i, line := range lines {
 		if i >= maxLinesPerPoll {
-			c.addDrops(serviceID, int64(len(lines)-i))
+			c.addDrops(ctx, serviceID, int64(len(lines)-i))
 			c.logger.Warn("log backpressure drop", "container", container.Name,
 				"rows", len(lines)-i)
 
@@ -444,36 +508,32 @@ func (c *LogCollector) tailOne(
 	}
 
 	if keep.truncated > 0 {
-		c.addTruncations(serviceID, keep.truncated)
+		c.addTruncations(ctx, serviceID, keep.truncated)
 		c.logger.Info("log lines truncated", "container", container.Name, "rows", keep.truncated)
 	}
 
-	c.cursors[container.ID] = keep.advanced()
-
-	return batch
+	return batch, keep.advanced()
 }
 
 // tailKeep filters one poll's lines to the new ones, tracking the max
 // stamp as the next cursor.
 type tailKeep struct {
-	cursor    logCursor
-	serviceID string
-	container string
-	now       time.Time
-	maxTs     time.Time
-	maxStamp  string
-	maxStream string
-	maxMsg    string
-	truncated int64
-	skipped   bool
+	cursor       logCursor
+	serviceID    string
+	container    string
+	now          time.Time
+	maxTs        time.Time
+	truncated    int64
+	boundarySeen int64
+	maxBoundary  int64
 }
 
 // newTailKeep builds a filter over the container's current cursor.
 func newTailKeep(cursor logCursor, serviceID, container string, now time.Time) *tailKeep {
 	return &tailKeep{
 		cursor: cursor, serviceID: serviceID, container: container, now: now,
-		maxTs:    cursor.maxTs,
-		maxStamp: cursor.lastTs, maxStream: cursor.lastStream, maxMsg: cursor.lastLine,
+		maxTs:       cursor.maxTs,
+		maxBoundary: cursor.boundary,
 	}
 }
 
@@ -491,36 +551,26 @@ func (k *tailKeep) line(batch []model.LogLine, line docker.LogLine) []model.LogL
 		return batch
 	}
 
-	stamp := ts.UTC().Format(time.RFC3339Nano)
-
+	if ts.Equal(k.cursor.maxTs) && k.boundarySeen < k.cursor.boundary {
+		k.boundarySeen++
+		return batch
+	}
 	if len(line.Message) > maxLogLineBytes {
 		k.truncated++
 	}
-
 	message := truncate(line.Message, maxLogLineBytes)
-	boundary := !k.skipped && k.isRecordedMax(stamp, line.Stream, message)
-
-	if boundary {
-		k.skipped = true
-
-		return batch
-	}
 
 	if k.maxTs.IsZero() || ts.After(k.maxTs) {
 		k.maxTs = ts
-		k.maxStamp, k.maxStream, k.maxMsg = stamp, line.Stream, message
+		k.maxBoundary = 1
+	} else if ts.Equal(k.maxTs) {
+		k.maxBoundary++
 	}
 
 	return append(batch, model.LogLine{
 		ServiceID: k.serviceID, Container: k.container, Stream: line.Stream,
 		Line: message, Ts: ts,
 	})
-}
-
-// isRecordedMax reports whether a line is the cursor's recorded max.
-func (k *tailKeep) isRecordedMax(stamp, stream, message string) bool {
-	return k.cursor.lastLine != "" &&
-		stamp == k.cursor.lastTs && stream == k.cursor.lastStream && message == k.cursor.lastLine
 }
 
 // cursor returns the cursor advanced to this poll's max stamp.
@@ -531,9 +581,70 @@ func (k *tailKeep) advanced() logCursor {
 
 	k.cursor.since = k.maxTs.UTC().Format(time.RFC3339Nano)
 	k.cursor.maxTs = k.maxTs
-	k.cursor.lastTs, k.cursor.lastStream, k.cursor.lastLine = k.maxStamp, k.maxStream, k.maxMsg
+	k.cursor.boundary = k.maxBoundary
 
 	return k.cursor
+}
+
+func (c *LogCollector) loadLogCursor(ctx context.Context, containerID string) logCursor {
+	if cursor, ok := c.cursors[containerID]; ok {
+		return cursor
+	}
+	if c.cursorsStore == nil {
+		return logCursor{}
+	}
+	persisted, err := c.cursorsStore.Get(ctx, logCursorSource(containerID))
+	if err != nil {
+		if !errors.Is(err, store.ErrCollectorCursorNotFound) {
+			c.logger.Warn("loading docker log cursor", "container", containerID, "error_category", "cursor_read_failed")
+		}
+		return logCursor{}
+	}
+	return logCursor{since: persisted.LastRecordedAt.UTC().Format(time.RFC3339Nano),
+		maxTs: persisted.LastRecordedAt, boundary: persisted.Offset}
+}
+
+func (c *LogCollector) persistLogCursor(ctx context.Context, containerID string, cursor logCursor) {
+	if c.cursorsStore == nil || cursor.maxTs.IsZero() {
+		return
+	}
+	now := time.Now().UTC()
+	persisted := model.CollectorCursor{Source: logCursorSource(containerID), Identity: containerID,
+		Offset: cursor.boundary, LastRecordedAt: cursor.maxTs, LastSuccessAt: now, UpdatedAt: now}
+	if err := c.cursorsStore.Upsert(ctx, persisted); err != nil {
+		c.logger.Warn("persisting docker log cursor", "container", containerID, "error_category", "cursor_write_failed")
+	}
+}
+
+func (c *LogCollector) flushLogVolume(ctx context.Context, batch []model.LogLine) {
+	if c.performance == nil || len(batch) == 0 {
+		return
+	}
+	hasher := sha256.New()
+	buckets := map[string]model.LogVolumeBucket{}
+	for _, line := range batch {
+		writeLogIdentity(hasher, line)
+		severity := ParseLogLevel(line.Stream, line.Line)
+		minute := line.Ts.UTC().Truncate(time.Minute)
+		key := line.ServiceID + "\x1f" + minute.Format(time.RFC3339Nano) + "\x1f" + severity
+		bucket := buckets[key]
+		bucket.BucketStart, bucket.ServiceID, bucket.Environment = minute, line.ServiceID, c.environment
+		bucket.Severity = severity
+		bucket.LineCount++
+		buckets[key] = bucket
+	}
+	ingestKey := hex.EncodeToString(hasher.Sum(nil))
+	for _, bucket := range buckets {
+		bucket.IngestKey = ingestKey
+		if err := c.performance.UpsertLogVolume(ctx, bucket); err != nil {
+			c.logger.Warn("persisting log volume", "service", bucket.ServiceID, "error_category", "log_volume_write_failed")
+		}
+	}
+}
+
+func writeLogIdentity(hasher hash.Hash, line model.LogLine) {
+	_, _ = fmt.Fprintf(hasher, "%s\x1f%s\x1f%s\x1f%s\x1f%s\n", line.ServiceID,
+		line.Container, line.Stream, line.Ts.UTC().Format(time.RFC3339Nano), line.Line)
 }
 
 // clampSearchLimit bounds search pages.

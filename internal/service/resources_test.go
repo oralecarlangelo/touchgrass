@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,19 @@ type stubStatsLister struct {
 	stats      map[string]docker.Stats
 	statsErr   map[string]error
 	listErr    error
+}
+
+type countingStatsLister struct {
+	stubStatsLister
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (s *countingStatsLister) Stats(ctx context.Context, id string) (docker.Stats, error) {
+	s.mu.Lock()
+	s.calls[id]++
+	s.mu.Unlock()
+	return s.stubStatsLister.Stats(ctx, id)
 }
 
 func (s stubStatsLister) List(_ context.Context) ([]docker.Container, error) {
@@ -116,6 +130,21 @@ func TestSampleCollects(t *testing.T) {
 
 	if len(fe) != 1 {
 		t.Errorf("tn-fe samples = %d, want 1 (unrelated container ignored)", len(fe))
+	}
+}
+
+func TestSampleReadsEachContainerStatsOnceForMetricsAndFleet(t *testing.T) {
+	t.Parallel()
+
+	containers := testContainers()
+	lister := &countingStatsLister{stubStatsLister: testFleetLister(containers, false), calls: map[string]int{}}
+	sampler, _ := testSampler(t, lister)
+	sampler.sample(context.Background())
+
+	for _, container := range containers {
+		if got := lister.calls[container.ID]; got != 1 {
+			t.Errorf("Stats(%s) calls = %d, want 1", container.ID, got)
+		}
 	}
 }
 

@@ -11,6 +11,7 @@ const testAdminPassword = "secret"
 func defaultTestConfig() Config {
 	return Config{
 		Addr: "127.0.0.1:8080", DB: "./touchgrass.db", Env: "prod",
+		HostRoot:        "/",
 		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
 		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
 		AdminPassword: testAdminPassword, CookieSecure: false,
@@ -33,6 +34,7 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.Addr = ":8080"
 	cfg.DB = "/data/t.db"
 	cfg.Env = "dev"
+	cfg.HostRoot = "/hostfs"
 	cfg.MetricsInterval = 10 * time.Second
 	cfg.CookieSecure = true
 	cfg.WatchInterval = 2 * time.Second
@@ -77,6 +79,7 @@ func TestLoad(t *testing.T) {
 			name: "custom values from env",
 			env: map[string]string{
 				"TOUCHGRASS_ADDR": ":8080", "TOUCHGRASS_DB": "/data/t.db", "APP_ENV": "dev",
+				hostRootEnvVar:                "/hostfs",
 				"TOUCHGRASS_METRICS_INTERVAL": "10s", adminPasswordEnvVar: testAdminPassword,
 				"TOUCHGRASS_COOKIE_SECURE": "true", "TOUCHGRASS_WATCH_INTERVAL": "2s",
 				"TOUCHGRASS_RETENTION_ERRORS": "24h", "TOUCHGRASS_INGEST_MAX_OCCURRENCES": "500",
@@ -108,6 +111,11 @@ func TestLoad(t *testing.T) {
 		{
 			name:        "invalid env",
 			env:         map[string]string{"APP_ENV": "staging", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "relative host root",
+			env:         map[string]string{hostRootEnvVar: "hostfs", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 		{

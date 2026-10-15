@@ -422,3 +422,28 @@ func TestSystemSnapshotResourcesNullSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemSnapshotUsesConfiguredHostRoot(t *testing.T) {
+	t.Parallel()
+
+	system := NewSystem(SystemConfig{
+		Docker: stubDaemonQuerier{}, Version: "test", DBPath: t.TempDir() + "/db",
+		HostRoot: t.TempDir(), StartedAt: time.Now(), Logger: slog.New(slog.DiscardHandler),
+	})
+	snapshot, err := system.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.DiskUsedBytes == nil || snapshot.DiskTotalBytes == nil {
+		t.Fatal("configured host root should produce disk usage")
+	}
+
+	system.hostRoot = t.TempDir() + "/missing"
+	snapshot, err = system.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.DiskUsedBytes != nil || snapshot.DiskTotalBytes != nil {
+		t.Fatalf("missing host root disk = %v/%v, want unavailable", snapshot.DiskUsedBytes, snapshot.DiskTotalBytes)
+	}
+}

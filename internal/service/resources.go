@@ -51,6 +51,7 @@ type SamplerConfig struct {
 	Interval      time.Duration
 	Retention     Retention
 	Logger        *slog.Logger
+	HostRoot      string
 }
 
 // Sampler collects metrics, evaluates alerts, and enforces retention.
@@ -70,6 +71,7 @@ type Sampler struct {
 	interval      time.Duration
 	retention     Retention
 	logger        *slog.Logger
+	hostRoot      string
 	mutex         sync.Mutex
 	breaches      map[int64]breachState
 	spikes        map[int64]map[int64]bool
@@ -85,6 +87,10 @@ type breachState struct {
 
 // NewSampler builds a Sampler.
 func NewSampler(cfg SamplerConfig) *Sampler {
+	hostRoot := cfg.HostRoot
+	if hostRoot == "" {
+		hostRoot = "/"
+	}
 	return &Sampler{
 		services:      cfg.Services,
 		docker:        cfg.Docker,
@@ -101,6 +107,7 @@ func NewSampler(cfg SamplerConfig) *Sampler {
 		interval:      cfg.Interval,
 		retention:     cfg.Retention,
 		logger:        cfg.Logger,
+		hostRoot:      hostRoot,
 		breaches:      map[int64]breachState{},
 		spikes:        map[int64]map[int64]bool{},
 	}
@@ -159,6 +166,7 @@ func (s *Sampler) collect(ctx context.Context) error {
 	for i, c := range containers {
 		diskByID[c.ID] = sizes[i]
 	}
+	statsByID := s.collectContainerStats(ctx, containers)
 
 	var group sync.WaitGroup
 
@@ -178,26 +186,43 @@ func (s *Sampler) collect(ctx context.Context) error {
 				continue
 			}
 
-			group.Go(func() {
-				s.sampleOne(ctx, def.ID, c, diskByID[c.ID])
-			})
+			stats, ok := statsByID[c.ID]
+			if !ok {
+				continue
+			}
+			group.Go(func() { s.recordMetric(ctx, def.ID, c, diskByID[c.ID], stats) })
 		}
 	}
 
 	group.Wait()
 
-	return s.sampleFleet(ctx, defs, containers, time.Now())
+	return s.sampleFleet(ctx, defs, containers, statsByID, time.Now())
 }
 
-// sampleOne stats one container and records the sample. Failures log and
-// skip the container without failing the cycle.
-func (s *Sampler) sampleOne(ctx context.Context, serviceID string, c docker.Container, disk int64) {
-	stats, err := s.docker.Stats(ctx, c.ID)
-	if err != nil {
-		s.logger.Warn("container stats failed", "container", c.Name, "error", err)
-
-		return
+// collectContainerStats takes exactly one resource snapshot per running
+// container for both managed metrics and the fleet view.
+func (s *Sampler) collectContainerStats(ctx context.Context, containers []docker.Container) map[string]docker.Stats {
+	result := make(map[string]docker.Stats, len(containers))
+	var mutex sync.Mutex
+	var group sync.WaitGroup
+	for _, container := range containers {
+		group.Go(func() {
+			stats, err := s.docker.Stats(ctx, container.ID)
+			if err != nil {
+				s.logger.Warn("container stats failed", "container", container.Name, "error", err)
+				return
+			}
+			mutex.Lock()
+			result[container.ID] = stats
+			mutex.Unlock()
+		})
 	}
+	group.Wait()
+	return result
+}
+
+// recordMetric records one already-collected managed container sample.
+func (s *Sampler) recordMetric(ctx context.Context, serviceID string, c docker.Container, disk int64, stats docker.Stats) {
 
 	var uptime int64
 

@@ -84,6 +84,7 @@ type backgroundLoops struct {
 	maintenance         *service.Maintenance
 	maintenanceInterval time.Duration
 	performance         *service.PerformanceCollector
+	runtimeEvents       *service.ContainerEventCollector
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -94,7 +95,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(6)
+	group.Add(7)
 
 	go func() {
 		defer group.Done()
@@ -130,6 +131,12 @@ func startBackground(
 		defer group.Done()
 
 		loops.performance.Run(ctx)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.runtimeEvents.Run(ctx)
 	}()
 
 	logger.Info("starting background loops",
@@ -262,7 +269,7 @@ func runServe(args []string) error {
 	ingestor := newIngestor(serviceStore, db, cfg.MaxOccurrences, logger)
 	collector := newLogCollector(wiring)
 	sdkLogs := newLogIngestor(serviceStore, db)
-	sys := newServeSystem(dockerClient, cfg.DB, logger)
+	sys := newServeSystem(dockerClient, cfg.DB, cfg.HostRoot, logger)
 	databases := newDatabase(db, cfg, logger)
 	maintenance := newMaintenance(db, cfg, logger)
 	performance, err := newPerformanceCollector(ctx, wiring)
@@ -293,6 +300,10 @@ func runServe(args []string) error {
 		Logger:        logger,
 	})
 	inv.SetFlipReporter(notificationStore, audit, cutover.Active)
+	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
+		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),
+		Environment: cfg.Env, Expected: cutover.Active, Logger: logger,
+	})
 
 	var group sync.WaitGroup
 
@@ -309,6 +320,7 @@ func runServe(args []string) error {
 		maintenance:         maintenance,
 		maintenanceInterval: cfg.MaintenanceInterval,
 		performance:         performance,
+		runtimeEvents:       runtimeEvents,
 	}, &group, logger)
 
 	server, err := newServeServer(cfg, logger, serveServices{
@@ -405,6 +417,7 @@ func newSampler(wiring serveWiring) *service.Sampler {
 		SDKLogs:       store.NewSDKLogStore(wiring.db),
 		Fleet:         store.NewFleetStore(wiring.db),
 		Interval:      wiring.cfg.MetricsInterval,
+		HostRoot:      wiring.cfg.HostRoot,
 		Retention: service.Retention{
 			Metrics:       wiring.cfg.RetentionMetrics,
 			Notifications: wiring.cfg.RetentionNotifications,
@@ -423,6 +436,9 @@ func newLogCollector(wiring serveWiring) *service.LogCollector {
 		Services:           wiring.services,
 		Docker:             wiring.docker,
 		Logs:               store.NewLogStore(wiring.db),
+		Cursors:            store.NewCursorStore(wiring.db),
+		Performance:        store.NewPerformanceStore(wiring.db),
+		Environment:        wiring.cfg.Env,
 		Interval:           wiring.cfg.LogPollInterval,
 		MaxLinesPerService: wiring.cfg.MaxLogLines,
 		Logger:             wiring.logger,
@@ -510,12 +526,14 @@ func reconcileDatabases(databases *service.Database, logger *slog.Logger) {
 func newServeSystem(
 	daemon service.DaemonQuerier,
 	dbPath string,
+	hostRoot string,
 	logger *slog.Logger,
 ) *service.System {
 	return service.NewSystem(service.SystemConfig{
 		Docker:    daemon,
 		Version:   version,
 		DBPath:    dbPath,
+		HostRoot:  hostRoot,
 		StartedAt: time.Now(),
 		Logger:    logger,
 	})

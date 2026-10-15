@@ -39,9 +39,11 @@ const (
 	defaultRetentionPerformance      = "168h"
 	defaultRetentionPerfHourly       = "720h"
 	defaultPerformanceInterval       = "30s"
+	defaultHostRoot                  = "/"
 	addrEnvVar                       = "TOUCHGRASS_ADDR"
 	dbEnvVar                         = "TOUCHGRASS_DB"
 	envEnvVar                        = "APP_ENV"
+	hostRootEnvVar                   = "TOUCHGRASS_HOST_ROOT"
 	metricsIntervalEnvVar            = "TOUCHGRASS_METRICS_INTERVAL"
 	retentionMetricsEnvVar           = "TOUCHGRASS_RETENTION_METRICS"
 	retentionNotificationsEnvVar     = "TOUCHGRASS_RETENTION_NOTIFICATIONS"
@@ -84,6 +86,8 @@ type Config struct {
 	DB string
 	// Env is dev (Vite proxy) or prod (embedded UI).
 	Env string
+	// HostRoot is the host filesystem root used for disk reporting.
+	HostRoot string
 	// MetricsInterval paces metric sampling.
 	MetricsInterval time.Duration
 	// Retention bounds per-area max age.
@@ -156,6 +160,7 @@ type listenConfig struct {
 	addr       string
 	db         string
 	env        string
+	hostRoot   string
 	scriptsDir string
 }
 
@@ -252,6 +257,7 @@ func load(getenv func(string) string) (Config, error) {
 		Addr:                       listen.addr,
 		DB:                         listen.db,
 		Env:                        listen.env,
+		HostRoot:                   listen.hostRoot,
 		MetricsInterval:            schedule.metrics,
 		RetentionMetrics:           schedule.retentionMetrics,
 		RetentionNotifications:     schedule.retentionNotifications,
@@ -365,8 +371,15 @@ func loadListen(getenv func(string) string) (listenConfig, error) {
 	if scriptsDir == "" {
 		scriptsDir = defaultScriptsDir
 	}
+	hostRoot := getenv(hostRootEnvVar)
+	if hostRoot == "" {
+		hostRoot = defaultHostRoot
+	}
+	if !filepath.IsAbs(hostRoot) {
+		return listenConfig{}, fmt.Errorf("invalid %s %q: want absolute path", hostRootEnvVar, hostRoot)
+	}
 
-	return listenConfig{addr: addr, db: db, env: env, scriptsDir: scriptsDir}, nil
+	return listenConfig{addr: addr, db: db, env: env, hostRoot: hostRoot, scriptsDir: scriptsDir}, nil
 }
 
 // loadSchedule validates sampling, retention, watch, and cutover durations.

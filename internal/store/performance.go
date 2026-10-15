@@ -288,20 +288,138 @@ func (s *PerformanceStore) UpsertLogVolume(ctx context.Context, bucket model.Log
 	default:
 		return errors.New("upserting log volume: unsupported severity")
 	}
-	if bucket.LineCount < 0 || bucket.DroppedCount < 0 {
+	if bucket.LineCount < 0 || bucket.DroppedCount < 0 || bucket.IngestKey == "" || len(bucket.IngestKey) > 256 {
 		return errors.New("upserting log volume: invalid counts")
 	}
-	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO log_volume_buckets
+	bucket.BucketStart = bucket.BucketStart.UTC().Truncate(time.Minute)
+	keyHash := sha256.Sum256([]byte(strings.Join([]string{formatFixedTime(bucket.BucketStart), bucket.ServiceID, bucket.Environment, bucket.Severity}, "\x1f")))
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("starting log volume upsert: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `INSERT INTO performance_ingest_batches
+		(source, ingest_key, bucket_key, bucket_start, created_at) VALUES ('log_volume', ?, ?, ?, ?)
+		ON CONFLICT(source, ingest_key, bucket_key) DO NOTHING`, bucket.IngestKey,
+		hex.EncodeToString(keyHash[:]), formatFixedTime(bucket.BucketStart), formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("recording log volume ingest: %w", err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking log volume ingest: %w", err)
+	}
+	if inserted == 0 {
+		return tx.Commit()
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO log_volume_buckets
 		(bucket_start, service_id, environment, severity, line_count, dropped_count, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(bucket_start, service_id, environment, severity) DO UPDATE SET
-		line_count=excluded.line_count, dropped_count=excluded.dropped_count, updated_at=excluded.updated_at`,
-		formatFixedTime(bucket.BucketStart.UTC().Truncate(time.Minute)), bucket.ServiceID,
+		line_count=line_count+excluded.line_count, dropped_count=dropped_count+excluded.dropped_count,
+		updated_at=excluded.updated_at`,
+		formatFixedTime(bucket.BucketStart), bucket.ServiceID,
 		bucket.Environment, bucket.Severity, bucket.LineCount, bucket.DroppedCount, formatTime(time.Now().UTC()))
 	if err != nil {
 		return fmt.Errorf("upserting log volume: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing log volume: %w", err)
+	}
 	return nil
+}
+
+// ListLogVolume returns bounded minute severity buckets.
+func (s *PerformanceStore) ListLogVolume(ctx context.Context, query model.PerformanceRange) ([]model.LogVolumeBucket, error) {
+	statement := `SELECT bucket_start, service_id, environment, severity, line_count, dropped_count
+		FROM log_volume_buckets WHERE bucket_start >= ? AND bucket_start < ?`
+	args := []any{formatFixedTime(query.Start.UTC()), formatFixedTime(query.End.UTC())}
+	if query.ServiceID != "" {
+		statement += " AND service_id = ?"
+		args = append(args, query.ServiceID)
+	}
+	statement += " ORDER BY bucket_start, service_id, severity LIMIT ?"
+	args = append(args, nativeLimit(query.Limit))
+	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing log volume: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []model.LogVolumeBucket{}
+	for rows.Next() {
+		var bucket model.LogVolumeBucket
+		var raw string
+		if err := rows.Scan(&raw, &bucket.ServiceID, &bucket.Environment, &bucket.Severity, &bucket.LineCount, &bucket.DroppedCount); err != nil {
+			return nil, fmt.Errorf("scanning log volume: %w", err)
+		}
+		bucket.BucketStart, err = parseTime(raw, "bucket_start")
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, bucket)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating log volume: %w", err)
+	}
+	return result, nil
+}
+
+// UpsertContainerEvent inserts one idempotent bounded lifecycle event.
+func (s *PerformanceStore) UpsertContainerEvent(ctx context.Context, event model.ContainerEvent) error {
+	if event.SourceEventID == "" || event.OccurredAt.IsZero() || event.Environment == "" ||
+		event.EventType == "" || len(event.SourceEventID) > 128 || len(event.ContainerName) > 128 ||
+		len(event.ComposeService) > 128 {
+		return errors.New("upserting container event: invalid bounded fields")
+	}
+	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO container_events
+		(source_event_id, occurred_at, service_id, environment, event_type, container_name,
+		compose_service, expected, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source_event_id) DO NOTHING`, event.SourceEventID, formatFixedTime(event.OccurredAt.UTC()),
+		event.ServiceID, event.Environment, event.EventType, event.ContainerName, event.ComposeService,
+		boolInteger(event.Expected), formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("upserting container event: %w", err)
+	}
+	return nil
+}
+
+// ListContainerEvents returns bounded lifecycle events ordered chronologically.
+func (s *PerformanceStore) ListContainerEvents(ctx context.Context, query model.PerformanceRange) ([]model.ContainerEvent, error) {
+	statement := `SELECT source_event_id, occurred_at, service_id, environment, event_type,
+		container_name, compose_service, expected FROM container_events
+		WHERE occurred_at >= ? AND occurred_at < ?`
+	args := []any{formatFixedTime(query.Start.UTC()), formatFixedTime(query.End.UTC())}
+	if query.ServiceID != "" {
+		statement += " AND service_id = ?"
+		args = append(args, query.ServiceID)
+	}
+	statement += " ORDER BY occurred_at, source_event_id LIMIT ?"
+	args = append(args, nativeLimit(query.Limit))
+	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing container events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []model.ContainerEvent{}
+	for rows.Next() {
+		var event model.ContainerEvent
+		var occurred string
+		var expected int
+		if err := rows.Scan(&event.SourceEventID, &occurred, &event.ServiceID, &event.Environment,
+			&event.EventType, &event.ContainerName, &event.ComposeService, &expected); err != nil {
+			return nil, fmt.Errorf("scanning container event: %w", err)
+		}
+		event.OccurredAt, err = parseTime(occurred, "occurred_at")
+		if err != nil {
+			return nil, err
+		}
+		event.Expected = expected != 0
+		result = append(result, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating container events: %w", err)
+	}
+	return result, nil
 }
 
 // ListPostgres returns PostgreSQL metric buckets ordered chronologically.

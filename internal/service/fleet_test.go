@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +12,38 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
+
+type fakeEventStreamer struct {
+	mu     sync.Mutex
+	events []docker.Event
+	since  []string
+}
+
+type errorEventStreamer struct{}
+
+func (errorEventStreamer) EventStream(context.Context, string) (<-chan docker.Event, <-chan error) {
+	events := make(chan docker.Event)
+	errorsOut := make(chan error, 1)
+	errorsOut <- errors.New("daemon unavailable")
+	close(events)
+	close(errorsOut)
+	return events, errorsOut
+}
+
+func (f *fakeEventStreamer) EventStream(_ context.Context, since string) (<-chan docker.Event, <-chan error) {
+	f.mu.Lock()
+	f.since = append(f.since, since)
+	events := append([]docker.Event{}, f.events...)
+	f.mu.Unlock()
+	eventChannel := make(chan docker.Event, len(events))
+	errorChannel := make(chan error)
+	for _, event := range events {
+		eventChannel <- event
+	}
+	close(eventChannel)
+	close(errorChannel)
+	return eventChannel, errorChannel
+}
 
 func TestSampleFleetCollects(t *testing.T) {
 	t.Parallel()
@@ -53,6 +87,90 @@ func TestSampleFleetCollects(t *testing.T) {
 	if hosts != 1 {
 		t.Errorf("host rows = %d, want 1", hosts)
 	}
+}
+
+func TestContainerEventCollectorPersistsCursorAndExpectedCutover(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	performance := store.NewPerformanceStore(db)
+	at := time.Date(2026, 10, 16, 4, 5, 6, 0, time.UTC)
+	streamer := &fakeEventStreamer{events: []docker.Event{{
+		SourceEventID: "event-1", OccurredAt: at, Action: "die", ContainerID: testBlueContainerID,
+		ContainerName: testBlueContainerName, ComposeProject: testComposeProject, ComposeService: testBlueService,
+	}}}
+	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: streamer, Writer: performance,
+		Environment: "prod", Expected: func(serviceID string) bool { return serviceID == testServiceAPI },
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := collector.runStream(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := performance.ListContainerEvents(context.Background(), model.PerformanceRange{ServiceID: testServiceAPI, Start: at.Add(-time.Second), End: at.Add(time.Second)})
+	if err != nil || len(events) != 1 || !events[0].Expected || events[0].EventType != "die" {
+		t.Fatalf("events = %+v, %v", events, err)
+	}
+	if err := collector.runStream(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(streamer.since) != 2 || streamer.since[1] != at.Format(time.RFC3339Nano) {
+		t.Fatalf("stream since values = %v", streamer.since)
+	}
+}
+
+func TestContainerEventCollectorStopsOnCancellation(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: &blockingEventStreamer{},
+		Writer: store.NewPerformanceStore(db), Environment: "prod", Logger: slog.New(slog.DiscardHandler),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { collector.Run(ctx); close(done) }()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("event collector did not stop after cancellation")
+	}
+}
+
+func TestContainerEventCollectorPersistsStreamFailure(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	performance := store.NewPerformanceStore(db)
+	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: errorEventStreamer{}, Writer: performance,
+		Environment: "prod", Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := collector.runStream(context.Background()); err == nil {
+		t.Fatal("runStream() error = nil, want daemon failure")
+	}
+	cursor, err := performance.Get(context.Background(), dockerEventCursorSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor.LastError != "docker_events_unavailable" || cursor.UpdatedAt.IsZero() {
+		t.Fatalf("failure cursor = %+v", cursor)
+	}
+}
+
+type blockingEventStreamer struct{}
+
+func (blockingEventStreamer) EventStream(ctx context.Context, _ string) (<-chan docker.Event, <-chan error) {
+	events := make(chan docker.Event)
+	errorsOut := make(chan error)
+	go func() {
+		<-ctx.Done()
+		close(events)
+		close(errorsOut)
+	}()
+	return events, errorsOut
 }
 
 // testFleetLister fakes stats for the shared fixture containers,

@@ -20,6 +20,7 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/config"
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/http"
+	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/probe"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -67,17 +68,19 @@ func run(args []string) error {
 }
 
 // backgroundLoops wires sampler, inventory watch, log collection, and
-// scheduled backup goroutines.
+// scheduled backup and SQLite maintenance goroutines.
 type backgroundLoops struct {
-	sampler        *service.Sampler
-	inventory      *service.Inventory
-	collector      *service.LogCollector
-	databases      *service.Database
-	interval       time.Duration
-	hub            *http.Hub
-	metrics        time.Duration
-	logPoll        time.Duration
-	backupInterval time.Duration
+	sampler             *service.Sampler
+	inventory           *service.Inventory
+	collector           *service.LogCollector
+	databases           *service.Database
+	interval            time.Duration
+	hub                 *http.Hub
+	metrics             time.Duration
+	logPoll             time.Duration
+	backupInterval      time.Duration
+	maintenance         *service.Maintenance
+	maintenanceInterval time.Duration
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -88,7 +91,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(4)
+	group.Add(5)
 
 	go func() {
 		defer group.Done()
@@ -114,11 +117,18 @@ func startBackground(
 		loops.databases.RunScheduler(ctx, loops.backupInterval)
 	}()
 
+	go func() {
+		defer group.Done()
+
+		loops.maintenance.Run(ctx)
+	}()
+
 	logger.Info("starting background loops",
 		"metrics_interval", loops.metrics.String(),
 		"watch_interval", loops.interval.String(),
 		"log_poll_interval", loops.logPoll.String(),
 		"backup_interval", loops.backupInterval.String(),
+		"maintenance_interval", loops.maintenanceInterval.String(),
 	)
 }
 
@@ -245,6 +255,7 @@ func runServe(args []string) error {
 	sdkLogs := newLogIngestor(serviceStore, db)
 	sys := newServeSystem(dockerClient, cfg.DB, logger)
 	databases := newDatabase(db, cfg, logger)
+	maintenance := newMaintenance(db, cfg, logger)
 	reconcileDatabases(databases, logger)
 
 	onboarding := newOnboarding(wiring, prober, audit)
@@ -273,15 +284,17 @@ func runServe(args []string) error {
 	var group sync.WaitGroup
 
 	startBackground(ctx, backgroundLoops{
-		sampler:        sampler,
-		inventory:      inv,
-		collector:      collector,
-		databases:      databases,
-		interval:       cfg.WatchInterval,
-		hub:            hub,
-		metrics:        cfg.MetricsInterval,
-		logPoll:        cfg.LogPollInterval,
-		backupInterval: cfg.BackupInterval,
+		sampler:             sampler,
+		inventory:           inv,
+		collector:           collector,
+		databases:           databases,
+		interval:            cfg.WatchInterval,
+		hub:                 hub,
+		metrics:             cfg.MetricsInterval,
+		logPoll:             cfg.LogPollInterval,
+		backupInterval:      cfg.BackupInterval,
+		maintenance:         maintenance,
+		maintenanceInterval: cfg.MaintenanceInterval,
 	}, &group, logger)
 
 	server, err := newServeServer(cfg, logger, serveServices{
@@ -416,6 +429,24 @@ func newDatabase(db *store.DB, cfg config.Config, logger *slog.Logger) *service.
 		Audit:          store.NewAuditStore(db),
 		SQLite:         db,
 		Logger:         logger,
+	})
+}
+
+// newMaintenance wires bounded SQLite retention, checkpoints, and snapshots.
+func newMaintenance(db *store.DB, cfg config.Config, logger *slog.Logger) *service.Maintenance {
+	return service.NewMaintenance(service.MaintenanceConfig{
+		Store: store.NewMaintenanceStore(db), Backupper: db,
+		Interval: cfg.MaintenanceInterval, BackupDir: cfg.SQLiteBackupDir,
+		Policy: model.MaintenancePolicy{
+			BatchSize: model.MaximumMaintenanceBatch, MaxBytes: cfg.SQLiteMaxBytes,
+			RetentionMetrics:       cfg.RetentionMetrics,
+			RetentionNotifications: cfg.RetentionNotifications,
+			RetentionDeploys:       cfg.RetentionDeploys, RetentionErrors: cfg.RetentionErrors,
+			RetentionLogs: cfg.RetentionLogs, RetentionSDKLogs: cfg.RetentionSDKLogs,
+			RetentionPerformance:       cfg.RetentionPerformance,
+			RetentionPerformanceHourly: cfg.RetentionPerformanceHourly,
+		},
+		Logger: logger,
 	})
 }
 

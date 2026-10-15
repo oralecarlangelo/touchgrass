@@ -138,7 +138,8 @@ func (s *Sampler) sample(ctx context.Context) {
 		s.logger.Warn("issue alert evaluation failed", "error", err)
 	}
 
-	s.trim(ctx)
+	// Bounded age/byte retention is owned by Maintenance. The legacy trim
+	// helper remains for focused compatibility tests, but is not scheduled.
 }
 
 // collect records one sample per managed container, then the fleet and

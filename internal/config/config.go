@@ -10,54 +10,64 @@ import (
 )
 
 const (
-	defaultAddr                   = "127.0.0.1:8080"
-	defaultDB                     = "./touchgrass.db"
-	defaultEnv                    = "prod"
-	defaultMetricsInterval        = "30s"
-	defaultRetentionMetrics       = "168h"
-	defaultRetentionNotifications = "720h"
-	defaultRetentionDeploys       = "8760h"
-	defaultWatchInterval          = "5s"
-	defaultCutoverTimeout         = "10m"
-	defaultRetentionErrors        = "720h"
-	defaultMaxOccurrences         = "10000"
-	defaultRetentionLogs          = "168h"
-	defaultMaxLogLines            = "50000"
-	defaultLogPollInterval        = "5s"
-	defaultRetentionSDKLogs       = "7"
-	defaultPostgresUser           = "postgres"
-	defaultPostgresDB             = "postgres"
-	defaultBackupDir              = "./backups"
-	defaultBackupKeep             = "14"
-	defaultBackupInterval         = "24h"
-	defaultScriptsDir             = "scripts"
-	addrEnvVar                    = "TOUCHGRASS_ADDR"
-	dbEnvVar                      = "TOUCHGRASS_DB"
-	envEnvVar                     = "APP_ENV"
-	metricsIntervalEnvVar         = "TOUCHGRASS_METRICS_INTERVAL"
-	retentionMetricsEnvVar        = "TOUCHGRASS_RETENTION_METRICS"
-	retentionNotificationsEnvVar  = "TOUCHGRASS_RETENTION_NOTIFICATIONS"
-	retentionDeploysEnvVar        = "TOUCHGRASS_RETENTION_DEPLOYS"
-	adminPasswordEnvVar           = "TOUCHGRASS_ADMIN_PASSWORD"
-	cookieSecureEnvVar            = "TOUCHGRASS_COOKIE_SECURE"
-	watchIntervalEnvVar           = "TOUCHGRASS_WATCH_INTERVAL"
-	cutoverTimeoutEnvVar          = "TOUCHGRASS_CUTOVER_TIMEOUT"
-	retentionErrorsEnvVar         = "TOUCHGRASS_RETENTION_ERRORS"
-	maxOccurrencesEnvVar          = "TOUCHGRASS_INGEST_MAX_OCCURRENCES"
-	retentionLogsEnvVar           = "TOUCHGRASS_RETENTION_LOGS"
-	maxLogLinesEnvVar             = "TOUCHGRASS_LOGS_MAX_LINES"
-	logPollIntervalEnvVar         = "TOUCHGRASS_LOG_POLL_INTERVAL"
-	retentionSDKLogsEnvVar        = "TOUCHGRASS_RETENTION_SDK_LOGS"
-	postgresContainerEnvVar       = "TOUCHGRASS_POSTGRES_CONTAINER"
-	postgresUserEnvVar            = "TOUCHGRASS_POSTGRES_USER"
-	postgresDBEnvVar              = "TOUCHGRASS_POSTGRES_DB"
-	backupDirEnvVar               = "TOUCHGRASS_DB_BACKUP_DIR"
-	backupKeepEnvVar              = "TOUCHGRASS_DB_BACKUP_KEEP"
-	backupIntervalEnvVar          = "TOUCHGRASS_DB_BACKUP_INTERVAL"
-	redisContainerEnvVar          = "TOUCHGRASS_REDIS_CONTAINER"
-	scriptsDirEnvVar              = "TOUCHGRASS_SCRIPTS_DIR"
-	envDev                        = "dev"
-	envProd                       = "prod"
+	defaultAddr                      = "127.0.0.1:8080"
+	defaultDB                        = "./touchgrass.db"
+	defaultEnv                       = "prod"
+	defaultMetricsInterval           = "30s"
+	defaultRetentionMetrics          = "168h"
+	defaultRetentionNotifications    = "720h"
+	defaultRetentionDeploys          = "8760h"
+	defaultWatchInterval             = "5s"
+	defaultCutoverTimeout            = "10m"
+	defaultRetentionErrors           = "720h"
+	defaultMaxOccurrences            = "10000"
+	defaultRetentionLogs             = "168h"
+	defaultMaxLogLines               = "50000"
+	defaultLogPollInterval           = "5s"
+	defaultRetentionSDKLogs          = "7"
+	defaultPostgresUser              = "postgres"
+	defaultPostgresDB                = "postgres"
+	defaultBackupDir                 = "./backups"
+	defaultBackupKeep                = "14"
+	defaultBackupInterval            = "24h"
+	defaultScriptsDir                = "scripts"
+	defaultMaintenanceInterval       = "5m"
+	defaultSQLiteMaxBytes            = "1073741824"
+	defaultSQLiteBackupDir           = "./backups/sqlite"
+	defaultRetentionPerformance      = "168h"
+	defaultRetentionPerfHourly       = "720h"
+	addrEnvVar                       = "TOUCHGRASS_ADDR"
+	dbEnvVar                         = "TOUCHGRASS_DB"
+	envEnvVar                        = "APP_ENV"
+	metricsIntervalEnvVar            = "TOUCHGRASS_METRICS_INTERVAL"
+	retentionMetricsEnvVar           = "TOUCHGRASS_RETENTION_METRICS"
+	retentionNotificationsEnvVar     = "TOUCHGRASS_RETENTION_NOTIFICATIONS"
+	retentionDeploysEnvVar           = "TOUCHGRASS_RETENTION_DEPLOYS"
+	adminPasswordEnvVar              = "TOUCHGRASS_ADMIN_PASSWORD"
+	cookieSecureEnvVar               = "TOUCHGRASS_COOKIE_SECURE"
+	watchIntervalEnvVar              = "TOUCHGRASS_WATCH_INTERVAL"
+	cutoverTimeoutEnvVar             = "TOUCHGRASS_CUTOVER_TIMEOUT"
+	retentionErrorsEnvVar            = "TOUCHGRASS_RETENTION_ERRORS"
+	maxOccurrencesEnvVar             = "TOUCHGRASS_INGEST_MAX_OCCURRENCES"
+	retentionLogsEnvVar              = "TOUCHGRASS_RETENTION_LOGS"
+	maxLogLinesEnvVar                = "TOUCHGRASS_LOGS_MAX_LINES"
+	logPollIntervalEnvVar            = "TOUCHGRASS_LOG_POLL_INTERVAL"
+	retentionSDKLogsEnvVar           = "TOUCHGRASS_RETENTION_SDK_LOGS"
+	postgresContainerEnvVar          = "TOUCHGRASS_POSTGRES_CONTAINER"
+	postgresUserEnvVar               = "TOUCHGRASS_POSTGRES_USER"
+	postgresDBEnvVar                 = "TOUCHGRASS_POSTGRES_DB"
+	backupDirEnvVar                  = "TOUCHGRASS_DB_BACKUP_DIR"
+	backupKeepEnvVar                 = "TOUCHGRASS_DB_BACKUP_KEEP"
+	backupIntervalEnvVar             = "TOUCHGRASS_DB_BACKUP_INTERVAL"
+	redisContainerEnvVar             = "TOUCHGRASS_REDIS_CONTAINER"
+	scriptsDirEnvVar                 = "TOUCHGRASS_SCRIPTS_DIR"
+	maintenanceIntervalEnvVar        = "TOUCHGRASS_MAINTENANCE_INTERVAL"
+	sqliteMaxBytesEnvVar             = "TOUCHGRASS_SQLITE_MAX_BYTES"
+	sqliteBackupDirEnvVar            = "TOUCHGRASS_SQLITE_BACKUP_DIR"
+	retentionPerformanceEnvVar       = "TOUCHGRASS_RETENTION_PERFORMANCE"
+	retentionPerformanceHourlyEnvVar = "TOUCHGRASS_RETENTION_PERFORMANCE_HOURLY"
+	envDev                           = "dev"
+	envProd                          = "prod"
 )
 
 // Config is the validated touchgrass runtime configuration.
@@ -111,6 +121,15 @@ type Config struct {
 	// ScriptsDir holds the deploy helper scripts; relative paths resolve
 	// against the app working directory.
 	ScriptsDir string
+	// MaintenanceInterval paces bounded SQLite retention and checkpoint work.
+	MaintenanceInterval time.Duration
+	// SQLiteMaxBytes is the total SQLite storage budget.
+	SQLiteMaxBytes int64
+	// SQLiteBackupDir contains online SQLite snapshots.
+	SQLiteBackupDir string
+	// RetentionPerformance bounds minute and hourly aggregate history.
+	RetentionPerformance       time.Duration
+	RetentionPerformanceHourly time.Duration
 }
 
 // Load reads configuration from the environment.
@@ -163,6 +182,15 @@ type databaseConfig struct {
 	redisContainer string
 }
 
+// storageConfig groups SQLite maintenance and performance retention settings.
+type storageConfig struct {
+	maintenanceInterval        time.Duration
+	maxBytes                   int64
+	backupDir                  string
+	retentionPerformance       time.Duration
+	retentionPerformanceHourly time.Duration
+}
+
 // load resolves configuration using getenv so tests can stub the environment.
 func load(getenv func(string) string) (Config, error) {
 	listen, err := loadListen(getenv)
@@ -190,32 +218,75 @@ func load(getenv func(string) string) (Config, error) {
 		return Config{}, err
 	}
 
+	storage, err := loadStorage(getenv)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
-		Addr:                   listen.addr,
-		DB:                     listen.db,
-		Env:                    listen.env,
-		MetricsInterval:        schedule.metrics,
-		RetentionMetrics:       schedule.retentionMetrics,
-		RetentionNotifications: schedule.retentionNotifications,
-		RetentionDeploys:       schedule.retentionDeploys,
-		AdminPassword:          admin.password,
-		CookieSecure:           admin.secure,
-		WatchInterval:          schedule.watch,
-		CutoverTimeout:         schedule.cutoverTimeout,
-		RetentionErrors:        schedule.retentionErrors,
-		MaxOccurrences:         ingest.maxOccurrences,
-		RetentionLogs:          schedule.retentionLogs,
-		RetentionSDKLogs:       schedule.retentionSDKLogs,
-		MaxLogLines:            ingest.maxLogLines,
-		LogPollInterval:        schedule.logPoll,
-		PostgresContainer:      database.container,
-		PostgresUser:           database.user,
-		PostgresDB:             database.dbName,
-		BackupDir:              database.backupDir,
-		BackupKeep:             database.backupKeep,
-		BackupInterval:         database.backupInterval,
-		RedisContainer:         database.redisContainer,
-		ScriptsDir:             listen.scriptsDir,
+		Addr:                       listen.addr,
+		DB:                         listen.db,
+		Env:                        listen.env,
+		MetricsInterval:            schedule.metrics,
+		RetentionMetrics:           schedule.retentionMetrics,
+		RetentionNotifications:     schedule.retentionNotifications,
+		RetentionDeploys:           schedule.retentionDeploys,
+		AdminPassword:              admin.password,
+		CookieSecure:               admin.secure,
+		WatchInterval:              schedule.watch,
+		CutoverTimeout:             schedule.cutoverTimeout,
+		RetentionErrors:            schedule.retentionErrors,
+		MaxOccurrences:             ingest.maxOccurrences,
+		RetentionLogs:              schedule.retentionLogs,
+		RetentionSDKLogs:           schedule.retentionSDKLogs,
+		MaxLogLines:                ingest.maxLogLines,
+		LogPollInterval:            schedule.logPoll,
+		PostgresContainer:          database.container,
+		PostgresUser:               database.user,
+		PostgresDB:                 database.dbName,
+		BackupDir:                  database.backupDir,
+		BackupKeep:                 database.backupKeep,
+		BackupInterval:             database.backupInterval,
+		RedisContainer:             database.redisContainer,
+		ScriptsDir:                 listen.scriptsDir,
+		MaintenanceInterval:        storage.maintenanceInterval,
+		SQLiteMaxBytes:             storage.maxBytes,
+		SQLiteBackupDir:            storage.backupDir,
+		RetentionPerformance:       storage.retentionPerformance,
+		RetentionPerformanceHourly: storage.retentionPerformanceHourly,
+	}, nil
+}
+
+// loadStorage validates bounded SQLite maintenance settings.
+func loadStorage(getenv func(string) string) (storageConfig, error) {
+	interval, err := parseDuration(getenv, maintenanceIntervalEnvVar, defaultMaintenanceInterval)
+	if err != nil {
+		return storageConfig{}, err
+	}
+
+	maxBytes, err := parsePositiveInt64(getenv, sqliteMaxBytesEnvVar, defaultSQLiteMaxBytes)
+	if err != nil {
+		return storageConfig{}, err
+	}
+
+	retentionPerformance, err := parseDuration(getenv, retentionPerformanceEnvVar, defaultRetentionPerformance)
+	if err != nil {
+		return storageConfig{}, err
+	}
+
+	retentionHourly, err := parseDuration(getenv, retentionPerformanceHourlyEnvVar, defaultRetentionPerfHourly)
+	if err != nil {
+		return storageConfig{}, err
+	}
+
+	backupDir := getenv(sqliteBackupDirEnvVar)
+	if backupDir == "" {
+		backupDir = defaultSQLiteBackupDir
+	}
+
+	return storageConfig{
+		maintenanceInterval: interval, maxBytes: maxBytes, backupDir: backupDir,
+		retentionPerformance: retentionPerformance, retentionPerformanceHourly: retentionHourly,
 	}, nil
 }
 
@@ -401,6 +472,21 @@ func parsePositiveInt(getenv func(string) string, name, fallback string) (int, e
 	}
 
 	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return 0, fmt.Errorf("invalid %s %q: want positive integer", name, raw)
+	}
+
+	return value, nil
+}
+
+// parsePositiveInt64 resolves a required positive 64-bit integer setting.
+func parsePositiveInt64(getenv func(string) string, name, fallback string) (int64, error) {
+	raw := getenv(name)
+	if raw == "" {
+		raw = fallback
+	}
+
+	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value < 1 {
 		return 0, fmt.Errorf("invalid %s %q: want positive integer", name, raw)
 	}

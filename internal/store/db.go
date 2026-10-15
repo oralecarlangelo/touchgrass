@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -54,6 +56,32 @@ func Open(path string) (*DB, error) {
 func (db *DB) Close() error {
 	if err := db.sql.Close(); err != nil {
 		return fmt.Errorf("closing database: %w", err)
+	}
+
+	return nil
+}
+
+// Backup writes a consistent SQLite snapshot to a new destination file.
+// The service layer owns directory allowlisting; this method refuses to
+// overwrite an existing file.
+func (db *DB) Backup(ctx context.Context, destination string) error {
+	if destination == "" {
+		return fmt.Errorf("backing up database: destination is required")
+	}
+	if _, err := os.Stat(destination); err == nil {
+		return fmt.Errorf("backing up database: destination already exists")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking backup destination: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return fmt.Errorf("creating backup directory: %w", err)
+	}
+
+	if _, err := db.sql.ExecContext(ctx, "VACUUM INTO ?", destination); err != nil {
+		return fmt.Errorf("backing up database: %w", err)
+	}
+	if err := os.Chmod(destination, 0o600); err != nil {
+		return fmt.Errorf("securing database backup: %w", err)
 	}
 
 	return nil

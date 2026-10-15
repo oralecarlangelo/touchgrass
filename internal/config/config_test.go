@@ -21,6 +21,9 @@ func defaultTestConfig() Config {
 		PostgresContainer: "", PostgresUser: defaultPostgresUser, PostgresDB: defaultPostgresDB,
 		BackupDir: defaultBackupDir, BackupKeep: 14, BackupInterval: 24 * time.Hour,
 		RedisContainer: "", ScriptsDir: defaultScriptsDir,
+		MaintenanceInterval: 5 * time.Minute, SQLiteMaxBytes: 1 << 30,
+		SQLiteBackupDir:      defaultSQLiteBackupDir,
+		RetentionPerformance: 168 * time.Hour, RetentionPerformanceHourly: 720 * time.Hour,
 	}
 }
 
@@ -46,6 +49,11 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.BackupInterval = 6 * time.Hour
 	cfg.RedisContainer = "redis"
 	cfg.ScriptsDir = "/opt/touchgrass/scripts"
+	cfg.MaintenanceInterval = 2 * time.Minute
+	cfg.SQLiteMaxBytes = 2 << 20
+	cfg.SQLiteBackupDir = "/var/backups/touchgrass"
+	cfg.RetentionPerformance = 24 * time.Hour
+	cfg.RetentionPerformanceHourly = 240 * time.Hour
 }
 
 func TestLoad(t *testing.T) {
@@ -75,6 +83,9 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_DB_BACKUP_KEEP": "30", backupIntervalEnvVar: "6h",
 				"TOUCHGRASS_REDIS_CONTAINER": "redis",
 				"TOUCHGRASS_SCRIPTS_DIR":     "/opt/touchgrass/scripts",
+				maintenanceIntervalEnvVar:    "2m", sqliteMaxBytesEnvVar: "2097152",
+				sqliteBackupDirEnvVar:      "/var/backups/touchgrass",
+				retentionPerformanceEnvVar: "24h", retentionPerformanceHourlyEnvVar: "240h",
 			},
 			mutate: mutateCustomTestConfig,
 		},
@@ -252,6 +263,74 @@ func TestLoadRetentionSDKLogsForms(t *testing.T) {
 
 			if cfg.RetentionSDKLogs != tt.expected {
 				t.Errorf("RetentionSDKLogs = %v, want %v", cfg.RetentionSDKLogs, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLoadMaintenance(t *testing.T) {
+	t.Parallel()
+
+	t.Run("defaults", func(t *testing.T) {
+		t.Parallel()
+
+		cfg, err := load(func(key string) string {
+			if key == adminPasswordEnvVar {
+				return testAdminPassword
+			}
+
+			return ""
+		})
+		if err != nil {
+			t.Fatalf("load() error = %v", err)
+		}
+		if cfg.MaintenanceInterval != 5*time.Minute || cfg.SQLiteMaxBytes != 1<<30 {
+			t.Fatalf("maintenance defaults = (%v, %d)", cfg.MaintenanceInterval, cfg.SQLiteMaxBytes)
+		}
+		if cfg.SQLiteBackupDir != "./backups/sqlite" {
+			t.Fatalf("SQLiteBackupDir = %q", cfg.SQLiteBackupDir)
+		}
+		if cfg.RetentionPerformance != 168*time.Hour || cfg.RetentionPerformanceHourly != 720*time.Hour {
+			t.Fatalf("performance retention = (%v, %v)", cfg.RetentionPerformance, cfg.RetentionPerformanceHourly)
+		}
+	})
+
+	t.Run("custom", func(t *testing.T) {
+		t.Parallel()
+		env := map[string]string{
+			adminPasswordEnvVar:              testAdminPassword,
+			maintenanceIntervalEnvVar:        "2m",
+			sqliteMaxBytesEnvVar:             "2097152",
+			sqliteBackupDirEnvVar:            "/var/backups/touchgrass",
+			retentionPerformanceEnvVar:       "24h",
+			retentionPerformanceHourlyEnvVar: "240h",
+		}
+		cfg, err := load(func(key string) string { return env[key] })
+		if err != nil {
+			t.Fatalf("load() error = %v", err)
+		}
+		if cfg.MaintenanceInterval != 2*time.Minute || cfg.SQLiteMaxBytes != 2<<20 ||
+			cfg.SQLiteBackupDir != "/var/backups/touchgrass" ||
+			cfg.RetentionPerformance != 24*time.Hour || cfg.RetentionPerformanceHourly != 240*time.Hour {
+			t.Fatalf("custom maintenance config = %+v", cfg)
+		}
+	})
+
+	for _, tt := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "invalid interval", key: maintenanceIntervalEnvVar, value: "often"},
+		{name: "non-positive bytes", key: sqliteMaxBytesEnvVar, value: "0"},
+		{name: "invalid performance retention", key: retentionPerformanceEnvVar, value: "forever"},
+		{name: "non-positive hourly retention", key: retentionPerformanceHourlyEnvVar, value: "0s"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{adminPasswordEnvVar: testAdminPassword, tt.key: tt.value}
+			if _, err := load(func(key string) string { return env[key] }); err == nil {
+				t.Fatal("load() error = nil, want error")
 			}
 		})
 	}

@@ -176,6 +176,56 @@ func TestMaintenanceRetainsPerformanceInBoundedBatches(t *testing.T) {
 	}
 }
 
+func TestPerformanceStoreNativeMetricsAreIdempotent(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	performance := NewPerformanceStore(db)
+	ctx := context.Background()
+	minute := time.Date(2026, 10, 16, 2, 3, 0, 0, time.UTC)
+	postgres := model.PostgresMetricBucket{BucketStart: minute, ServiceID: "tn-api", Environment: "prod", Metric: "xact_commit", Value: 120, Delta: 20}
+	statement := model.PostgresStatementBucket{BucketStart: minute, ServiceID: "tn-api", Environment: "prod", QueryID: "42", Calls: 3, TotalExecMS: 12.5, Rows: 4}
+	redis := model.RedisMetricBucket{BucketStart: minute, ServiceID: "tn-api", Environment: "prod", Metric: "command_calls", CommandFamily: "read", Value: 50, Delta: 5}
+
+	for range 2 {
+		if err := performance.UpsertPostgres(ctx, postgres); err != nil {
+			t.Fatal(err)
+		}
+		if err := performance.UpsertPostgresStatement(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+		if err := performance.UpsertRedis(ctx, redis); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	postgresRows, err := performance.ListPostgres(ctx, model.PerformanceRange{ServiceID: "tn-api", Start: minute, End: minute.Add(time.Minute)})
+	if err != nil || len(postgresRows) != 1 || postgresRows[0].Delta != 20 {
+		t.Fatalf("postgres rows = %+v, %v", postgresRows, err)
+	}
+	statementRows, err := performance.ListPostgresStatements(ctx, model.PerformanceRange{ServiceID: "tn-api", Start: minute, End: minute.Add(time.Minute)})
+	if err != nil || len(statementRows) != 1 || statementRows[0].Calls != 3 {
+		t.Fatalf("statement rows = %+v, %v", statementRows, err)
+	}
+	redisRows, err := performance.ListRedis(ctx, model.PerformanceRange{ServiceID: "tn-api", Start: minute, End: minute.Add(time.Minute)})
+	if err != nil || len(redisRows) != 1 || redisRows[0].Delta != 5 {
+		t.Fatalf("redis rows = %+v, %v", redisRows, err)
+	}
+}
+
+func TestPerformanceStoreRejectsUnboundedNativeDimensions(t *testing.T) {
+	t.Parallel()
+
+	performance := NewPerformanceStore(openTestDB(t))
+	err := performance.UpsertRedis(context.Background(), model.RedisMetricBucket{
+		BucketStart: time.Now(), ServiceID: "tn-api", Environment: "prod",
+		Metric: "command_calls", CommandFamily: "customer_email_lookup", Value: 1,
+	})
+	if err == nil {
+		t.Fatal("expected unbounded command family to be rejected")
+	}
+}
+
 func testHTTPBucket(ingestKey string) model.HTTPMetricBucket {
 	return model.HTTPMetricBucket{
 		BucketStart: time.Date(2026, 10, 16, 1, 2, 0, 0, time.UTC),

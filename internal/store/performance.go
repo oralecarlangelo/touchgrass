@@ -23,6 +23,16 @@ func NewPerformanceStore(db *DB) *PerformanceStore {
 	return &PerformanceStore{db: db}
 }
 
+// Get returns durable source progress for collector orchestration.
+func (s *PerformanceStore) Get(ctx context.Context, source string) (model.CollectorCursor, error) {
+	return NewCursorStore(s.db).Get(ctx, source)
+}
+
+// Upsert persists durable source progress for collector orchestration.
+func (s *PerformanceStore) Upsert(ctx context.Context, cursor model.CollectorCursor) error {
+	return NewCursorStore(s.db).Upsert(ctx, cursor)
+}
+
 // UpsertHTTP additively merges one partial minute bucket. The opaque ingest key
 // plus bounded bucket dimensions makes a retry idempotent.
 func (s *PerformanceStore) UpsertHTTP(ctx context.Context, bucket model.HTTPMetricBucket) error {
@@ -200,6 +210,233 @@ func (s *PerformanceStore) TrimHTTPBefore(ctx context.Context, cutoff time.Time,
 	}
 	_, _ = s.db.sql.ExecContext(ctx, `DELETE FROM performance_ingest_batches WHERE bucket_start < ?`, formatTime(cutoff.UTC()))
 	return deleted, nil
+}
+
+// UpsertPostgres replaces one point-in-time PostgreSQL metric bucket. Samples
+// use deterministic minute keys, so retries cannot add deltas twice.
+func (s *PerformanceStore) UpsertPostgres(ctx context.Context, bucket model.PostgresMetricBucket) error {
+	if err := validateNativeMetric(bucket.BucketStart, bucket.ServiceID, bucket.Environment, bucket.Metric, ""); err != nil {
+		return fmt.Errorf("upserting postgres metric: %w", err)
+	}
+	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO postgres_metric_buckets
+		(bucket_start, service_id, environment, metric, value, delta, reset, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(bucket_start, service_id, environment, metric) DO UPDATE SET
+		value=excluded.value, delta=excluded.delta, reset=excluded.reset, updated_at=excluded.updated_at`,
+		formatFixedTime(bucket.BucketStart.UTC().Truncate(time.Minute)), bucket.ServiceID,
+		bucket.Environment, bucket.Metric, bucket.Value, bucket.Delta, boolInteger(bucket.Reset),
+		formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("upserting postgres metric: %w", err)
+	}
+	return nil
+}
+
+// UpsertPostgresStatement replaces one bounded numeric statement bucket.
+func (s *PerformanceStore) UpsertPostgresStatement(ctx context.Context, bucket model.PostgresStatementBucket) error {
+	if err := validateNativeMetric(bucket.BucketStart, bucket.ServiceID, bucket.Environment, "statement", bucket.QueryID); err != nil {
+		return fmt.Errorf("upserting postgres statement: %w", err)
+	}
+	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO postgres_statement_buckets
+		(bucket_start, service_id, environment, query_id, calls, total_exec_ms, rows_count,
+		shared_blocks_hit, shared_blocks_read, temp_blocks_read, temp_blocks_written, reset, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(bucket_start, service_id, environment, query_id) DO UPDATE SET
+		calls=excluded.calls, total_exec_ms=excluded.total_exec_ms, rows_count=excluded.rows_count,
+		shared_blocks_hit=excluded.shared_blocks_hit, shared_blocks_read=excluded.shared_blocks_read,
+		temp_blocks_read=excluded.temp_blocks_read, temp_blocks_written=excluded.temp_blocks_written,
+		reset=excluded.reset, updated_at=excluded.updated_at`,
+		formatFixedTime(bucket.BucketStart.UTC().Truncate(time.Minute)), bucket.ServiceID, bucket.Environment,
+		bucket.QueryID, bucket.Calls, bucket.TotalExecMS, bucket.Rows, bucket.SharedBlocksHit,
+		bucket.SharedBlocksRead, bucket.TempBlocksRead, bucket.TempBlocksWritten,
+		boolInteger(bucket.Reset), formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("upserting postgres statement: %w", err)
+	}
+	return nil
+}
+
+// UpsertRedis replaces one point-in-time Redis metric bucket.
+func (s *PerformanceStore) UpsertRedis(ctx context.Context, bucket model.RedisMetricBucket) error {
+	if err := validateNativeMetric(bucket.BucketStart, bucket.ServiceID, bucket.Environment, bucket.Metric, bucket.CommandFamily); err != nil {
+		return fmt.Errorf("upserting redis metric: %w", err)
+	}
+	if !validRedisFamily(bucket.CommandFamily) {
+		return errors.New("upserting redis metric: unsupported command family")
+	}
+	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO redis_metric_buckets
+		(bucket_start, service_id, environment, metric, command_family, value, delta, reset, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(bucket_start, service_id, environment, metric, command_family) DO UPDATE SET
+		value=excluded.value, delta=excluded.delta, reset=excluded.reset, updated_at=excluded.updated_at`,
+		formatFixedTime(bucket.BucketStart.UTC().Truncate(time.Minute)), bucket.ServiceID,
+		bucket.Environment, bucket.Metric, bucket.CommandFamily, bucket.Value, bucket.Delta,
+		boolInteger(bucket.Reset), formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("upserting redis metric: %w", err)
+	}
+	return nil
+}
+
+// UpsertLogVolume replaces one bounded per-minute severity count.
+func (s *PerformanceStore) UpsertLogVolume(ctx context.Context, bucket model.LogVolumeBucket) error {
+	if err := validateNativeMetric(bucket.BucketStart, bucket.ServiceID, bucket.Environment, bucket.Severity, ""); err != nil {
+		return fmt.Errorf("upserting log volume: %w", err)
+	}
+	switch bucket.Severity {
+	case "debug", "info", "warn", "error", "fatal", "unknown":
+	default:
+		return errors.New("upserting log volume: unsupported severity")
+	}
+	if bucket.LineCount < 0 || bucket.DroppedCount < 0 {
+		return errors.New("upserting log volume: invalid counts")
+	}
+	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO log_volume_buckets
+		(bucket_start, service_id, environment, severity, line_count, dropped_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(bucket_start, service_id, environment, severity) DO UPDATE SET
+		line_count=excluded.line_count, dropped_count=excluded.dropped_count, updated_at=excluded.updated_at`,
+		formatFixedTime(bucket.BucketStart.UTC().Truncate(time.Minute)), bucket.ServiceID,
+		bucket.Environment, bucket.Severity, bucket.LineCount, bucket.DroppedCount, formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("upserting log volume: %w", err)
+	}
+	return nil
+}
+
+// ListPostgres returns PostgreSQL metric buckets ordered chronologically.
+func (s *PerformanceStore) ListPostgres(ctx context.Context, query model.PerformanceRange) ([]model.PostgresMetricBucket, error) {
+	rows, err := s.nativeRows(ctx, `SELECT bucket_start, service_id, environment, metric, value, delta, reset
+		FROM postgres_metric_buckets`, query, "metric")
+	if err != nil {
+		return nil, fmt.Errorf("listing postgres metrics: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []model.PostgresMetricBucket{}
+	for rows.Next() {
+		var bucket model.PostgresMetricBucket
+		var raw string
+		var reset int
+		if err := rows.Scan(&raw, &bucket.ServiceID, &bucket.Environment, &bucket.Metric, &bucket.Value, &bucket.Delta, &reset); err != nil {
+			return nil, fmt.Errorf("scanning postgres metric: %w", err)
+		}
+		bucket.BucketStart, err = parseTime(raw, "bucket_start")
+		if err != nil {
+			return nil, err
+		}
+		bucket.Reset = reset != 0
+		result = append(result, bucket)
+	}
+	return result, rows.Err()
+}
+
+// ListPostgresStatements returns bounded numeric statement buckets.
+func (s *PerformanceStore) ListPostgresStatements(ctx context.Context, query model.PerformanceRange) ([]model.PostgresStatementBucket, error) {
+	statement := `SELECT bucket_start, service_id, environment, query_id, calls, total_exec_ms,
+		rows_count, shared_blocks_hit, shared_blocks_read, temp_blocks_read, temp_blocks_written, reset
+		FROM postgres_statement_buckets WHERE bucket_start >= ? AND bucket_start < ?`
+	args := []any{formatFixedTime(query.Start.UTC()), formatFixedTime(query.End.UTC())}
+	if query.ServiceID != "" {
+		statement += " AND service_id = ?"
+		args = append(args, query.ServiceID)
+	}
+	statement += " ORDER BY bucket_start, service_id, query_id LIMIT ?"
+	args = append(args, nativeLimit(query.Limit))
+	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing postgres statements: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []model.PostgresStatementBucket{}
+	for rows.Next() {
+		var bucket model.PostgresStatementBucket
+		var raw string
+		var reset int
+		if err := rows.Scan(&raw, &bucket.ServiceID, &bucket.Environment, &bucket.QueryID, &bucket.Calls,
+			&bucket.TotalExecMS, &bucket.Rows, &bucket.SharedBlocksHit, &bucket.SharedBlocksRead,
+			&bucket.TempBlocksRead, &bucket.TempBlocksWritten, &reset); err != nil {
+			return nil, fmt.Errorf("scanning postgres statement: %w", err)
+		}
+		bucket.BucketStart, err = parseTime(raw, "bucket_start")
+		if err != nil {
+			return nil, err
+		}
+		bucket.Reset = reset != 0
+		result = append(result, bucket)
+	}
+	return result, rows.Err()
+}
+
+// ListRedis returns Redis metric buckets ordered chronologically.
+func (s *PerformanceStore) ListRedis(ctx context.Context, query model.PerformanceRange) ([]model.RedisMetricBucket, error) {
+	rows, err := s.nativeRows(ctx, `SELECT bucket_start, service_id, environment, metric,
+		command_family, value, delta, reset FROM redis_metric_buckets`, query, "metric, command_family")
+	if err != nil {
+		return nil, fmt.Errorf("listing redis metrics: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	result := []model.RedisMetricBucket{}
+	for rows.Next() {
+		var bucket model.RedisMetricBucket
+		var raw string
+		var reset int
+		if err := rows.Scan(&raw, &bucket.ServiceID, &bucket.Environment, &bucket.Metric,
+			&bucket.CommandFamily, &bucket.Value, &bucket.Delta, &reset); err != nil {
+			return nil, fmt.Errorf("scanning redis metric: %w", err)
+		}
+		bucket.BucketStart, err = parseTime(raw, "bucket_start")
+		if err != nil {
+			return nil, err
+		}
+		bucket.Reset = reset != 0
+		result = append(result, bucket)
+	}
+	return result, rows.Err()
+}
+
+func (s *PerformanceStore) nativeRows(ctx context.Context, statement string, query model.PerformanceRange, order string) (*sql.Rows, error) {
+	statement += " WHERE bucket_start >= ? AND bucket_start < ?"
+	args := []any{formatFixedTime(query.Start.UTC()), formatFixedTime(query.End.UTC())}
+	if query.ServiceID != "" {
+		statement += " AND service_id = ?"
+		args = append(args, query.ServiceID)
+	}
+	statement += " ORDER BY bucket_start, service_id, " + order + " LIMIT ?"
+	args = append(args, nativeLimit(query.Limit))
+	return s.db.sql.QueryContext(ctx, statement, args...)
+}
+
+func nativeLimit(limit int) int {
+	if limit <= 0 || limit > 10000 {
+		return 1000
+	}
+	return limit
+}
+
+func validateNativeMetric(bucket time.Time, serviceID, environment, metric, dimension string) error {
+	if bucket.IsZero() || serviceID == "" || environment == "" || metric == "" {
+		return errors.New("required bounded fields are missing")
+	}
+	if len(serviceID) > 128 || len(environment) > 64 || len(metric) > 128 || len(dimension) > 128 {
+		return errors.New("bounded field is too long")
+	}
+	return nil
+}
+
+func validRedisFamily(family string) bool {
+	switch family {
+	case "", "read", "write", "script", "pubsub", "transaction", "other":
+		return true
+	default:
+		return false
+	}
+}
+
+func boolInteger(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func validateHTTPBucket(bucket model.HTTPMetricBucket) error {

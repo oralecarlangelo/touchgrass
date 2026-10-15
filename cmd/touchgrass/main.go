@@ -18,9 +18,11 @@ import (
 
 	docssite "github.com/oralecarlangelo/touchgrass/docs-site"
 	"github.com/oralecarlangelo/touchgrass/internal/config"
+	"github.com/oralecarlangelo/touchgrass/internal/dbstats"
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/http"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
+	"github.com/oralecarlangelo/touchgrass/internal/nginxlog"
 	"github.com/oralecarlangelo/touchgrass/internal/probe"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -81,6 +83,7 @@ type backgroundLoops struct {
 	backupInterval      time.Duration
 	maintenance         *service.Maintenance
 	maintenanceInterval time.Duration
+	performance         *service.PerformanceCollector
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -91,7 +94,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(5)
+	group.Add(6)
 
 	go func() {
 		defer group.Done()
@@ -121,6 +124,12 @@ func startBackground(
 		defer group.Done()
 
 		loops.maintenance.Run(ctx)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.performance.Run(ctx)
 	}()
 
 	logger.Info("starting background loops",
@@ -256,6 +265,10 @@ func runServe(args []string) error {
 	sys := newServeSystem(dockerClient, cfg.DB, logger)
 	databases := newDatabase(db, cfg, logger)
 	maintenance := newMaintenance(db, cfg, logger)
+	performance, err := newPerformanceCollector(ctx, wiring)
+	if err != nil {
+		return err
+	}
 	reconcileDatabases(databases, logger)
 
 	onboarding := newOnboarding(wiring, prober, audit)
@@ -295,6 +308,7 @@ func runServe(args []string) error {
 		backupInterval:      cfg.BackupInterval,
 		maintenance:         maintenance,
 		maintenanceInterval: cfg.MaintenanceInterval,
+		performance:         performance,
 	}, &group, logger)
 
 	server, err := newServeServer(cfg, logger, serveServices{
@@ -448,6 +462,40 @@ func newMaintenance(db *store.DB, cfg config.Config, logger *slog.Logger) *servi
 		},
 		Logger: logger,
 	})
+}
+
+// newPerformanceCollector validates service ownership and wires enabled
+// privacy-safe native sources. Empty source configuration yields a no-op loop.
+func newPerformanceCollector(ctx context.Context, wiring serveWiring) (*service.PerformanceCollector, error) {
+	performance := store.NewPerformanceStore(wiring.db)
+	config := service.PerformanceCollectorConfig{
+		ServiceID: wiring.cfg.PerformanceServiceID, Environment: wiring.cfg.Env,
+		Interval: wiring.cfg.PerformanceInterval, Writer: performance, Logger: wiring.logger,
+	}
+	if wiring.cfg.PerformanceServiceID == "" {
+		return service.NewPerformanceCollector(config), nil
+	}
+	if _, err := wiring.services.Get(ctx, wiring.cfg.PerformanceServiceID); err != nil {
+		return nil, fmt.Errorf("validating performance service %q: %w", wiring.cfg.PerformanceServiceID, err)
+	}
+	runner := dbstats.NewCommandRunner()
+	if wiring.cfg.PostgresContainer != "" {
+		config.Postgres = dbstats.NewPostgres(dbstats.PostgresConfig{
+			Runner: runner, Container: wiring.cfg.PostgresContainer,
+			User: wiring.cfg.PostgresUser, Database: wiring.cfg.PostgresDB,
+		})
+	}
+	if wiring.cfg.RedisContainer != "" {
+		config.Redis = dbstats.NewRedis(dbstats.RedisConfig{Runner: runner, Container: wiring.cfg.RedisContainer})
+	}
+	if wiring.cfg.NginxTimingLog != "" {
+		cursor, err := performance.Get(ctx, "nginx")
+		if err != nil && !errors.Is(err, store.ErrCollectorCursorNotFound) {
+			return nil, fmt.Errorf("loading nginx collector cursor: %w", err)
+		}
+		config.HTTP = nginxlog.NewTailer(wiring.cfg.NginxTimingLog, nginxlog.Parser{}, "nginx", cursor)
+	}
+	return service.NewPerformanceCollector(config), nil
 }
 
 // reconcileDatabases fails jobs orphaned by a restart. Best effort: a

@@ -85,6 +85,98 @@ type CollectorStatus struct {
 	Stale          bool      `json:"stale"`
 }
 
+// NumericSample is one bounded database or cache metric. Cumulative marks
+// monotonic counters whose deltas are meaningful across valid baselines.
+type NumericSample struct {
+	Value      float64 `json:"value"`
+	Cumulative bool    `json:"cumulative"`
+}
+
+// PostgresStatementSnapshot contains only pg_stat_statements numeric fields.
+// Raw query text is intentionally absent from this model.
+type PostgresStatementSnapshot struct {
+	Calls             float64 `json:"calls"`
+	TotalExecMS       float64 `json:"total_exec_ms"`
+	Rows              float64 `json:"rows"`
+	SharedBlocksHit   float64 `json:"shared_blocks_hit"`
+	SharedBlocksRead  float64 `json:"shared_blocks_read"`
+	TempBlocksRead    float64 `json:"temp_blocks_read"`
+	TempBlocksWritten float64 `json:"temp_blocks_written"`
+}
+
+// PostgresSnapshot is a privacy-safe point-in-time aggregate.
+type PostgresSnapshot struct {
+	SampledAt  time.Time                            `json:"sampled_at"`
+	Metrics    map[string]NumericSample             `json:"metrics"`
+	Statements map[string]PostgresStatementSnapshot `json:"statements"`
+	Errors     []string                             `json:"errors,omitempty"`
+}
+
+// RedisCommandSnapshot contains bounded command-family totals.
+type RedisCommandSnapshot struct {
+	Calls        float64 `json:"calls"`
+	Microseconds float64 `json:"microseconds"`
+}
+
+// RedisSnapshot is a privacy-safe point-in-time aggregate. It has no key,
+// value, client-address, or slow-command argument fields.
+type RedisSnapshot struct {
+	SampledAt time.Time                       `json:"sampled_at"`
+	Metrics   map[string]NumericSample        `json:"metrics"`
+	Commands  map[string]RedisCommandSnapshot `json:"commands"`
+	Errors    []string                        `json:"errors,omitempty"`
+}
+
+// PostgresMetricBucket is one fixed-minute native metric aggregate.
+type PostgresMetricBucket struct {
+	BucketStart time.Time `json:"bucket_start"`
+	ServiceID   string    `json:"service_id"`
+	Environment string    `json:"environment"`
+	Metric      string    `json:"metric"`
+	Value       float64   `json:"value"`
+	Delta       float64   `json:"delta"`
+	Reset       bool      `json:"reset"`
+}
+
+// PostgresStatementBucket is one fixed-minute numeric statement delta.
+type PostgresStatementBucket struct {
+	BucketStart       time.Time `json:"bucket_start"`
+	ServiceID         string    `json:"service_id"`
+	Environment       string    `json:"environment"`
+	QueryID           string    `json:"query_id"`
+	Calls             float64   `json:"calls"`
+	TotalExecMS       float64   `json:"total_exec_ms"`
+	Rows              float64   `json:"rows"`
+	SharedBlocksHit   float64   `json:"shared_blocks_hit"`
+	SharedBlocksRead  float64   `json:"shared_blocks_read"`
+	TempBlocksRead    float64   `json:"temp_blocks_read"`
+	TempBlocksWritten float64   `json:"temp_blocks_written"`
+	Reset             bool      `json:"reset"`
+}
+
+// RedisMetricBucket is one fixed-minute cache or command-family aggregate.
+type RedisMetricBucket struct {
+	BucketStart   time.Time `json:"bucket_start"`
+	ServiceID     string    `json:"service_id"`
+	Environment   string    `json:"environment"`
+	Metric        string    `json:"metric"`
+	CommandFamily string    `json:"command_family,omitempty"`
+	Value         float64   `json:"value"`
+	Delta         float64   `json:"delta"`
+	Reset         bool      `json:"reset"`
+}
+
+// LogVolumeBucket is a bounded per-minute count. Raw log content is not part
+// of this aggregate model.
+type LogVolumeBucket struct {
+	BucketStart  time.Time `json:"bucket_start"`
+	ServiceID    string    `json:"service_id"`
+	Environment  string    `json:"environment"`
+	Severity     string    `json:"severity"`
+	LineCount    int64     `json:"line_count"`
+	DroppedCount int64     `json:"dropped_count"`
+}
+
 // PerformanceRange bounds aggregate reads.
 type PerformanceRange struct {
 	ServiceID string

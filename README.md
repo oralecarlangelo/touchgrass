@@ -83,6 +83,7 @@ Environment only (no config file):
 | `TOUCHGRASS_MAINTENANCE_INTERVAL`    | `5m`               | Bounded SQLite retention/checkpoint cadence            |
 | `TOUCHGRASS_SQLITE_MAX_BYTES`        | `1073741824`       | SQLite storage budget                                  |
 | `TOUCHGRASS_SQLITE_BACKUP_DIR`       | `./backups/sqlite` | Online SQLite snapshot directory                       |
+| `TOUCHGRASS_SQLITE_BACKUP_KEEP`      | `14`                | Newest online SQLite snapshots retained                |
 | `TOUCHGRASS_RETENTION_PERFORMANCE`   | `168h`             | Minute performance aggregate max age                   |
 | `TOUCHGRASS_RETENTION_PERFORMANCE_HOURLY` | `720h`        | Hourly performance aggregate max age                   |
 | `TOUCHGRASS_PERFORMANCE_SERVICE_ID`  | empty              | Existing service that owns enabled native-source data  |

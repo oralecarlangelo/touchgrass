@@ -94,9 +94,6 @@ func TestPerformanceStoreHourlyRollupAndEmptyRead(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := store.RollupHTTP(ctx, first.BucketStart.Truncate(time.Hour), first.BucketStart.Truncate(time.Hour).Add(time.Hour)); err != nil {
-		t.Fatal(err)
-	}
 
 	got, err := store.ListHTTPHourly(ctx, model.PerformanceRange{Start: first.BucketStart.Truncate(time.Hour), End: first.BucketStart.Truncate(time.Hour).Add(time.Hour), Limit: 10})
 	if err != nil {

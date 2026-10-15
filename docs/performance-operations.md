@@ -15,7 +15,8 @@ another.
   `INFO`, bounded command-family totals, and no keys or values.
 - Minute and hourly aggregates are retention-bound. SQLite maintenance uses
   bounded delete batches, passive WAL checkpoints, a byte budget, and online
-  snapshots.
+  snapshots. Automatic snapshots keep the newest
+  `TOUCHGRASS_SQLITE_BACKUP_KEEP` files (default 14).
 - Historical data remains readable when one collector is stale. A missing
   source never becomes a numeric zero.
 
@@ -147,6 +148,11 @@ For recovery:
 Passive checkpoints can report busy readers; the next maintenance pass retries.
 Investigate repeated busy state or sustained WAL growth before forcing a
 checkpoint.
+
+In the Compose deployment, snapshots live under `/data/backups/sqlite` on the
+persistent `touchgrass-data` volume. Retention removes only regular files that
+match Touch Grass's timestamped `touchgrass-*.db` snapshot name; unrelated
+files are left untouched.
 
 ## Investigation workflow
 

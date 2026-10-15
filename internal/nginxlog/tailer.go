@@ -122,8 +122,13 @@ func (t *Tailer) Read(ctx context.Context) ([]model.HTTPObservation, model.Colle
 	now := time.Now().UTC()
 	cursor.LastSuccessAt = now
 	cursor.UpdatedAt = now
-	t.cursor = cursor
 	return observations, cursor, nil
+}
+
+// Acknowledge advances the in-memory cursor only after the caller has durably
+// persisted both the aggregate batch and the returned cursor.
+func (t *Tailer) Acknowledge(cursor model.CollectorCursor) {
+	t.cursor = cursor
 }
 
 func readTimingLine(ctx context.Context, reader *bufio.Reader) ([]byte, int64, bool, error) {

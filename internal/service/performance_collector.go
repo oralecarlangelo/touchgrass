@@ -21,6 +21,10 @@ type HTTPSource interface {
 	Read(context.Context) ([]model.HTTPObservation, model.CollectorCursor, error)
 }
 
+type httpSourceAcknowledger interface {
+	Acknowledge(model.CollectorCursor)
+}
+
 // PostgresSource reads one bounded PostgreSQL snapshot.
 type PostgresSource interface {
 	Collect(context.Context) (model.PostgresSnapshot, error)
@@ -155,7 +159,6 @@ func (c *PerformanceCollector) collectPostgres(ctx context.Context, minute time.
 		c.recordFailure(ctx, "postgres", "postgres_unavailable")
 		return
 	}
-	nextMetrics := cloneBaseline(c.postgresBaseline)
 	for metric, sample := range snapshot.Metrics {
 		delta, reset := metricDelta(c.postgresBaseline, metric, sample)
 		bucket := model.PostgresMetricBucket{BucketStart: minute, ServiceID: c.serviceID,
@@ -165,22 +168,20 @@ func (c *PerformanceCollector) collectPostgres(ctx context.Context, minute time.
 			return
 		}
 		if sample.Cumulative {
-			nextMetrics[metric] = sample.Value
+			c.postgresBaseline[metric] = sample.Value
 		}
 	}
-	nextStatements := cloneStatements(c.statementBaseline)
 	for queryID, statement := range snapshot.Statements {
 		bucket := c.statementBucket(minute, queryID, statement)
 		if err := c.writer.UpsertPostgresStatement(ctx, bucket); err != nil {
 			c.recordFailure(ctx, "postgres", "postgres_write_failed")
 			return
 		}
-		nextStatements[queryID] = statement
+
+		c.statementBaseline[queryID] = statement
 	}
-	if c.recordSuccess(ctx, "postgres", snapshot.SampledAt, snapshot.Errors, 0) {
-		c.postgresBaseline = nextMetrics
-		c.statementBaseline = nextStatements
-	}
+
+	c.recordSuccess(ctx, "postgres", snapshot.SampledAt, snapshot.Errors, 0)
 }
 
 func (c *PerformanceCollector) collectRedis(ctx context.Context, minute time.Time) {
@@ -189,7 +190,6 @@ func (c *PerformanceCollector) collectRedis(ctx context.Context, minute time.Tim
 		c.recordFailure(ctx, "redis", "redis_unavailable")
 		return
 	}
-	nextMetrics := cloneBaseline(c.redisBaseline)
 	for metric, sample := range snapshot.Metrics {
 		delta, reset := metricDelta(c.redisBaseline, metric, sample)
 		bucket := model.RedisMetricBucket{BucketStart: minute, ServiceID: c.serviceID,
@@ -199,7 +199,7 @@ func (c *PerformanceCollector) collectRedis(ctx context.Context, minute time.Tim
 			return
 		}
 		if sample.Cumulative {
-			nextMetrics[metric] = sample.Value
+			c.redisBaseline[metric] = sample.Value
 		}
 	}
 	for family, command := range snapshot.Commands {
@@ -212,12 +212,12 @@ func (c *PerformanceCollector) collectRedis(ctx context.Context, minute time.Tim
 				c.recordFailure(ctx, "redis", "redis_write_failed")
 				return
 			}
-			nextMetrics[key] = value
+
+			c.redisBaseline[key] = value
 		}
 	}
-	if c.recordSuccess(ctx, "redis", snapshot.SampledAt, snapshot.Errors, 0) {
-		c.redisBaseline = nextMetrics
-	}
+
+	c.recordSuccess(ctx, "redis", snapshot.SampledAt, snapshot.Errors, 0)
 }
 
 func metricDelta(baseline map[string]float64, key string, sample model.NumericSample) (float64, bool) {
@@ -268,9 +268,25 @@ func (c *PerformanceCollector) collectHTTP(ctx context.Context, minute time.Time
 			return
 		}
 	}
-	if err := c.writer.Upsert(ctx, boundedCursor(cursor)); err != nil {
+
+	cursor = c.mergePersistedDrops(ctx, boundedCursor(cursor))
+	if err := c.writer.Upsert(ctx, cursor); err != nil {
 		c.logger.Warn("persisting nginx collector cursor", "error_category", "cursor_write_failed")
+		return
 	}
+
+	if acknowledger, ok := c.http.(httpSourceAcknowledger); ok {
+		acknowledger.Acknowledge(cursor)
+	}
+}
+
+func (c *PerformanceCollector) mergePersistedDrops(ctx context.Context, cursor model.CollectorCursor) model.CollectorCursor {
+	persisted, err := c.writer.Get(ctx, cursor.Source)
+	if err == nil && persisted.DroppedRecords > cursor.DroppedRecords {
+		cursor.DroppedRecords = persisted.DroppedRecords
+	}
+
+	return cursor
 }
 
 func aggregateHTTP(observations []model.HTTPObservation, minute time.Time, serviceID, environment string, cursor model.CollectorCursor) []model.HTTPMetricBucket {
@@ -334,7 +350,7 @@ func (c *PerformanceCollector) recordFailure(ctx context.Context, source, catego
 	}
 }
 
-func (c *PerformanceCollector) recordSuccess(ctx context.Context, source string, recorded time.Time, partial []string, dropped int64) bool {
+func (c *PerformanceCollector) recordSuccess(ctx context.Context, source string, recorded time.Time, partial []string, dropped int64) {
 	cursor, _ := c.writer.Get(ctx, source)
 	cursor.Source = source
 	if recorded.IsZero() {
@@ -347,9 +363,7 @@ func (c *PerformanceCollector) recordSuccess(ctx context.Context, source string,
 	cursor.UpdatedAt = c.clock.Now().UTC()
 	if err := c.writer.Upsert(ctx, cursor); err != nil {
 		c.logger.Warn("persisting collector success", "source", source, "error_category", "cursor_write_failed")
-		return false
 	}
-	return true
 }
 
 func boundedDrops(current, added int64) int64 {
@@ -367,20 +381,4 @@ func boundedCursor(cursor model.CollectorCursor) model.CollectorCursor {
 		cursor.DroppedRecords = maximumDroppedRecords
 	}
 	return cursor
-}
-
-func cloneBaseline(source map[string]float64) map[string]float64 {
-	clone := make(map[string]float64, len(source))
-	for key, value := range source {
-		clone[key] = value
-	}
-	return clone
-}
-
-func cloneStatements(source map[string]model.PostgresStatementSnapshot) map[string]model.PostgresStatementSnapshot {
-	clone := make(map[string]model.PostgresStatementSnapshot, len(source))
-	for key, value := range source {
-		clone[key] = value
-	}
-	return clone
 }

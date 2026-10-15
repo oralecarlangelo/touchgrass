@@ -8,6 +8,8 @@ services:
       # published port stays localhost-only on the host.
       TOUCHGRASS_ADDR: ":8080"
       TOUCHGRASS_DB: "/data/touchgrass.db"
+      TOUCHGRASS_SQLITE_BACKUP_DIR: "/data/backups/sqlite"
+      TOUCHGRASS_SQLITE_BACKUP_KEEP: "${TOUCHGRASS_SQLITE_BACKUP_KEEP:-14}"
       TOUCHGRASS_HOST_ROOT: "/hostfs"
       # Native performance sources are opt-in. Set the service id to an
       # existing Touch Grass service before enabling any source.

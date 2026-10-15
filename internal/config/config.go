@@ -36,6 +36,7 @@ const (
 	defaultMaintenanceInterval       = "5m"
 	defaultSQLiteMaxBytes            = "1073741824"
 	defaultSQLiteBackupDir           = "./backups/sqlite"
+	defaultSQLiteBackupKeep          = "14"
 	defaultRetentionPerformance      = "168h"
 	defaultRetentionPerfHourly       = "720h"
 	defaultPerformanceInterval       = "30s"
@@ -69,6 +70,7 @@ const (
 	maintenanceIntervalEnvVar        = "TOUCHGRASS_MAINTENANCE_INTERVAL"
 	sqliteMaxBytesEnvVar             = "TOUCHGRASS_SQLITE_MAX_BYTES"
 	sqliteBackupDirEnvVar            = "TOUCHGRASS_SQLITE_BACKUP_DIR"
+	sqliteBackupKeepEnvVar           = "TOUCHGRASS_SQLITE_BACKUP_KEEP"
 	retentionPerformanceEnvVar       = "TOUCHGRASS_RETENTION_PERFORMANCE"
 	retentionPerformanceHourlyEnvVar = "TOUCHGRASS_RETENTION_PERFORMANCE_HOURLY"
 	nginxTimingLogEnvVar             = "TOUCHGRASS_NGINX_TIMING_LOG"
@@ -137,6 +139,8 @@ type Config struct {
 	SQLiteMaxBytes int64
 	// SQLiteBackupDir contains online SQLite snapshots.
 	SQLiteBackupDir string
+	// SQLiteBackupKeep bounds the newest online SQLite snapshots retained.
+	SQLiteBackupKeep int
 	// RetentionPerformance bounds minute and hourly aggregate history.
 	RetentionPerformance       time.Duration
 	RetentionPerformanceHourly time.Duration
@@ -206,6 +210,7 @@ type storageConfig struct {
 	maintenanceInterval        time.Duration
 	maxBytes                   int64
 	backupDir                  string
+	backupKeep                 int
 	retentionPerformance       time.Duration
 	retentionPerformanceHourly time.Duration
 }
@@ -283,6 +288,7 @@ func load(getenv func(string) string) (Config, error) {
 		MaintenanceInterval:        storage.maintenanceInterval,
 		SQLiteMaxBytes:             storage.maxBytes,
 		SQLiteBackupDir:            storage.backupDir,
+		SQLiteBackupKeep:           storage.backupKeep,
 		RetentionPerformance:       storage.retentionPerformance,
 		RetentionPerformanceHourly: storage.retentionPerformanceHourly,
 		NginxTimingLog:             performance.nginxTimingLog,
@@ -336,8 +342,13 @@ func loadStorage(getenv func(string) string) (storageConfig, error) {
 		backupDir = defaultSQLiteBackupDir
 	}
 
+	backupKeep, err := parsePositiveInt(getenv, sqliteBackupKeepEnvVar, defaultSQLiteBackupKeep)
+	if err != nil {
+		return storageConfig{}, err
+	}
+
 	return storageConfig{
-		maintenanceInterval: interval, maxBytes: maxBytes, backupDir: backupDir,
+		maintenanceInterval: interval, maxBytes: maxBytes, backupDir: backupDir, backupKeep: backupKeep,
 		retentionPerformance: retentionPerformance, retentionPerformanceHourly: retentionHourly,
 	}, nil
 }

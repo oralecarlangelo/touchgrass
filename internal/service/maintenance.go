@@ -7,13 +7,18 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
 
-const defaultSQLiteBackupInterval = 24 * time.Hour
+const (
+	defaultSQLiteBackupInterval = 24 * time.Hour
+	defaultSQLiteBackupKeep     = 14
+)
 
 // MaintenanceRunner is the bounded store surface used by the scheduler.
 type MaintenanceRunner interface {
@@ -46,6 +51,7 @@ type MaintenanceConfig struct {
 	Interval       time.Duration
 	BackupInterval time.Duration
 	BackupDir      string
+	BackupKeep     int
 	Clock          MaintenanceClock
 	Logger         *slog.Logger
 }
@@ -58,6 +64,7 @@ type Maintenance struct {
 	interval       time.Duration
 	backupInterval time.Duration
 	backupDir      string
+	backupKeep     int
 	clock          MaintenanceClock
 	logger         *slog.Logger
 
@@ -85,10 +92,15 @@ func NewMaintenance(cfg MaintenanceConfig) *Maintenance {
 		logger = slog.Default()
 	}
 
+	backupKeep := cfg.BackupKeep
+	if backupKeep <= 0 {
+		backupKeep = defaultSQLiteBackupKeep
+	}
+
 	return &Maintenance{
 		store: cfg.Store, backupper: cfg.Backupper, policy: cfg.Policy,
 		interval: interval, backupInterval: backupInterval,
-		backupDir: cfg.BackupDir, clock: clock, logger: logger,
+		backupDir: cfg.BackupDir, backupKeep: backupKeep, clock: clock, logger: logger,
 	}
 }
 
@@ -143,6 +155,16 @@ func (m *Maintenance) runOnce(ctx context.Context) {
 
 			return
 		}
+
+		if err := m.pruneBackups(); err != nil {
+			m.mu.Lock()
+			m.status.LastError = err.Error()
+			m.mu.Unlock()
+			m.logger.Warn("sqlite backup retention failed", "error", err)
+
+			return
+		}
+
 		m.mu.Lock()
 		m.lastBackupAt = now
 		m.mu.Unlock()
@@ -151,6 +173,35 @@ func (m *Maintenance) runOnce(ctx context.Context) {
 	if result.OverBudget {
 		m.logger.Warn("sqlite storage budget exceeded", "bytes", result.DatabaseBytes, "max_bytes", result.MaxBytes)
 	}
+}
+
+func (m *Maintenance) pruneBackups() error {
+	entries, err := os.ReadDir(m.backupDir)
+	if err != nil {
+		return fmt.Errorf("reading sqlite backup directory: %w", err)
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+
+		stamp := strings.TrimSuffix(strings.TrimPrefix(name, "touchgrass-"), ".db")
+		if entry.Type().IsRegular() && strings.HasPrefix(name, "touchgrass-") && strings.HasSuffix(name, ".db") {
+			if _, err := time.Parse("20060102T150405Z", stamp); err == nil {
+				names = append(names, name)
+			}
+		}
+	}
+
+	sort.Strings(names)
+
+	for _, name := range names[:max(0, len(names)-m.backupKeep)] {
+		if err := os.Remove(filepath.Join(m.backupDir, name)); err != nil {
+			return fmt.Errorf("removing expired sqlite backup %q: %w", name, err)
+		}
+	}
+
+	return nil
 }
 
 // Backup validates destination confinement before writing a snapshot.

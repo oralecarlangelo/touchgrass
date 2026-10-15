@@ -108,7 +108,9 @@ TOUCHGRASS_REDIS_CONTAINER=ticketnation-redis-1
 The operational database is separate from the Ticketnation PostgreSQL backup
 flow above. Online snapshots are written under
 `TOUCHGRASS_SQLITE_BACKUP_DIR`; bounded maintenance runs passive WAL
-checkpoints and enforces `TOUCHGRASS_SQLITE_MAX_BYTES`.
+checkpoints and enforces `TOUCHGRASS_SQLITE_MAX_BYTES`. Automatic snapshots
+retain the newest `TOUCHGRASS_SQLITE_BACKUP_KEEP` files (default 14); the
+Compose deployment writes them inside the persistent `/data` volume.
 
 On corruption or disk failure, stop Touch Grass, preserve the DB plus `-wal`
 and `-shm` files together, copy the newest snapshot to a new path, and require

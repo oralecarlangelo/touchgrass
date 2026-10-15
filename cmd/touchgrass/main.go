@@ -475,7 +475,7 @@ func newDatabase(db *store.DB, cfg config.Config, logger *slog.Logger) *service.
 func newMaintenance(db *store.DB, cfg config.Config, logger *slog.Logger) *service.Maintenance {
 	return service.NewMaintenance(service.MaintenanceConfig{
 		Store: store.NewMaintenanceStore(db), Backupper: db,
-		Interval: cfg.MaintenanceInterval, BackupDir: cfg.SQLiteBackupDir,
+		Interval: cfg.MaintenanceInterval, BackupDir: cfg.SQLiteBackupDir, BackupKeep: cfg.SQLiteBackupKeep,
 		Policy: model.MaintenancePolicy{
 			BatchSize: model.MaximumMaintenanceBatch, MaxBytes: cfg.SQLiteMaxBytes,
 			RetentionMetrics:       cfg.RetentionMetrics,

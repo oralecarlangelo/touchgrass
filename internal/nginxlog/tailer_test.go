@@ -33,6 +33,44 @@ func TestTailerResumesFromPersistedOffset(t *testing.T) {
 	}
 }
 
+func TestTailerRetriesUntilCursorIsAcknowledged(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "timing.jsonl")
+
+	body := validTimingLine + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tailer := NewTailer(path, Parser{}, "nginx", model.CollectorCursor{Source: "nginx"})
+
+	first, cursor, err := tailer.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, _, err := tailer.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("unacknowledged reads = (%d, %d), want the record retried", len(first), len(second))
+	}
+
+	tailer.Acknowledge(cursor)
+
+	afterAck, _, err := tailer.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(afterAck) != 0 {
+		t.Fatalf("read after acknowledgement = %d records, want 0", len(afterAck))
+	}
+}
+
 func TestTailerRotationAndTruncationAreVisible(t *testing.T) {
 	t.Parallel()
 

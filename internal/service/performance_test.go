@@ -67,12 +67,13 @@ func TestPerformanceRangeRollupAndValidation(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
-	performance, _ := testPerformance(t, now)
+	performance, db := testPerformance(t, now)
+	seedHTTPBucket(t, db, now.Add(-25*time.Hour), 12, 1, 250, "hourly")
 
 	summary, err := performance.Summary(context.Background(), model.PerformanceQuery{
 		Start: now.Add(-26 * time.Hour), End: now,
 	})
-	if err != nil || summary.Resolution != model.PerformanceResolutionHour {
+	if err != nil || summary.Resolution != model.PerformanceResolutionHour || summary.RequestCount != 12 {
 		t.Fatalf("26h summary = %+v, %v", summary, err)
 	}
 

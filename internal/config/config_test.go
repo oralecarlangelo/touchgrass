@@ -23,7 +23,7 @@ func defaultTestConfig() Config {
 		BackupDir: defaultBackupDir, BackupKeep: 14, BackupInterval: 24 * time.Hour,
 		RedisContainer: "", ScriptsDir: defaultScriptsDir,
 		MaintenanceInterval: 5 * time.Minute, SQLiteMaxBytes: 1 << 30,
-		SQLiteBackupDir:      defaultSQLiteBackupDir,
+		SQLiteBackupDir: defaultSQLiteBackupDir, SQLiteBackupKeep: 14,
 		RetentionPerformance: 168 * time.Hour, RetentionPerformanceHourly: 720 * time.Hour,
 		NginxTimingLog: "", PerformanceServiceID: "", PerformanceInterval: 30 * time.Second,
 	}
@@ -55,6 +55,7 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.MaintenanceInterval = 2 * time.Minute
 	cfg.SQLiteMaxBytes = 2 << 20
 	cfg.SQLiteBackupDir = "/var/backups/touchgrass"
+	cfg.SQLiteBackupKeep = 30
 	cfg.RetentionPerformance = 24 * time.Hour
 	cfg.RetentionPerformanceHourly = 240 * time.Hour
 	cfg.NginxTimingLog = "/var/log/nginx/ticketnation-performance/requests.jsonl"
@@ -92,6 +93,7 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_SCRIPTS_DIR":     "/opt/touchgrass/scripts",
 				maintenanceIntervalEnvVar:    "2m", sqliteMaxBytesEnvVar: "2097152",
 				sqliteBackupDirEnvVar:      "/var/backups/touchgrass",
+				sqliteBackupKeepEnvVar:     "30",
 				retentionPerformanceEnvVar: "24h", retentionPerformanceHourlyEnvVar: "240h",
 				nginxTimingLogEnvVar:       "/var/log/nginx/ticketnation-performance/requests.jsonl",
 				performanceServiceIDEnvVar: "tn-api", performanceIntervalEnvVar: "15s",
@@ -301,8 +303,9 @@ func TestLoadMaintenance(t *testing.T) {
 		if cfg.MaintenanceInterval != 5*time.Minute || cfg.SQLiteMaxBytes != 1<<30 {
 			t.Fatalf("maintenance defaults = (%v, %d)", cfg.MaintenanceInterval, cfg.SQLiteMaxBytes)
 		}
-		if cfg.SQLiteBackupDir != "./backups/sqlite" {
-			t.Fatalf("SQLiteBackupDir = %q", cfg.SQLiteBackupDir)
+
+		if cfg.SQLiteBackupDir != "./backups/sqlite" || cfg.SQLiteBackupKeep != 14 {
+			t.Fatalf("SQLite backup config = (%q, %d)", cfg.SQLiteBackupDir, cfg.SQLiteBackupKeep)
 		}
 		if cfg.RetentionPerformance != 168*time.Hour || cfg.RetentionPerformanceHourly != 720*time.Hour {
 			t.Fatalf("performance retention = (%v, %v)", cfg.RetentionPerformance, cfg.RetentionPerformanceHourly)
@@ -316,6 +319,7 @@ func TestLoadMaintenance(t *testing.T) {
 			maintenanceIntervalEnvVar:        "2m",
 			sqliteMaxBytesEnvVar:             "2097152",
 			sqliteBackupDirEnvVar:            "/var/backups/touchgrass",
+			sqliteBackupKeepEnvVar:           "30",
 			retentionPerformanceEnvVar:       "24h",
 			retentionPerformanceHourlyEnvVar: "240h",
 		}
@@ -324,7 +328,7 @@ func TestLoadMaintenance(t *testing.T) {
 			t.Fatalf("load() error = %v", err)
 		}
 		if cfg.MaintenanceInterval != 2*time.Minute || cfg.SQLiteMaxBytes != 2<<20 ||
-			cfg.SQLiteBackupDir != "/var/backups/touchgrass" ||
+			cfg.SQLiteBackupDir != "/var/backups/touchgrass" || cfg.SQLiteBackupKeep != 30 ||
 			cfg.RetentionPerformance != 24*time.Hour || cfg.RetentionPerformanceHourly != 240*time.Hour {
 			t.Fatalf("custom maintenance config = %+v", cfg)
 		}
@@ -337,6 +341,7 @@ func TestLoadMaintenance(t *testing.T) {
 	}{
 		{name: "invalid interval", key: maintenanceIntervalEnvVar, value: "often"},
 		{name: "non-positive bytes", key: sqliteMaxBytesEnvVar, value: "0"},
+		{name: "non-positive backup keep", key: sqliteBackupKeepEnvVar, value: "0"},
 		{name: "invalid performance retention", key: retentionPerformanceEnvVar, value: "forever"},
 		{name: "non-positive hourly retention", key: retentionPerformanceHourlyEnvVar, value: "0s"},
 	} {

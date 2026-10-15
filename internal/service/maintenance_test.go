@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -38,6 +39,12 @@ func (s *maintenanceStoreStub) Run(_ context.Context, policy model.MaintenancePo
 type backupStub struct {
 	mu           sync.Mutex
 	destinations []string
+}
+
+type fileBackupStub struct{}
+
+func (fileBackupStub) Backup(_ context.Context, destination string) error {
+	return os.WriteFile(destination, []byte("snapshot"), 0o600)
 }
 
 func (b *backupStub) Backup(_ context.Context, destination string) error {
@@ -93,6 +100,7 @@ func TestMaintenanceStatusStale(t *testing.T) {
 
 	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
 	clock := &maintenanceClockStub{now: now, ticks: make(chan time.Time, 1)}
+
 	maintenance := NewMaintenance(MaintenanceConfig{
 		Store: &maintenanceStoreStub{}, Backupper: &backupStub{}, Clock: clock,
 		Interval: time.Minute, BackupDir: t.TempDir(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -163,5 +171,42 @@ func TestMaintenanceContinuesAfterStoreError(t *testing.T) {
 	status := maintenance.Status()
 	if status.LastError != "" || status.LastSuccessAt.IsZero() {
 		t.Fatalf("Status() after recovery = %+v", status)
+	}
+}
+
+func TestMaintenancePrunesOldSQLiteBackups(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	clock := &maintenanceClockStub{now: now, ticks: make(chan time.Time, 1)}
+
+	maintenance := NewMaintenance(MaintenanceConfig{
+		Store: &maintenanceStoreStub{}, Backupper: fileBackupStub{}, Clock: clock,
+		Interval: time.Minute, BackupInterval: time.Hour, BackupDir: dir, BackupKeep: 2,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := os.WriteFile(filepath.Join(dir, "keep-me.txt"), []byte("unrelated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 3 {
+		maintenance.runOnce(context.Background())
+		clock.mu.Lock()
+		clock.now = clock.now.Add(time.Hour)
+		clock.mu.Unlock()
+	}
+
+	matches, err := filepath.Glob(filepath.Join(dir, "touchgrass-*.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(matches) != 2 {
+		t.Fatalf("retained snapshots = %v, want newest 2", matches)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "keep-me.txt")); err != nil {
+		t.Fatalf("unrelated file was changed: %v", err)
 	}
 }

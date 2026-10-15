@@ -99,6 +99,38 @@ func (s *PerformanceStore) UpsertHTTP(ctx context.Context, bucket model.HTTPMetr
 	if err != nil {
 		return fmt.Errorf("upserting HTTP bucket: %w", err)
 	}
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO performance_hourly_rollups (
+		source, bucket_start, service_id, environment, method, route_family, upstream, status_class,
+		request_count, error_count, duration_total_ms, upstream_connect_total_ms,
+		upstream_header_total_ms, upstream_response_total_ms, bytes_sent, request_bytes,
+		h_10, h_25, h_50, h_100, h_250, h_500, h_1000, h_2500, h_5000, h_inf, updated_at
+	) VALUES ('http', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(source, bucket_start, service_id, environment, method, route_family, upstream, status_class)
+	DO UPDATE SET
+		request_count=request_count+excluded.request_count,
+		error_count=error_count+excluded.error_count,
+		duration_total_ms=duration_total_ms+excluded.duration_total_ms,
+		upstream_connect_total_ms=upstream_connect_total_ms+excluded.upstream_connect_total_ms,
+		upstream_header_total_ms=upstream_header_total_ms+excluded.upstream_header_total_ms,
+		upstream_response_total_ms=upstream_response_total_ms+excluded.upstream_response_total_ms,
+		bytes_sent=bytes_sent+excluded.bytes_sent,
+		request_bytes=request_bytes+excluded.request_bytes,
+		h_10=h_10+excluded.h_10, h_25=h_25+excluded.h_25, h_50=h_50+excluded.h_50,
+		h_100=h_100+excluded.h_100, h_250=h_250+excluded.h_250, h_500=h_500+excluded.h_500,
+		h_1000=h_1000+excluded.h_1000, h_2500=h_2500+excluded.h_2500,
+		h_5000=h_5000+excluded.h_5000, h_inf=h_inf+excluded.h_inf,
+		updated_at=excluded.updated_at`,
+		formatFixedTime(bucket.BucketStart.Truncate(time.Hour)), bucket.ServiceID, bucket.Environment,
+		bucket.Method, bucket.RouteFamily, bucket.Upstream, bucket.StatusClass,
+		bucket.RequestCount, bucket.ErrorCount, bucket.DurationTotalMS, bucket.UpstreamConnectTotalMS,
+		bucket.UpstreamHeaderTotalMS, bucket.UpstreamResponseTotalMS, bucket.BytesSent, bucket.RequestBytes,
+		counts[0], counts[1], counts[2], counts[3], counts[4], counts[5], counts[6], counts[7], counts[8], counts[9],
+		formatTime(time.Now().UTC()),
+	)
+	if err != nil {
+		return fmt.Errorf("upserting HTTP hourly rollup: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing HTTP bucket: %w", err)
 	}

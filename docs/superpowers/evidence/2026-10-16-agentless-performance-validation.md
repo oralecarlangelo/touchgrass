@@ -3,7 +3,7 @@
 **Date:** 2026-10-16
 **Branch:** `develop`
 **Reviewed range:** `7f9230a11b50a14fe45375e2f8105f52d5b7379a..HEAD`
-**Decision:** Ready for a source-by-source rollout, subject to the limitations below. This evidence does not authorize or perform a production deployment.
+**Decision:** Released to the shared Ticketnation EC2 host with a source-by-source rollout. Local release validation and production evidence are recorded below.
 
 ## What was validated
 
@@ -113,6 +113,52 @@ Disabling a source stops new samples but does not delete historical aggregates. 
 - The full web development dependency audit still reports eight high advisories under the build-time `shadcn` CLI chain. The CLI is absent from production-only installs, whose audit is clean.
 - Vite still reports the existing approximately 980 KiB main chunk and the parent Expo `tsconfig` warning. Neither was introduced by the performance workspace.
 - The repository-wide strict lint baseline remains 446 findings; the final review changes are clean.
+
+## Production rollout evidence
+
+Production rollout completed on 2026-10-16 PHT against the shared Ticketnation
+EC2 host. Touch Grass moved from `6dc45e1` to `3fafe57`; the matching
+Ticketnation Nginx producer landed through
+[`tn-api#796`](https://github.com/oralecarlangelo/tn-api/pull/796) as merge
+commit `ba10982c`.
+
+Before cutover, the operator created a consistent online SQLite snapshot, a
+binary rollback copy, and a permission-preserving environment backup. The new
+binary was also exercised against a copy of the production database; migrations
+`0016`, `0017`, and `0018` applied successfully and the copied database passed
+`PRAGMA integrity_check` before the live service was stopped.
+
+The Nginx producer passed its Docker-backed runtime/privacy fixture on the EC2
+host. Its default-off host gate records only `api.ticketnation.ph`; a production
+smoke containing query, authorization, and cookie markers produced no marker,
+raw path, header, cookie, or client-address match in the dedicated JSONL file.
+Nginx configuration validation, reload, logrotate validation, and API health
+checks passed.
+
+Collectors were enabled independently. Observed post-rollout state:
+
+| Check | Result |
+| --- | --- |
+| Touch Grass health/version | `ok`, `3fafe57` |
+| Ticketnation API health/release | healthy, `ba10982c` on blue |
+| Nginx collector | current success, 0 dropped records |
+| HTTP aggregates | 24 minute rows, 16 hourly rows during rollout verification |
+| PostgreSQL collector | current success, 56 metric rows |
+| Redis collector | current success, 32 metric rows |
+| Authenticated Performance API | 45 requests, 0 errors, 6 route rows |
+| Touch Grass process | approximately 30 MiB RSS, 0 systemd restarts |
+| Automatic SQLite snapshots | enabled, newest 14 retained |
+
+PostgreSQL statement rows remain empty with the safe partial state
+`postgres_statements_unavailable`. Enabling `pg_stat_statements` requires its
+separate backup-first database maintenance window and was deliberately not
+combined with this rollout.
+
+GitHub CI passed vulnerability scanning and the complete Go 1.26, Go 1.27, and
+stable test matrices. The strict lint job reports the same documented
+446-finding repository baseline; changed-code lint, local vet/race suites,
+builds, audits, Compose validation, privacy fixtures, and the soak passed before
+deployment.
 
 ## Release conclusion
 

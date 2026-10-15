@@ -283,6 +283,10 @@ func TestCollectAggregatesSeverityVolumeByMinute(t *testing.T) {
 	if counts[model.LogLevelInfo] != 1 || counts[model.LogLevelWarn] != 1 || counts[model.LogLevelError] != 1 {
 		t.Fatalf("volume counts = %v", counts)
 	}
+	cursor, err := store.NewCursorStore(db).Get(context.Background(), "log_volume")
+	if err != nil || cursor.LastSuccessAt.IsZero() || !cursor.LastRecordedAt.Equal(base.Add(2*time.Second)) {
+		t.Fatalf("log volume cursor = %+v, %v", cursor, err)
+	}
 	if err := collector.collect(context.Background()); err != nil {
 		t.Fatal(err)
 	}

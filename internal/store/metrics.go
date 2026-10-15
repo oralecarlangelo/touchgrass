@@ -74,6 +74,31 @@ func (s *MetricStore) ListByService(
 	return collectMetrics(rows)
 }
 
+// ListRange returns bounded samples for timeline correlation. An empty service
+// ID selects every managed service.
+func (s *MetricStore) ListRange(ctx context.Context, query model.PerformanceRange) ([]model.Metric, error) {
+	statement := `SELECT id, service_id, container_name, sampled_at, cpu_percent,
+		mem_bytes, mem_limit, disk_bytes, restarts, uptime_secs
+		FROM metrics WHERE sampled_at >= ? AND sampled_at < ?`
+	args := []any{formatTime(query.Start.UTC()), formatTime(query.End.UTC())}
+	if query.ServiceID != "" {
+		statement += " AND service_id = ?"
+		args = append(args, query.ServiceID)
+	}
+	statement += " ORDER BY sampled_at ASC, id ASC LIMIT ?"
+	limit := query.Limit
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
+	}
+	args = append(args, limit)
+	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying metric range: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectMetrics(rows)
+}
+
 // LatestByService returns the newest sample per container for alerting.
 func (s *MetricStore) LatestByService(ctx context.Context, serviceID string) ([]model.Metric, error) {
 	rows, err := s.db.sql.QueryContext(ctx,

@@ -37,6 +37,8 @@ tags:
     description: Host snapshot and image management
   - name: databases
     description: Postgres health, backups, and restores
+  - name: performance
+    description: Bounded agentless performance investigations and collector health
 paths:
   /health:
     get:
@@ -1109,6 +1111,202 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/HistoryPoint' }
         '400': { $ref: '#/components/responses/BadRequest' }
+  /performance/summary:
+    get:
+      operationId: getPerformanceSummary
+      tags: [performance]
+      summary: Compare bounded HTTP performance windows
+      parameters:
+        - $ref: '#/components/parameters/PerformanceServiceId'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+      responses:
+        '200':
+          description: Performance summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PerformanceSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /performance/timeline:
+    get:
+      operationId: getPerformanceTimeline
+      tags: [performance]
+      summary: Align available performance signals and change markers
+      parameters:
+        - $ref: '#/components/parameters/PerformanceServiceId'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+      responses:
+        '200':
+          description: Performance timeline
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PerformanceTimeline' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /performance/routes:
+    get:
+      operationId: getPerformanceRoutes
+      tags: [performance]
+      summary: Rank privacy-safe route families
+      parameters:
+        - $ref: '#/components/parameters/PerformanceServiceId'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+        - $ref: '#/components/parameters/PerformanceRouteFamily'
+        - $ref: '#/components/parameters/PerformanceSort'
+        - $ref: '#/components/parameters/PerformanceLimit'
+      responses:
+        '200':
+          description: Route performance rows
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PerformanceRoutes' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /performance/postgres:
+    get:
+      operationId: getPerformancePostgres
+      tags: [performance]
+      summary: List bounded PostgreSQL metric buckets
+      parameters:
+        - $ref: '#/components/parameters/PerformanceServiceId'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+        - $ref: '#/components/parameters/PerformanceLimit'
+      responses:
+        '200':
+          description: PostgreSQL metrics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativePerformanceMetrics' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /performance/redis:
+    get:
+      operationId: getPerformanceRedis
+      tags: [performance]
+      summary: List bounded Redis metric buckets
+      parameters:
+        - $ref: '#/components/parameters/PerformanceServiceId'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+        - $ref: '#/components/parameters/PerformanceLimit'
+      responses:
+        '200':
+          description: Redis metrics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativePerformanceMetrics' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /collectors/status:
+    get:
+      operationId: getCollectorStatus
+      tags: [performance]
+      summary: Show last success, error, losses, and staleness by source
+      responses:
+        '200':
+          description: Collector status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CollectorStatuses' }
+  /services/{id}/performance/summary:
+    get:
+      operationId: getServicePerformanceSummary
+      tags: [performance]
+      summary: Compare one service's bounded HTTP performance windows
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+      responses:
+        '200':
+          description: Performance summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PerformanceSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/performance/timeline:
+    get:
+      operationId: getServicePerformanceTimeline
+      tags: [performance]
+      summary: Align one service's available performance signals
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+      responses:
+        '200':
+          description: Performance timeline
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PerformanceTimeline' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/performance/routes:
+    get:
+      operationId: getServicePerformanceRoutes
+      tags: [performance]
+      summary: Rank one service's privacy-safe route families
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+        - $ref: '#/components/parameters/PerformanceRouteFamily'
+        - $ref: '#/components/parameters/PerformanceSort'
+        - $ref: '#/components/parameters/PerformanceLimit'
+      responses:
+        '200':
+          description: Route performance rows
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PerformanceRoutes' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/performance/postgres:
+    get:
+      operationId: getServicePerformancePostgres
+      tags: [performance]
+      summary: List one service's bounded PostgreSQL metrics
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+        - $ref: '#/components/parameters/PerformanceLimit'
+      responses:
+        '200':
+          description: PostgreSQL metrics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativePerformanceMetrics' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/performance/redis:
+    get:
+      operationId: getServicePerformanceRedis
+      tags: [performance]
+      summary: List one service's bounded Redis metrics
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/PerformanceStart'
+        - $ref: '#/components/parameters/PerformanceEnd'
+        - $ref: '#/components/parameters/PerformanceResolution'
+        - $ref: '#/components/parameters/PerformanceLimit'
+      responses:
+        '200':
+          description: Redis metrics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativePerformanceMetrics' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /databases:
     get:
       operationId: listDatabases
@@ -1289,6 +1487,36 @@ components:
       in: header
       required: true
       schema: { type: string }
+    PerformanceServiceId:
+      name: service_id
+      in: query
+      schema: { type: string }
+    PerformanceStart:
+      name: start
+      in: query
+      schema: { type: string, format: date-time }
+    PerformanceEnd:
+      name: end
+      in: query
+      schema: { type: string, format: date-time }
+    PerformanceResolution:
+      name: resolution
+      in: query
+      schema: { type: string, enum: [auto, minute, hour], default: auto }
+    PerformanceRouteFamily:
+      name: route_family
+      in: query
+      schema:
+        type: string
+        enum: [health, auth, public_events, account_orders, checkout, callbacks, admin, organization, static, other]
+    PerformanceSort:
+      name: sort
+      in: query
+      schema: { type: string, enum: [p95_ms, request_count, error_rate, route_family], default: p95_ms }
+    PerformanceLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
   responses:
     BadRequest:
       description: Invalid input
@@ -1323,6 +1551,82 @@ components:
       properties:
         status: { type: string, example: ok }
         version: { type: string }
+    PerformanceSnapshot:
+      type: object
+      required: [request_count, error_count, error_rate, average_ms, p50_ms, p95_ms, p99_ms]
+      properties:
+        request_count: { type: integer }
+        error_count: { type: integer }
+        error_rate: { type: number }
+        average_ms: { type: number }
+        p50_ms: { type: number }
+        p95_ms: { type: number }
+        p99_ms: { type: number }
+    PerformanceSummary:
+      allOf:
+        - $ref: '#/components/schemas/PerformanceSnapshot'
+        - type: object
+          required: [start, end, resolution, previous, anomalies]
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+            resolution: { type: string, enum: [minute, hour] }
+            previous: { $ref: '#/components/schemas/PerformanceSnapshot' }
+            anomalies:
+              type: array
+              items:
+                type: object
+                required: [kind, score, summary]
+                properties:
+                  kind: { type: string }
+                  score: { type: number }
+                  summary: { type: string }
+    PerformanceTimeline:
+      type: object
+      required: [start, end, resolution, points, events, deployments]
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        resolution: { type: string, enum: [minute, hour] }
+        points:
+          type: array
+          items: { type: object, additionalProperties: true }
+        events:
+          type: array
+          items: { type: object, additionalProperties: true }
+        deployments:
+          type: array
+          items: { $ref: '#/components/schemas/Deploy' }
+    PerformanceRoutes:
+      type: object
+      required: [routes]
+      properties:
+        routes:
+          type: array
+          items: { type: object, additionalProperties: true }
+    NativePerformanceMetrics:
+      type: object
+      required: [metrics]
+      properties:
+        metrics:
+          type: array
+          items: { type: object, additionalProperties: true }
+    CollectorStatuses:
+      type: object
+      required: [collectors]
+      properties:
+        collectors:
+          type: array
+          items:
+            type: object
+            required: [source, dropped_records, stale]
+            properties:
+              source: { type: string }
+              last_success_at: { type: string, format: date-time }
+              last_recorded_at: { type: string, format: date-time }
+              last_error: { type: string }
+              dropped_records: { type: integer }
+              stale: { type: boolean }
     User:
       type: object
       required: [id, username, role, disabled, created_at]

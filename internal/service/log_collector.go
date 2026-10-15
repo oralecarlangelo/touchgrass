@@ -634,11 +634,44 @@ func (c *LogCollector) flushLogVolume(ctx context.Context, batch []model.LogLine
 		buckets[key] = bucket
 	}
 	ingestKey := hex.EncodeToString(hasher.Sum(nil))
+	lastRecorded := batch[0].Ts
+	failed := false
 	for _, bucket := range buckets {
 		bucket.IngestKey = ingestKey
 		if err := c.performance.UpsertLogVolume(ctx, bucket); err != nil {
 			c.logger.Warn("persisting log volume", "service", bucket.ServiceID, "error_category", "log_volume_write_failed")
+			failed = true
 		}
+	}
+	for _, line := range batch[1:] {
+		if line.Ts.After(lastRecorded) {
+			lastRecorded = line.Ts
+		}
+	}
+	c.recordLogVolumeCursor(ctx, lastRecorded, failed)
+}
+
+func (c *LogCollector) recordLogVolumeCursor(ctx context.Context, lastRecorded time.Time, failed bool) {
+	if c.cursorsStore == nil {
+		return
+	}
+	cursor, err := c.cursorsStore.Get(ctx, "log_volume")
+	if err != nil && !errors.Is(err, store.ErrCollectorCursorNotFound) {
+		c.logger.Warn("loading log volume cursor", "error_category", "cursor_read_failed")
+		return
+	}
+	cursor.Source = "log_volume"
+	if failed {
+		cursor.LastError = "log_volume_write_failed"
+		cursor.DroppedRecords = boundedDrops(cursor.DroppedRecords, 1)
+	} else {
+		now := time.Now().UTC()
+		cursor.LastSuccessAt = now
+		cursor.LastRecordedAt = lastRecorded.UTC()
+		cursor.LastError = ""
+	}
+	if err := c.cursorsStore.Upsert(ctx, cursor); err != nil {
+		c.logger.Warn("persisting log volume cursor", "error_category", "cursor_write_failed")
 	}
 }
 

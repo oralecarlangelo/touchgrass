@@ -331,7 +331,7 @@ export default function AlertsTab({
             <DialogDescription>
               {dialog === 'issue'
                 ? 'Notify when error events cross a threshold inside a window.'
-                : 'Notify when a container metric stays over threshold.'}
+                : 'Notify when an infrastructure or performance metric stays over threshold.'}
             </DialogDescription>
           </DialogHeader>
           {dialog === 'metric' ? (
@@ -346,6 +346,10 @@ export default function AlertsTab({
                     <SelectItem value="cpu">cpu %</SelectItem>
                     <SelectItem value="mem">mem %</SelectItem>
                     <SelectItem value="disk">disk bytes</SelectItem>
+                    <SelectItem value="http_p95_ms">HTTP p95 ms</SelectItem>
+                    <SelectItem value="http_error_rate">HTTP error rate %</SelectItem>
+                    <SelectItem value="postgres_connection_pct">Postgres connections %</SelectItem>
+                    <SelectItem value="redis_evictions">Redis evictions / min</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

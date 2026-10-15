@@ -48,6 +48,7 @@ type SamplerConfig struct {
 	Logs          *store.LogStore
 	SDKLogs       *store.SDKLogStore
 	Fleet         *store.FleetStore
+	Performance   *Performance
 	Interval      time.Duration
 	Retention     Retention
 	Logger        *slog.Logger
@@ -68,6 +69,7 @@ type Sampler struct {
 	logs          *store.LogStore
 	sdkLogs       *store.SDKLogStore
 	fleet         *store.FleetStore
+	performance   *Performance
 	interval      time.Duration
 	retention     Retention
 	logger        *slog.Logger
@@ -104,6 +106,7 @@ func NewSampler(cfg SamplerConfig) *Sampler {
 		logs:          cfg.Logs,
 		sdkLogs:       cfg.SDKLogs,
 		fleet:         cfg.Fleet,
+		performance:   cfg.Performance,
 		interval:      cfg.Interval,
 		retention:     cfg.Retention,
 		logger:        cfg.Logger,
@@ -266,6 +269,9 @@ func (s *Sampler) evaluate(ctx context.Context) error {
 // evaluateRule edge-triggers one rule: sustained breach past the duration
 // fires once per episode.
 func (s *Sampler) evaluateRule(ctx context.Context, rule model.AlertRule) error {
+	if isPerformanceMetric(rule.Metric) {
+		return s.evaluatePerformanceRule(ctx, rule)
+	}
 	latest, err := s.metrics.LatestByService(ctx, rule.ServiceID)
 	if err != nil {
 		return fmt.Errorf("loading latest metrics: %w", err)
@@ -282,6 +288,10 @@ func (s *Sampler) evaluateRule(ctx context.Context, rule model.AlertRule) error 
 		}
 	}
 
+	return s.evaluateThreshold(ctx, rule, breaching, now)
+}
+
+func (s *Sampler) evaluateThreshold(ctx context.Context, rule model.AlertRule, breaching bool, now time.Time) error {
 	s.mutex.Lock()
 	state := s.breaches[rule.ID]
 	s.mutex.Unlock()
@@ -438,9 +448,11 @@ func (s *Sampler) CreateRule(ctx context.Context, create model.RuleCreate) (mode
 	}
 
 	switch create.Metric {
-	case model.MetricCPU, model.MetricMem, model.MetricDisk:
+	case model.MetricCPU, model.MetricMem, model.MetricDisk,
+		model.MetricHTTPP95, model.MetricHTTPErrorRate,
+		model.MetricPostgresConnectionPct, model.MetricRedisEvictions:
 	default:
-		return model.AlertRule{}, fmt.Errorf("%w: metric %q (want cpu, mem, or disk)", ErrInvalidInput, create.Metric)
+		return model.AlertRule{}, fmt.Errorf("%w: metric %q is unsupported", ErrInvalidInput, create.Metric)
 	}
 
 	if create.Threshold <= 0 {

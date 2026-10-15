@@ -150,20 +150,21 @@ func startBackground(
 
 // serveServices wires HTTP handlers to domain services.
 type serveServices struct {
-	inventory  *service.Inventory
-	sampler    *service.Sampler
-	deploys    *service.Deploys
-	cutover    *service.Cutover
-	audit      *service.Audit
-	auth       *http.Authenticator
-	users      *service.Users
-	events     *http.Hub
-	ingestor   *service.Ingestor
-	logs       *service.LogCollector
-	sdkLogs    *service.LogIngestor
-	system     *service.System
-	database   *service.Database
-	onboarding *service.Onboarding
+	inventory   *service.Inventory
+	sampler     *service.Sampler
+	deploys     *service.Deploys
+	cutover     *service.Cutover
+	audit       *service.Audit
+	auth        *http.Authenticator
+	users       *service.Users
+	events      *http.Hub
+	ingestor    *service.Ingestor
+	logs        *service.LogCollector
+	sdkLogs     *service.LogIngestor
+	system      *service.System
+	database    *service.Database
+	onboarding  *service.Onboarding
+	performance *service.Performance
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -189,26 +190,27 @@ func newServeServer(
 	}
 
 	return http.New(http.Config{
-		Addr:       cfg.Addr,
-		Version:    version,
-		Logger:     logger,
-		Inventory:  services.inventory,
-		Sampler:    services.sampler,
-		Deploys:    services.deploys,
-		Cutover:    services.cutover,
-		Audit:      services.audit,
-		Auth:       services.auth,
-		Users:      services.users,
-		Events:     services.events,
-		Ingestor:   services.ingestor,
-		Logs:       services.logs,
-		SDKLogs:    services.sdkLogs,
-		System:     services.system,
-		Database:   services.database,
-		Onboarding: services.onboarding,
-		Dist:       dist,
-		Docs:       docs,
-		DevProxy:   devProxy,
+		Addr:        cfg.Addr,
+		Version:     version,
+		Logger:      logger,
+		Inventory:   services.inventory,
+		Sampler:     services.sampler,
+		Deploys:     services.deploys,
+		Cutover:     services.cutover,
+		Audit:       services.audit,
+		Auth:        services.auth,
+		Users:       services.users,
+		Events:      services.events,
+		Ingestor:    services.ingestor,
+		Logs:        services.logs,
+		SDKLogs:     services.sdkLogs,
+		System:      services.system,
+		Database:    services.database,
+		Onboarding:  services.onboarding,
+		Performance: services.performance,
+		Dist:        dist,
+		Docs:        docs,
+		DevProxy:    devProxy,
 	}), nil
 }
 
@@ -263,7 +265,13 @@ func runServe(args []string) error {
 	wiring := serveWiring{
 		services: serviceStore, docker: dockerClient, db: db, cfg: cfg, logger: logger,
 	}
-	sampler := newSampler(wiring)
+	performance := service.NewPerformance(service.PerformanceConfig{
+		Services: serviceStore,
+		Store:    store.NewPerformanceStore(db),
+		Metrics:  store.NewMetricStore(db),
+		Deploys:  deployStore,
+	})
+	sampler := newSampler(wiring, performance)
 	deploys := service.NewDeploys(serviceStore, deployStore)
 	audit := service.NewAudit(serviceStore, store.NewAuditStore(db))
 	ingestor := newIngestor(serviceStore, db, cfg.MaxOccurrences, logger)
@@ -272,7 +280,7 @@ func runServe(args []string) error {
 	sys := newServeSystem(dockerClient, cfg.DB, cfg.HostRoot, logger)
 	databases := newDatabase(db, cfg, logger)
 	maintenance := newMaintenance(db, cfg, logger)
-	performance, err := newPerformanceCollector(ctx, wiring)
+	performanceCollector, err := newPerformanceCollector(ctx, wiring)
 	if err != nil {
 		return err
 	}
@@ -319,7 +327,7 @@ func runServe(args []string) error {
 		backupInterval:      cfg.BackupInterval,
 		maintenance:         maintenance,
 		maintenanceInterval: cfg.MaintenanceInterval,
-		performance:         performance,
+		performance:         performanceCollector,
 		runtimeEvents:       runtimeEvents,
 	}, &group, logger)
 
@@ -327,7 +335,7 @@ func runServe(args []string) error {
 		inventory: inv, sampler: sampler, deploys: deploys,
 		cutover: cutover, audit: audit, auth: auth, users: managedUsers, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
-		database: databases, onboarding: onboarding,
+		database: databases, onboarding: onboarding, performance: performance,
 	}, version)
 	if err != nil {
 		return err
@@ -402,7 +410,7 @@ func newOnboarding(wiring serveWiring, prober *probe.Prober, audit *service.Audi
 }
 
 // newSampler wires metrics sampling, alerting, and retention.
-func newSampler(wiring serveWiring) *service.Sampler {
+func newSampler(wiring serveWiring, performance *service.Performance) *service.Sampler {
 	return service.NewSampler(service.SamplerConfig{
 		Services:      wiring.services,
 		Docker:        wiring.docker,
@@ -416,6 +424,7 @@ func newSampler(wiring serveWiring) *service.Sampler {
 		Logs:          store.NewLogStore(wiring.db),
 		SDKLogs:       store.NewSDKLogStore(wiring.db),
 		Fleet:         store.NewFleetStore(wiring.db),
+		Performance:   performance,
 		Interval:      wiring.cfg.MetricsInterval,
 		HostRoot:      wiring.cfg.HostRoot,
 		Retention: service.Retention{

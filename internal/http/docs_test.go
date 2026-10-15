@@ -4,6 +4,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -149,5 +152,35 @@ func TestDocsRoute(t *testing.T) {
 	status, _ = doRequest(t, server, nethttp.MethodGet, "/docs", "")
 	if status != nethttp.StatusFound {
 		t.Errorf("bare /docs status = %d, want 302", status)
+	}
+}
+
+func TestPerformanceRoutesDocumented(t *testing.T) {
+	t.Parallel()
+
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve docs test path")
+	}
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "docs-site", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		"/performance/summary:",
+		"/performance/timeline:",
+		"/performance/routes:",
+		"/performance/postgres:",
+		"/performance/redis:",
+		"/collectors/status:",
+		"/services/{id}/performance/summary:",
+		"/services/{id}/performance/timeline:",
+		"/services/{id}/performance/routes:",
+		"/services/{id}/performance/postgres:",
+		"/services/{id}/performance/redis:",
+	} {
+		if !strings.Contains(string(body), "  "+route) {
+			t.Errorf("OpenAPI is missing %s", route)
+		}
 	}
 }

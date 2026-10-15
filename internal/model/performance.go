@@ -198,3 +198,22 @@ type PerformanceRange struct {
 	End       time.Time
 	Limit     int
 }
+
+// Performance query resolutions.
+const (
+	PerformanceResolutionAuto   = "auto"
+	PerformanceResolutionMinute = "minute"
+	PerformanceResolutionHour   = "hour"
+)
+
+// PerformanceQuery is the bounded investigation filter shared by the global
+// and service-scoped APIs.
+type PerformanceQuery struct {
+	ServiceID   string
+	Start       time.Time
+	End         time.Time
+	Resolution  string
+	RouteFamily string
+	Sort        string
+	Limit       int
+}

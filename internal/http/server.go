@@ -23,71 +23,74 @@ const (
 
 // Config wires a Server.
 type Config struct {
-	Addr       string
-	Version    string
-	Logger     *slog.Logger
-	Inventory  *service.Inventory
-	Sampler    *service.Sampler
-	Deploys    *service.Deploys
-	Cutover    *service.Cutover
-	Audit      *service.Audit
-	Auth       *Authenticator
-	Users      *service.Users
-	Events     *Hub
-	Ingestor   *service.Ingestor
-	Logs       *service.LogCollector
-	SDKLogs    *service.LogIngestor
-	System     *service.System
-	Database   *service.Database
-	Onboarding *service.Onboarding
-	Dist       fs.FS
-	Docs       fs.FS
-	DevProxy   string
+	Addr        string
+	Version     string
+	Logger      *slog.Logger
+	Inventory   *service.Inventory
+	Sampler     *service.Sampler
+	Deploys     *service.Deploys
+	Cutover     *service.Cutover
+	Audit       *service.Audit
+	Auth        *Authenticator
+	Users       *service.Users
+	Events      *Hub
+	Ingestor    *service.Ingestor
+	Logs        *service.LogCollector
+	SDKLogs     *service.LogIngestor
+	System      *service.System
+	Database    *service.Database
+	Onboarding  *service.Onboarding
+	Performance *service.Performance
+	Dist        fs.FS
+	Docs        fs.FS
+	DevProxy    string
 }
 
 // Server is the touchgrass HTTP server.
 type Server struct {
-	addr       string
-	version    string
-	logger     *slog.Logger
-	inventory  *service.Inventory
-	sampler    *service.Sampler
-	deploys    *service.Deploys
-	cutover    *service.Cutover
-	audit      *service.Audit
-	auth       *Authenticator
-	users      *service.Users
-	events     *Hub
-	ingestor   *service.Ingestor
-	logs       *service.LogCollector
-	sdkLogs    *service.LogIngestor
-	system     *service.System
-	database   *service.Database
-	onboarding *service.Onboarding
-	handler    nethttp.Handler
+	addr        string
+	version     string
+	logger      *slog.Logger
+	inventory   *service.Inventory
+	sampler     *service.Sampler
+	deploys     *service.Deploys
+	cutover     *service.Cutover
+	audit       *service.Audit
+	auth        *Authenticator
+	users       *service.Users
+	events      *Hub
+	ingestor    *service.Ingestor
+	logs        *service.LogCollector
+	sdkLogs     *service.LogIngestor
+	system      *service.System
+	database    *service.Database
+	onboarding  *service.Onboarding
+	performance *service.Performance
+	handler     nethttp.Handler
 }
 
 // New builds a Server.
 func New(cfg Config) *Server {
 	mux := nethttp.NewServeMux()
 	server := &Server{
-		addr:       cfg.Addr,
-		version:    cfg.Version,
-		logger:     cfg.Logger,
-		inventory:  cfg.Inventory,
-		sampler:    cfg.Sampler,
-		deploys:    cfg.Deploys,
-		cutover:    cfg.Cutover,
-		audit:      cfg.Audit,
-		auth:       cfg.Auth,
-		users:      cfg.Users,
-		events:     cfg.Events,
-		ingestor:   cfg.Ingestor,
-		logs:       cfg.Logs,
-		sdkLogs:    cfg.SDKLogs,
-		system:     cfg.System,
-		database:   cfg.Database,
-		onboarding: cfg.Onboarding,
+		addr:        cfg.Addr,
+		version:     cfg.Version,
+		logger:      cfg.Logger,
+		inventory:   cfg.Inventory,
+		sampler:     cfg.Sampler,
+		deploys:     cfg.Deploys,
+		cutover:     cfg.Cutover,
+		audit:       cfg.Audit,
+		auth:        cfg.Auth,
+		users:       cfg.Users,
+		events:      cfg.Events,
+		ingestor:    cfg.Ingestor,
+		logs:        cfg.Logs,
+		sdkLogs:     cfg.SDKLogs,
+		system:      cfg.System,
+		database:    cfg.Database,
+		onboarding:  cfg.Onboarding,
+		performance: cfg.Performance,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)
@@ -145,6 +148,17 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/databases/jobs/{id}", server.handleJob)
 	mux.HandleFunc("POST /api/databases/backups/{name}/verify", server.requireAdmin(server.handleVerifyBackup))
 	mux.HandleFunc("POST /api/databases/restore", server.requireAdmin(server.handleRestore))
+	mux.HandleFunc("GET /api/performance/summary", server.handlePerformanceSummary)
+	mux.HandleFunc("GET /api/performance/timeline", server.handlePerformanceTimeline)
+	mux.HandleFunc("GET /api/performance/routes", server.handlePerformanceRoutes)
+	mux.HandleFunc("GET /api/performance/postgres", server.handlePerformancePostgres)
+	mux.HandleFunc("GET /api/performance/redis", server.handlePerformanceRedis)
+	mux.HandleFunc("GET /api/collectors/status", server.handleCollectorStatus)
+	mux.HandleFunc("GET /api/services/{id}/performance/summary", server.handlePerformanceSummary)
+	mux.HandleFunc("GET /api/services/{id}/performance/timeline", server.handlePerformanceTimeline)
+	mux.HandleFunc("GET /api/services/{id}/performance/routes", server.handlePerformanceRoutes)
+	mux.HandleFunc("GET /api/services/{id}/performance/postgres", server.handlePerformancePostgres)
+	mux.HandleFunc("GET /api/services/{id}/performance/redis", server.handlePerformanceRedis)
 
 	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Redirect(w, r, "/docs/", nethttp.StatusFound)

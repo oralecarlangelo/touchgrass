@@ -20,9 +20,13 @@ type Metric struct {
 
 // Alert metrics evaluated by threshold rules.
 const (
-	MetricCPU  = "cpu"
-	MetricMem  = "mem"
-	MetricDisk = "disk"
+	MetricCPU                   = "cpu"
+	MetricMem                   = "mem"
+	MetricDisk                  = "disk"
+	MetricHTTPP95               = "http_p95_ms"
+	MetricHTTPErrorRate         = "http_error_rate"
+	MetricPostgresConnectionPct = "postgres_connection_pct"
+	MetricRedisEvictions        = "redis_evictions"
 )
 
 // AlertRule fires when a metric stays above threshold for the duration.

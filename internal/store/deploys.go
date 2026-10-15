@@ -62,6 +62,35 @@ func (s *DeployStore) ListByService(
 		_ = rows.Close()
 	}()
 
+	return collectDeploys(rows)
+}
+
+// ListRange returns bounded deployment markers in a performance window. An
+// empty service ID selects every managed service.
+func (s *DeployStore) ListRange(ctx context.Context, query model.PerformanceRange) ([]model.Deploy, error) {
+	statement := `SELECT id, service_id, sha, actor, type, outcome, started_at,
+		finished_at, duration_secs, downtime_secs, notes, created_at
+		FROM deploys WHERE created_at >= ? AND created_at < ?`
+	args := []any{formatTime(query.Start.UTC()), formatTime(query.End.UTC())}
+	if query.ServiceID != "" {
+		statement += " AND service_id = ?"
+		args = append(args, query.ServiceID)
+	}
+	statement += " ORDER BY created_at ASC, id ASC LIMIT ?"
+	limit := query.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	args = append(args, limit)
+	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying deploy range: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return collectDeploys(rows)
+}
+
+func collectDeploys(rows *sql.Rows) ([]model.Deploy, error) {
 	deploys := []model.Deploy{}
 
 	for rows.Next() {

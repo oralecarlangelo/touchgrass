@@ -158,6 +158,12 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)
+	performance := service.NewPerformance(service.PerformanceConfig{
+		Services: services,
+		Store:    store.NewPerformanceStore(db),
+		Metrics:  store.NewMetricStore(db),
+		Deploys:  store.NewDeployStore(db),
+	})
 
 	sampler := service.NewSampler(service.SamplerConfig{
 		Services:      services,
@@ -172,6 +178,7 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 		Logs:          store.NewLogStore(db),
 		SDKLogs:       store.NewSDKLogStore(db),
 		Fleet:         store.NewFleetStore(db),
+		Performance:   performance,
 		Interval:      time.Hour,
 		Retention: service.Retention{
 			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,
@@ -238,8 +245,9 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 			StartedAt: time.Now(),
 			Logger:    logger,
 		}),
-		Dist: testDist(),
-		Docs: testDocs(),
+		Performance: performance,
+		Dist:        testDist(),
+		Docs:        testDocs(),
 	})
 
 	return server, db

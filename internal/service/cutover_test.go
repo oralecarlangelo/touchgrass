@@ -70,6 +70,25 @@ func testCutover(
 	return cutover, db, log
 }
 
+// heldRunner keeps an asynchronous operation active until the test has made
+// its conflict assertion.
+func heldRunner(t *testing.T) (Runner, func()) {
+	t.Helper()
+
+	release := make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(unblock)
+
+	return func(ctx context.Context, _, _ string, _ []string, _ func(string)) error {
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}, unblock
+}
+
 // testBlueGreenDef builds a blue-green definition with the given script and conf.
 func testBlueGreenDef(t *testing.T, script, conf string) (model.Service, model.BlueGreenConfig) {
 	t.Helper()
@@ -243,12 +262,9 @@ func TestBeginResolvesAuto(t *testing.T) {
 
 	script := writeTempFile(t, "#!/bin/sh\nexit 0\n", 0o755)
 	conf := writeTempFile(t, nginxBlueConf, 0o644)
+	runner, unblock := heldRunner(t)
 
-	cutover, _, log := testCutover(t, func(
-		_ context.Context, _, _ string, _ []string, _ func(string),
-	) error {
-		return nil
-	}, nil, stubProber{})
+	cutover, _, log := testCutover(t, runner, nil, stubProber{})
 
 	def, cfg := testBlueGreenDef(t, script, conf)
 
@@ -267,6 +283,7 @@ func TestBeginResolvesAuto(t *testing.T) {
 		t.Errorf("second begin() error = %v, want ErrConflict", err)
 	}
 
+	unblock()
 	waitForEvents(t, log, 2)
 }
 
@@ -427,12 +444,9 @@ func TestBeginRollbackResolvesOpposite(t *testing.T) {
 
 	script := writeTempFile(t, "#!/bin/sh\nexit 0\n", 0o755)
 	conf := writeTempFile(t, nginxGreenConf, 0o644)
+	runner, unblock := heldRunner(t)
 
-	cutover, _, log := testCutover(t, func(
-		_ context.Context, _, _ string, _ []string, _ func(string),
-	) error {
-		return nil
-	}, nil, stubProber{healthy: map[string]bool{testBlueHealthURL: true}})
+	cutover, _, log := testCutover(t, runner, nil, stubProber{healthy: map[string]bool{testBlueHealthURL: true}})
 
 	def, cfg := testBlueGreenDef(t, script, conf)
 
@@ -449,6 +463,7 @@ func TestBeginRollbackResolvesOpposite(t *testing.T) {
 		t.Errorf("cutover during rollback error = %v, want ErrConflict", err)
 	}
 
+	unblock()
 	waitForEvents(t, log, 2)
 }
 
@@ -486,12 +501,9 @@ func TestBeginDeployResolves(t *testing.T) {
 	t.Parallel()
 
 	script := writeTempFile(t, "#!/bin/sh\nexit 0\n", 0o755)
+	runner, unblock := heldRunner(t)
 
-	cutover, _, log := testCutover(t, func(
-		_ context.Context, _, _ string, _ []string, _ func(string),
-	) error {
-		return nil
-	}, nil, stubProber{healthy: map[string]bool{testRecreateHealthURL: true}})
+	cutover, _, log := testCutover(t, runner, nil, stubProber{healthy: map[string]bool{testRecreateHealthURL: true}})
 
 	def, cfg := testRecreateDef(t, script, script)
 
@@ -508,6 +520,7 @@ func TestBeginDeployResolves(t *testing.T) {
 		t.Errorf("second beginDeploy() error = %v, want ErrConflict", err)
 	}
 
+	unblock()
 	waitForEvents(t, log, 2)
 }
 

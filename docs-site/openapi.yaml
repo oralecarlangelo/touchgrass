@@ -1069,19 +1069,63 @@ paths:
     get:
       operationId: listFleetContainers
       tags: [system]
-      summary: Latest sample per container, hottest CPU first
+      summary: Complete current container inventory, including stopped containers
+      parameters:
+        - name: classification
+          in: query
+          schema: { type: string, enum: [managed, approved_observed, unknown, ignored, missing_expected] }
+        - name: state
+          in: query
+          schema: { type: string, maxLength: 64 }
+        - name: service_id
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: include_historical
+          in: query
+          schema: { type: boolean, default: false }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [name, last_seen, state], default: name }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         '200':
-          description: Fleet containers
+          description: Lifecycle inventory and collector freshness
           content:
             application/json:
               schema:
                 type: object
-                required: [containers]
+                required: [containers, freshness]
                 properties:
                   containers:
                     type: array
                     items: { $ref: '#/components/schemas/FleetContainer' }
+                  freshness: { $ref: '#/components/schemas/ContainerFreshness' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /system/containers/{id}:
+    get:
+      operationId: getFleetContainer
+      tags: [system]
+      summary: Safe container lifecycle and security posture detail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: Container detail without environment variables, raw commands, or host mount sources
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContainerDetail' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /system/history:
     get:
       operationId: getSystemHistory
@@ -1982,18 +2026,79 @@ components:
         ok: { type: boolean }
     FleetContainer:
       type: object
-      required: [name, project, managed, state, cpu_percent, mem_bytes, mem_limit, restarts, sampled_at]
+      required: [name, project, managed, state, classification, current, present, health, cpu_percent, mem_bytes, mem_limit, restarts, risk_counts]
       properties:
+        id: { type: string }
         name: { type: string }
         project: { type: string }
         managed: { type: boolean }
         service_id: { type: string }
         state: { type: string }
-        cpu_percent: { type: number }
-        mem_bytes: { type: integer }
-        mem_limit: { type: integer }
-        restarts: { type: integer }
+        status: { type: string }
+        classification: { type: string, enum: [managed, approved_observed, unknown, ignored, missing_expected] }
+        current: { type: boolean }
+        present: { type: boolean }
+        health: { type: string }
+        cpu_percent: { type: ['number', 'null'] }
+        mem_bytes: { type: ['integer', 'null'] }
+        mem_limit: { type: ['integer', 'null'] }
+        restarts: { type: ['integer', 'null'] }
         sampled_at: { type: string, format: date-time }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        absent_at: { type: ['string', 'null'], format: date-time }
+        risk_counts:
+          type: object
+          required: [critical, high, medium, low]
+          properties:
+            critical: { type: integer }
+            high: { type: integer }
+            medium: { type: integer }
+            low: { type: integer }
+    ContainerFreshness:
+      type: object
+      required: [reconciled_at, complete, stale, observed_count]
+      properties:
+        reconciled_at: { type: ['string', 'null'], format: date-time }
+        complete: { type: boolean }
+        stale: { type: boolean }
+        last_error_category: { type: string }
+        observed_count: { type: integer }
+    SafeContainerInspection:
+      type: object
+      required: [user, privileged, readonly_root_fs, cap_add, mounts, has_docker_socket]
+      properties:
+        user: { type: string }
+        entrypoint_hash: { type: string }
+        command_hash: { type: string }
+        privileged: { type: boolean }
+        readonly_root_fs: { type: boolean }
+        cap_add: { type: array, items: { type: string } }
+        pid_mode: { type: string }
+        ipc_mode: { type: string }
+        network_mode: { type: string }
+        restart_policy: { type: string }
+        memory_bytes: { type: integer }
+        nano_cpus: { type: integer }
+        pids_limit: { type: ['integer', 'null'] }
+        mounts:
+          type: array
+          items:
+            type: object
+            required: [type, destination, writable]
+            properties:
+              type: { type: string }
+              destination: { type: string }
+              writable: { type: boolean }
+        has_docker_socket: { type: boolean }
+    ContainerDetail:
+      type: object
+      required: [container, image, image_id, inspection]
+      properties:
+        container: { $ref: '#/components/schemas/FleetContainer' }
+        image: { type: string }
+        image_id: { type: string }
+        inspection: { $ref: '#/components/schemas/SafeContainerInspection' }
     HistoryPoint:
       type: object
       required: [ts, value]

@@ -131,13 +131,15 @@ func TestHandleFleetContainers(t *testing.T) {
 		t.Errorf("managed = %+v, want managed tn-api row", managed)
 	}
 
-	var raw map[string][]map[string]any
+	var raw struct {
+		Containers []map[string]any `json:"containers"`
+	}
 
 	if err := json.Unmarshal(body, &raw); err != nil {
 		t.Fatalf("decoding raw fleet: %v", err)
 	}
 
-	if _, ok := raw["containers"][0]["service_id"]; ok {
+	if _, ok := raw.Containers[0]["service_id"]; ok {
 		t.Error("unmanaged row carries service_id, want it omitted")
 	}
 }

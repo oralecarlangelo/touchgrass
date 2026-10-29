@@ -98,4 +98,5 @@ type InventorySummary struct {
 	ObservedCount     int        `json:"observed_count"`
 	CurrentCount      int        `json:"current_count"`
 	PresentCount      int        `json:"present_count"`
+	Stale             bool       `json:"stale"`
 }

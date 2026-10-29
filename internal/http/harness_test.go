@@ -103,6 +103,14 @@ func (s stubStatsLister) List(_ context.Context) ([]docker.Container, error) {
 	return []docker.Container{}, nil
 }
 
+func (s stubStatsLister) ListAll(_ context.Context) ([]docker.Container, error) {
+	return []docker.Container{}, nil
+}
+
+func (s stubStatsLister) Inspect(_ context.Context, id string) (docker.Inspection, error) {
+	return docker.Inspection{ID: id}, nil
+}
+
 func (s stubStatsLister) SizedList(_ context.Context) ([]docker.Container, []int64, error) {
 	return []docker.Container{}, []int64{}, nil
 }
@@ -190,6 +198,10 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 	deploys := service.NewDeploys(services, store.NewDeployStore(db))
 	audit := service.NewAudit(services, store.NewAuditStore(db))
 	managedUsers := service.NewUsers(store.NewUserStore(db), audit)
+	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
+		Services: services, Containers: store.NewContainerStore(db), Docker: stubStatsLister{},
+		Interval: time.Minute, InspectLimit: 2, Logger: logger,
+	})
 
 	server := New(Config{
 		Addr:      testDatabaseAddr,
@@ -245,9 +257,10 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 			StartedAt: time.Now(),
 			Logger:    logger,
 		}),
-		Performance: performance,
-		Dist:        testDist(),
-		Docs:        testDocs(),
+		Performance:    performance,
+		FleetInventory: fleetInventory,
+		Dist:           testDist(),
+		Docs:           testDocs(),
 	})
 
 	return server, db

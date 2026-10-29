@@ -232,6 +232,17 @@ func (f *FleetInventory) Container(ctx context.Context, id string) (model.Contai
 	return f.containers.Get(ctx, id)
 }
 
+// Summary returns inventory freshness using two missed intervals as the stale
+// threshold.
+func (f *FleetInventory) Summary(ctx context.Context) (model.InventorySummary, error) {
+	summary, err := f.containers.Summary(ctx)
+	if err != nil {
+		return model.InventorySummary{}, err
+	}
+	summary.Stale = summary.ReconciledAt == nil || time.Since(*summary.ReconciledAt) > 2*f.interval
+	return summary, nil
+}
+
 func safeInspection(value docker.Inspection) model.SafeInspection {
 	mounts := make([]model.SafeMount, 0, len(value.Mounts))
 	for _, item := range value.Mounts {

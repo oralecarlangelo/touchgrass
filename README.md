@@ -141,9 +141,10 @@ enabling a source. The Nginx fixtures in `deploy/nginx/` exclude raw paths,
 queries, headers, cookies, and client identity.
 
 The **Fleet** workspace inventories running and stopped containers and exposes
-unknown, approved-observed, ignored, and missing-expected states. Security is
-disabled until an admin reviews inventory and activates it. Once active,
-posture, process, and writable-layer collectors create durable finding
+unknown, approved-observed, ignored, and missing-expected states. The database
+migration remains inert for safe backup/rollback rehearsal; the native service
+activates read-only monitoring on its first successful startup. Posture,
+process, and writable-layer collectors then create durable finding
 episodes with bounded secret-safe evidence. Collector failures stay visible as
 partial/stale coverage and cannot silently resolve earlier findings.
 
@@ -152,7 +153,7 @@ a process, removes a file, blocks traffic, or rotates credentials in response
 to a finding. Docker polling/top/diff can miss short-lived or evasive activity,
 and the socket remains root-equivalent even when mounted `:ro`. Read
 [`docs-site/fleet.md`](docs-site/fleet.md) and
-[`docs/threat-model.md`](docs/threat-model.md) before activation. Release
+[`docs/threat-model.md`](docs/threat-model.md) before deployment. Release
 validation includes the generic replay/privacy gate, migration rehearsal, and
 `make test-security-soak`.
 

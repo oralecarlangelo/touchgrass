@@ -130,6 +130,92 @@ func TestFleetInventoryReconcileSkipsVanishedContainer(t *testing.T) {
 	}
 }
 
+func TestFleetInventoryInspectFailurePreservesLastKnownPosture(t *testing.T) {
+	t.Parallel()
+	db := openInventoryDB(t)
+	dockerClient := &fakeInventoryDocker{
+		containers:  []docker.Container{{ID: "stable", Name: "stable-1", State: "running"}},
+		inspections: map[string]docker.Inspection{"stable": {Privileged: true, User: "1000"}},
+		inspectErrs: map[string]error{},
+	}
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services: store.NewServiceStore(db), Containers: store.NewContainerStore(db),
+		Docker: dockerClient, Interval: time.Minute, InspectLimit: 1,
+	})
+	if _, err := inventory.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	dockerClient.inspectErrs["stable"] = errors.New("inspect unavailable")
+	if _, err := inventory.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := inventory.Container(context.Background(), "stable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Inspection.Privileged || got.Inspection.User != "1000" || got.Inspection.CoverageComplete {
+		t.Fatalf("inspection = %+v, want last-known values marked incomplete", got.Inspection)
+	}
+}
+
+func TestFleetInventoryCreatesUnknownAndMissingExpectedFindings(t *testing.T) {
+	t.Parallel()
+	db := openInventoryDB(t)
+	securityStore := store.NewSecurityStore(db)
+	if _, err := securityStore.Activate(context.Background(), "admin"); err != nil {
+		t.Fatal(err)
+	}
+	security := NewSecurity(SecurityConfig{
+		Store: securityStore, Cursors: store.NewCursorStore(db), Emit: func(model.Event) {},
+	})
+	dockerClient := &fakeInventoryDocker{
+		containers:  []docker.Container{{ID: "observed", Name: "observed", ImageID: "sha256:image", State: "running"}},
+		inspections: map[string]docker.Inspection{"observed": {}}, inspectErrs: map[string]error{},
+	}
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services: store.NewServiceStore(db), Containers: store.NewContainerStore(db), Docker: dockerClient,
+		Interval: time.Millisecond, InspectLimit: 1, Security: securityStore, Evaluator: security,
+	})
+	if _, err := inventory.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	findings, err := security.Findings(context.Background(), model.SecurityFindingQuery{Status: model.SecurityFindingStatusOpen})
+	if err != nil || !containsFindingRule(findings, "inventory.unknown_container") {
+		t.Fatalf("unknown findings=%+v err=%v", findings, err)
+	}
+	instance, err := inventory.Container(context.Background(), "observed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := securityStore.Approve(context.Background(), model.ContainerApproval{
+		ContainerID: "observed", ImageFingerprint: instance.ImageID,
+		ConfigurationFingerprint: instance.ConfigurationFingerprint, Actor: "admin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dockerClient.containers = []docker.Container{}
+	if _, err := inventory.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Millisecond)
+	if _, err := inventory.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	findings, err = security.Findings(context.Background(), model.SecurityFindingQuery{Status: model.SecurityFindingStatusOpen})
+	if err != nil || !containsFindingRule(findings, "inventory.missing_expected") {
+		t.Fatalf("missing expected findings=%+v err=%v", findings, err)
+	}
+	dockerClient.containers = []docker.Container{{ID: "replacement", Name: "observed", ImageID: "sha256:new", State: "running"}}
+	dockerClient.inspections["replacement"] = docker.Inspection{}
+	if _, err := inventory.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := security.Findings(context.Background(), model.SecurityFindingQuery{Status: model.SecurityFindingStatusResolved})
+	if err != nil || !containsFindingRule(resolved, "inventory.missing_expected") {
+		t.Fatalf("replacement recovery findings=%+v err=%v", resolved, err)
+	}
+}
+
 func TestFleetInventoryReconcileNameReuse(t *testing.T) {
 	t.Parallel()
 

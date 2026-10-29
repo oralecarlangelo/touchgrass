@@ -1761,7 +1761,7 @@ components:
         critical: { type: integer, minimum: 0 }
         high: { type: integer, minimum: 0 }
         suppressed: { type: integer, minimum: 0 }
-        coverage_complete: { type: boolean, description: False when the latest collector observation was partial }
+        coverage_complete: { type: boolean, description: True only when posture, process, and writable-layer collectors are complete and each reported within twice its effective interval }
         last_observed_at: { type: ['string', 'null'], format: date-time }
     SecurityFinding:
       type: object
@@ -2300,8 +2300,9 @@ components:
         observed_count: { type: integer }
     SafeContainerInspection:
       type: object
-      required: [user, privileged, readonly_root_fs, cap_add, mounts, has_docker_socket]
+      required: [coverage_complete, user, privileged, readonly_root_fs, cap_add, mounts, has_docker_socket]
       properties:
+        coverage_complete: { type: boolean, description: False when values are last-known posture from before a Docker inspection failure }
         user: { type: string }
         entrypoint_hash: { type: string }
         command_hash: { type: string }

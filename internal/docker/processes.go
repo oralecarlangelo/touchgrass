@@ -38,14 +38,16 @@ func (c *Client) Processes(ctx context.Context, id string) (ProcessSnapshot, err
 	if err != nil {
 		return ProcessSnapshot{Processes: []Process{}, Complete: false}, fmt.Errorf("listing container processes: %w", err)
 	}
-	processes, err := normalizeProcesses(response, maxProcessRows)
+	processes, err := NormalizeProcesses(response, maxProcessRows)
 	if err != nil {
 		return ProcessSnapshot{Processes: []Process{}, Complete: false}, err
 	}
 	return ProcessSnapshot{Processes: processes, Complete: len(response.Processes) <= maxProcessRows}, nil
 }
 
-func normalizeProcesses(response containertypes.TopResponse, limit int) ([]Process, error) {
+// NormalizeProcesses strips raw arguments and bounds Docker top rows using the
+// same path as the production collector.
+func NormalizeProcesses(response containertypes.TopResponse, limit int) ([]Process, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("normalizing processes: positive row limit is required")
 	}

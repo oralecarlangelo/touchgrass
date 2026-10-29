@@ -29,18 +29,31 @@ type LayerChange struct {
 	Path string          `json:"path"`
 }
 
+// LayerSnapshot carries bounded diff rows plus an explicit completeness bit.
+// Positive evidence remains actionable when Complete is false; only clean
+// recovery requires a complete snapshot.
+type LayerSnapshot struct {
+	Changes  []LayerChange
+	Complete bool
+}
+
 // DiffLister reads bounded writable-layer metadata.
 type DiffLister interface {
-	Diff(ctx context.Context, id string) ([]LayerChange, error)
+	Diff(ctx context.Context, id string) (LayerSnapshot, error)
 }
 
 // Diff reads and normalizes Docker's metadata-only filesystem diff.
-func (c *Client) Diff(ctx context.Context, id string) ([]LayerChange, error) {
+func (c *Client) Diff(ctx context.Context, id string) (LayerSnapshot, error) {
 	changes, err := c.cli.ContainerDiff(ctx, id)
 	if err != nil {
-		return []LayerChange{}, fmt.Errorf("listing container layer changes: %w", err)
+		return LayerSnapshot{Changes: []LayerChange{}, Complete: false}, fmt.Errorf("listing container layer changes: %w", err)
 	}
-	return normalizeLayerChanges(changes, maxLayerChanges, maxLayerPath)
+	return normalizeLayerSnapshot(changes)
+}
+
+func normalizeLayerSnapshot(values []containertypes.FilesystemChange) (LayerSnapshot, error) {
+	normalized, err := normalizeLayerChanges(values, maxLayerChanges, maxLayerPath)
+	return LayerSnapshot{Changes: normalized, Complete: len(values) <= maxLayerChanges}, err
 }
 
 func normalizeLayerChanges(

@@ -69,7 +69,7 @@ export default function PolicyDialog({
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{policy === null ? 'New security policy' : 'Edit security policy'}</DialogTitle>
-          <DialogDescription>Scope exceptions using generic service, container, image, or Compose metadata. Avoid tenant-specific defaults.</DialogDescription>
+          <DialogDescription>Scope exceptions by exact service or durable container ID. Avoid tenant-specific defaults.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -79,15 +79,15 @@ export default function PolicyDialog({
                 <SelectTrigger aria-label="Policy scope"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="global">Global</SelectItem>
-                  <SelectItem value="service">Service / Compose</SelectItem>
-                  <SelectItem value="container">Container / image</SelectItem>
+                  <SelectItem value="service">Service</SelectItem>
+                  <SelectItem value="container">Container</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {scope !== 'global' && (
               <div className="space-y-1.5">
                 <Label htmlFor="policy-scope-id">Scope identifier</Label>
-                <Input id="policy-scope-id" value={scopeId} disabled={policy !== null} onChange={(event) => setScopeId(event.target.value)} placeholder={scope === 'service' ? 'service-or-compose-id' : 'container-or-image-id'} />
+                <Input id="policy-scope-id" value={scopeId} disabled={policy !== null} onChange={(event) => setScopeId(event.target.value)} placeholder={scope === 'service' ? 'service-id' : 'durable-container-id'} />
               </div>
             )}
           </div>

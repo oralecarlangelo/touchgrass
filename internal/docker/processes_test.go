@@ -8,7 +8,7 @@ import (
 
 func TestNormalizeProcessesKeepsPIDParentUserAndCommand(t *testing.T) {
 	t.Parallel()
-	got, err := normalizeProcesses(containertypes.TopResponse{
+	got, err := NormalizeProcesses(containertypes.TopResponse{
 		Titles:    []string{"PID", "PPID", "USER", "COMMAND"},
 		Processes: [][]string{{"12", "1", "app", "/usr/local/bin/worker"}},
 	}, 10)
@@ -23,7 +23,7 @@ func TestNormalizeProcessesKeepsPIDParentUserAndCommand(t *testing.T) {
 
 func TestNormalizeProcessesDropsFullArguments(t *testing.T) {
 	t.Parallel()
-	got, err := normalizeProcesses(containertypes.TopResponse{
+	got, err := NormalizeProcesses(containertypes.TopResponse{
 		Titles:    []string{"PID", "PPID", "USER", "COMMAND"},
 		Processes: [][]string{{"12", "1", "app", "/tmp/worker --token secret-value"}},
 	}, 10)
@@ -37,7 +37,7 @@ func TestNormalizeProcessesDropsFullArguments(t *testing.T) {
 
 func TestNormalizeProcessesRejectsControlCharacters(t *testing.T) {
 	t.Parallel()
-	_, err := normalizeProcesses(containertypes.TopResponse{
+	_, err := NormalizeProcesses(containertypes.TopResponse{
 		Titles:    []string{"PID", "PPID", "USER", "COMMAND"},
 		Processes: [][]string{{"12", "1", "app", "/tmp/bad\ncommand"}},
 	}, 10)
@@ -48,7 +48,7 @@ func TestNormalizeProcessesRejectsControlCharacters(t *testing.T) {
 
 func TestNormalizeProcessesReturnsNonNilEmpty(t *testing.T) {
 	t.Parallel()
-	got, err := normalizeProcesses(containertypes.TopResponse{
+	got, err := NormalizeProcesses(containertypes.TopResponse{
 		Titles: []string{"PID", "PPID", "USER", "COMMAND"},
 	}, 10)
 	if err != nil {

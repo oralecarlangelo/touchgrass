@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -36,6 +37,59 @@ func TestContainerStoreReconcilePersistsStoppedContainer(t *testing.T) {
 	}
 	if !got.FirstSeenAt.Equal(now) || !got.LastSeenAt.Equal(now) {
 		t.Errorf("Get() timestamps = (%v, %v), want %v", got.FirstSeenAt, got.LastSeenAt, now)
+	}
+}
+
+func TestContainerStoreMarksApprovedOrManagedAbsenceMissingExpected(t *testing.T) {
+	t.Parallel()
+	store := NewContainerStore(openTestDB(t))
+	ctx := context.Background()
+	now := time.Now().UTC()
+	if err := store.Reconcile(ctx, model.InventoryBatch{ObservedAt: now, Complete: true, Instances: []model.ContainerInstance{
+		{ID: "managed", Name: "managed", Classification: model.ContainerClassificationManaged},
+		{ID: "approved", Name: "approved", Classification: model.ContainerClassificationApprovedObserved},
+		{ID: "unknown", Name: "unknown", Classification: model.ContainerClassificationUnknown},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Reconcile(ctx, model.InventoryBatch{ObservedAt: now.Add(time.Minute), Complete: true}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.List(ctx, model.ContainerQuery{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(current) != 2 {
+		t.Fatalf("current containers = %+v, want two missing expected", current)
+	}
+	for _, instance := range current {
+		if instance.Classification != model.ContainerClassificationMissingExpected || instance.Present || !instance.Current {
+			t.Fatalf("missing expected instance = %+v", instance)
+		}
+	}
+}
+
+func TestContainerStoreListAllRunningIsNotPageLimited(t *testing.T) {
+	t.Parallel()
+	store := NewContainerStore(openTestDB(t))
+	instances := make([]model.ContainerInstance, 501)
+	for index := range instances {
+		instances[index] = model.ContainerInstance{
+			ID: fmt.Sprintf("container-%03d", index), Name: fmt.Sprintf("container-%03d", index),
+			State: "running", Classification: model.ContainerClassificationUnknown,
+		}
+	}
+	if err := store.Reconcile(context.Background(), model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true, Instances: instances,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ListAllRunning(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 501 {
+		t.Fatalf("running containers = %d, want 501", len(got))
 	}
 }
 

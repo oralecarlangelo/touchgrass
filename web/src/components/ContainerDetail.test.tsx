@@ -15,6 +15,7 @@ describe('ContainerDetailView', () => {
       },
       image: 'app:latest', image_id: 'sha256:image',
       inspection: {
+        coverage_complete: true,
         user: '', privileged: true, readonly_root_fs: false, cap_add: [],
         mounts: [{ type: 'bind', destination: '/data', writable: true }],
         has_docker_socket: false, command_hash: 'safe-hash',

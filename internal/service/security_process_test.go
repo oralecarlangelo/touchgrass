@@ -108,7 +108,7 @@ func TestProcessScannerStopsOnCancellation(t *testing.T) {
 
 type processInventoryStub struct{ containers []model.ContainerInstance }
 
-func (s processInventoryStub) Containers(context.Context, model.ContainerQuery) ([]model.ContainerInstance, error) {
+func (s processInventoryStub) RunningContainers(context.Context) ([]model.ContainerInstance, error) {
 	return append([]model.ContainerInstance{}, s.containers...), nil
 }
 

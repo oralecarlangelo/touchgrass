@@ -95,6 +95,6 @@ type diffListerStub struct {
 	err     error
 }
 
-func (s diffListerStub) Diff(context.Context, string) ([]docker.LayerChange, error) {
-	return append([]docker.LayerChange{}, s.changes...), s.err
+func (s diffListerStub) Diff(context.Context, string) (docker.LayerSnapshot, error) {
+	return docker.LayerSnapshot{Changes: append([]docker.LayerChange{}, s.changes...), Complete: s.err == nil}, s.err
 }

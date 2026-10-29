@@ -129,6 +129,10 @@ func TestSecurityCollectorFailureCreatesOneEpisodeAndRecovery(t *testing.T) {
 	if err != nil || len(findings) != 1 || findings[0].OccurrenceCount != 2 {
 		t.Fatalf("collector findings=%+v err=%v", findings, err)
 	}
+	summary, err := security.Summary(ctx)
+	if err != nil || summary.CoverageComplete {
+		t.Fatalf("collector summary=%+v err=%v, want incomplete coverage during failure", summary, err)
+	}
 	if err := security.RecordCollector(ctx, "security_process", true, "", 30*time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +142,32 @@ func TestSecurityCollectorFailureCreatesOneEpisodeAndRecovery(t *testing.T) {
 	resolved, err := security.Findings(ctx, model.SecurityFindingQuery{Status: model.SecurityFindingStatusResolved})
 	if err != nil || len(resolved) != 1 {
 		t.Fatalf("resolved collector findings=%+v err=%v", resolved, err)
+	}
+}
+
+func TestSecuritySummaryMarksStalledCollectorIncomplete(t *testing.T) {
+	t.Parallel()
+	security, db := testSecurity(t)
+	cursors := store.NewCursorStore(db)
+	now := time.Now().UTC()
+	for _, source := range []string{"security_posture", "security_process", "security_diff"} {
+		recorded := now
+		if source == "security_process" {
+			recorded = now.Add(-3 * time.Minute)
+		}
+		if err := cursors.Upsert(context.Background(), model.CollectorCursor{
+			Source: source, LastRecordedAt: recorded, LastSuccessAt: recorded,
+			CoverageComplete: true, EffectiveIntervalSecs: 60,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, err := security.Summary(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.CoverageComplete {
+		t.Fatalf("summary = %+v, want stalled collector to make coverage incomplete", summary)
 	}
 }
 

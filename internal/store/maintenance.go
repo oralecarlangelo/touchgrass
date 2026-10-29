@@ -119,6 +119,7 @@ func NewMaintenanceStore(db *DB) *MaintenanceStore {
 
 type retentionTarget struct {
 	table     string
+	key       string
 	timestamp string
 	retention time.Duration
 	predicate string
@@ -160,6 +161,7 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		{table: "security_observations", timestamp: "observed_at", retention: policy.RetentionSecurityObservations},
 		{table: "container_events", timestamp: "occurred_at", retention: policy.RetentionContainerEvents},
 		{table: "security_findings", timestamp: "resolved_at", retention: policy.RetentionSecurityFindings, predicate: "status = 'resolved'"},
+		{table: "container_instances", key: "rowid", timestamp: "last_seen_at", retention: policy.RetentionSecurityFindings, predicate: "current = 0 AND present = 0 AND NOT EXISTS (SELECT 1 FROM security_findings sf WHERE sf.container_id = container_instances.container_id AND sf.status IN ('open','acknowledged','suppressed'))"},
 		{table: "performance_ingest_batches", timestamp: "bucket_start", retention: policy.RetentionPerformance},
 	}
 
@@ -214,6 +216,7 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 			{table: "security_observations", timestamp: "observed_at"},
 			{table: "container_events", timestamp: "occurred_at"},
 			{table: "security_findings", timestamp: "resolved_at", predicate: "status = 'resolved'"},
+			{table: "container_instances", key: "rowid", timestamp: "last_seen_at", predicate: "current = 0 AND present = 0 AND NOT EXISTS (SELECT 1 FROM security_findings sf WHERE sf.container_id = container_instances.container_id AND sf.status IN ('open','acknowledged','suppressed'))"},
 		}},
 	}
 	for _, class := range classes {
@@ -301,9 +304,14 @@ func (s *MaintenanceStore) deleteBefore(
 	if target.predicate != "" {
 		predicate = " AND " + target.predicate
 	}
-	query := fmt.Sprintf(`DELETE FROM %s WHERE id IN (
-		SELECT id FROM %s WHERE %s < ?%s ORDER BY id LIMIT ?
-	)`, target.table, target.table, target.timestamp, predicate)
+	key := target.key
+	if key == "" {
+		key = "id"
+	}
+	//nolint:gosec // targets are fixed internal metadata, never request input.
+	query := fmt.Sprintf(`DELETE FROM %s WHERE %s IN (
+		SELECT %s FROM %s WHERE %s < ?%s ORDER BY %s LIMIT ?
+	)`, target.table, key, key, target.table, target.timestamp, predicate, key)
 	res, err := s.db.sql.ExecContext(ctx, query, formatFixedTime(cutoff), limit)
 	if err != nil {
 		return 0, fmt.Errorf("trimming %s: %w", target.table, err)
@@ -322,9 +330,14 @@ func (s *MaintenanceStore) deleteOldest(ctx context.Context, target retentionTar
 	if target.predicate != "" {
 		predicate = " WHERE " + target.predicate
 	}
-	query := fmt.Sprintf(`DELETE FROM %s WHERE id IN (
-		SELECT id FROM %s%s ORDER BY %s, id LIMIT ?
-	)`, target.table, target.table, predicate, target.timestamp)
+	key := target.key
+	if key == "" {
+		key = "id"
+	}
+	//nolint:gosec // targets are fixed internal metadata, never request input.
+	query := fmt.Sprintf(`DELETE FROM %s WHERE %s IN (
+		SELECT %s FROM %s%s ORDER BY %s, %s LIMIT ?
+	)`, target.table, key, key, target.table, predicate, target.timestamp, key)
 	res, err := s.db.sql.ExecContext(ctx, query, limit)
 	if err != nil {
 		return 0, fmt.Errorf("trimming over-budget %s: %w", target.table, err)
@@ -377,7 +390,8 @@ func (s *MaintenanceStore) classBytes(ctx context.Context) (map[string]int64, er
 		"security": `SELECT
 			COALESCE((SELECT SUM(length(container_id)+length(rule_id)+length(category)+length(severity)+length(confidence)+length(evidence_json)+length(observed_at)) FROM security_observations), 0) +
 			COALESCE((SELECT SUM(length(fingerprint)+length(container_id)+length(rule_id)+length(evidence_json)+length(opened_at)+length(last_seen_at)) FROM security_findings), 0) +
-			COALESCE((SELECT COUNT(*) * 192 FROM container_events), 0)`,
+			COALESCE((SELECT COUNT(*) * 192 FROM container_events), 0) +
+			COALESCE((SELECT SUM(length(container_id)+length(name)+length(image)+length(image_id)+length(status)+length(inspection_json)+length(last_seen_at)) FROM container_instances), 0)`,
 	}
 
 	result := make(map[string]int64, len(queries))

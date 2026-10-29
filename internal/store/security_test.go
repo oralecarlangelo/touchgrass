@@ -22,6 +22,80 @@ func TestSecurityEvidenceMetadataCap(t *testing.T) {
 	}
 }
 
+func TestPartialPositiveEvidenceOpensFinding(t *testing.T) {
+	t.Parallel()
+	security := NewSecurityStore(openTestDB(t))
+	result, err := security.Evaluate(context.Background(), model.SecurityEvaluation{Observation: model.SecurityObservation{
+		ContainerID: "partial", RuleID: "process.high_risk_path", Category: model.SecurityCategoryProcess,
+		Severity: model.SecuritySeverityHigh, Confidence: model.SecurityConfidenceHigh,
+		Detected: true, CoverageComplete: false, Evidence: map[string]string{"executable": "/tmp/update"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Opened || result.Finding.Status != model.SecurityFindingStatusOpen {
+		t.Fatalf("result = %+v, want open finding from positive partial evidence", result)
+	}
+}
+
+func TestExpiredSuppressionReopensOnDetection(t *testing.T) {
+	t.Parallel()
+	security := NewSecurityStore(openTestDB(t))
+	observedAt := time.Now().UTC()
+	result, err := security.Evaluate(context.Background(), model.SecurityEvaluation{Observation: model.SecurityObservation{
+		ContainerID: "suppressed", RuleID: "process.high_risk_path", Category: model.SecurityCategoryProcess,
+		Severity: model.SecuritySeverityHigh, Confidence: model.SecurityConfidenceHigh,
+		Detected: true, CoverageComplete: true, Evidence: map[string]string{}, ObservedAt: observedAt,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().UTC().Add(time.Hour)
+	if _, err := security.Suppress(context.Background(), result.Finding.ID, model.FindingSuppression{
+		Actor: "admin", Reason: "maintenance", Until: &until,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := security.Evaluate(context.Background(), model.SecurityEvaluation{Observation: model.SecurityObservation{
+		ContainerID: "suppressed", RuleID: "process.high_risk_path", Category: model.SecurityCategoryProcess,
+		Severity: model.SecuritySeverityHigh, Confidence: model.SecurityConfidenceHigh,
+		Detected: true, CoverageComplete: false, Evidence: map[string]string{}, ObservedAt: until.Add(time.Second),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Opened || reopened.Finding.Status != model.SecurityFindingStatusOpen ||
+		reopened.Finding.SuppressedUntil == nil || reopened.Finding.SuppressionReason != "maintenance" {
+		t.Fatalf("reopened finding = %+v, want notification transition with preserved suppression history", reopened)
+	}
+}
+
+func TestPolicyForUsesContainerServiceGlobalPrecedence(t *testing.T) {
+	t.Parallel()
+	security := NewSecurityStore(openTestDB(t))
+	if _, err := security.CreatePolicy(context.Background(), model.SecurityPolicy{Scope: "global", AllowRoot: true}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := security.CreatePolicy(context.Background(), model.SecurityPolicy{Scope: "service", ScopeID: "svc", AllowPrivileged: true}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := security.CreatePolicy(context.Background(), model.SecurityPolicy{Scope: "container", ScopeID: "ctr", AllowDockerSocket: true}, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	containerPolicy, err := security.PolicyFor(context.Background(), "svc", "ctr")
+	if err != nil || !containerPolicy.AllowDockerSocket || containerPolicy.AllowPrivileged || containerPolicy.AllowRoot {
+		t.Fatalf("container policy = %+v, error=%v", containerPolicy, err)
+	}
+	servicePolicy, err := security.PolicyFor(context.Background(), "svc", "other")
+	if err != nil || !servicePolicy.AllowPrivileged || servicePolicy.AllowRoot {
+		t.Fatalf("service policy = %+v, error=%v", servicePolicy, err)
+	}
+	globalPolicy, err := security.PolicyFor(context.Background(), "", "other")
+	if err != nil || !globalPolicy.AllowRoot {
+		t.Fatalf("global policy = %+v, error=%v", globalPolicy, err)
+	}
+}
+
 func TestSecurityStoreActivationDoesNotAutoApproveExisting(t *testing.T) {
 	t.Parallel()
 	db := openTestDB(t)
@@ -61,6 +135,10 @@ func TestApproveContainerRecordsFingerprintAndActor(t *testing.T) {
 	if baseline.ApprovedBy != "alice" || baseline.ImageFingerprint != "sha256:image" ||
 		baseline.ConfigurationFingerprint != "config-hash" || !baseline.ApprovedAt.Equal(approvedAt) {
 		t.Errorf("baseline = %+v", baseline)
+	}
+	var audits int
+	if err := db.sql.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM audit WHERE action = 'container_approve' AND actor = 'alice'`).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("atomic approval audits = %d, error=%v; want 1", audits, err)
 	}
 }
 

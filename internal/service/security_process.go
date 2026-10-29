@@ -20,7 +20,7 @@ const (
 )
 
 type processInventory interface {
-	Containers(context.Context, model.ContainerQuery) ([]model.ContainerInstance, error)
+	RunningContainers(context.Context) ([]model.ContainerInstance, error)
 }
 
 // ProcessScannerConfig wires bounded runtime-process monitoring.
@@ -103,7 +103,7 @@ func (s *ProcessScanner) Scan(ctx context.Context) error {
 	if activation.ActivatedAt == nil {
 		return nil
 	}
-	instances, err := s.inventory.Containers(ctx, model.ContainerQuery{State: "running", Limit: 1000})
+	instances, err := s.inventory.RunningContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("listing running containers for process scan: %w", err)
 	}
@@ -157,11 +157,13 @@ type processScanResult struct {
 }
 
 func (s *ProcessScanner) scanContainer(ctx context.Context, instance model.ContainerInstance) (bool, error) {
-	policy, err := s.policies.Policy(ctx, instance.ServiceID)
+	policy, err := s.policies.PolicyFor(ctx, instance.ServiceID, instance.ID)
 	if err != nil {
 		return false, err
 	}
-	snapshot, scanErr := s.docker.Processes(ctx, instance.ID)
+	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	snapshot, scanErr := s.docker.Processes(callCtx, instance.ID)
+	cancel()
 	if scanErr != nil {
 		snapshot = docker.ProcessSnapshot{Processes: []docker.Process{}, Complete: false}
 		s.logger.Warn("container process collection failed", "container", instance.Name,

@@ -50,9 +50,21 @@ func (s *ContainerStore) Reconcile(ctx context.Context, batch model.InventoryBat
 	observedAt := formatTime(batch.ObservedAt)
 	if batch.Complete {
 		if _, err := tx.ExecContext(ctx, `UPDATE container_instances
+			SET current = 1, present = 0, absent_at = COALESCE(absent_at, ?), updated_at = ?
+			WHERE current = 1 AND classification IN ('managed','approved_observed','missing_expected')`, observedAt, observedAt); err != nil {
+			return fmt.Errorf("marking expected containers absent: %w", err)
+		}
+		missingCutoff := batch.ObservedAt.Add(-batch.MissingGrace)
+		if _, err := tx.ExecContext(ctx, `UPDATE container_instances
+			SET classification = 'missing_expected', updated_at = ?
+			WHERE current = 1 AND present = 0 AND classification IN ('managed','approved_observed')
+			AND absent_at <= ?`, observedAt, formatTime(missingCutoff)); err != nil {
+			return fmt.Errorf("promoting absent expected containers after grace period: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE container_instances
 			SET current = 0, present = 0, absent_at = ?, updated_at = ?
-			WHERE current = 1`, observedAt, observedAt); err != nil {
-			return fmt.Errorf("marking unseen containers absent: %w", err)
+			WHERE current = 1 AND classification IN ('unknown','ignored')`, observedAt, observedAt); err != nil {
+			return fmt.Errorf("retiring unseen observed containers: %w", err)
 		}
 	}
 
@@ -66,6 +78,19 @@ func (s *ContainerStore) Reconcile(ctx context.Context, batch model.InventoryBat
 
 		if err := upsertContainer(ctx, tx, instance, batch.ObservedAt); err != nil {
 			return err
+		}
+	}
+	if batch.Complete {
+		if _, err := tx.ExecContext(ctx, `UPDATE container_instances AS missing SET current = 0, updated_at = ?
+			WHERE missing.current = 1 AND missing.present = 0 AND missing.classification = 'missing_expected'
+			AND EXISTS (SELECT 1 FROM container_instances AS replacement
+				WHERE replacement.current = 1 AND replacement.present = 1
+				AND replacement.container_id <> missing.container_id
+				AND ((missing.service_id <> '' AND replacement.service_id = missing.service_id)
+					OR (missing.compose_project <> '' AND missing.compose_service <> ''
+						AND replacement.compose_project = missing.compose_project
+						AND replacement.compose_service = missing.compose_service)))`, observedAt); err != nil {
+			return fmt.Errorf("retiring replaced expected containers: %w", err)
 		}
 	}
 
@@ -187,6 +212,78 @@ func (s *ContainerStore) List(ctx context.Context, query model.ContainerQuery) (
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating containers: %w", err)
+	}
+	return instances, nil
+}
+
+// ListAllRunning reads all current running identities in one SQLite snapshot.
+func (s *ContainerStore) ListAllRunning(ctx context.Context) ([]model.ContainerInstance, error) {
+	rows, err := s.db.sql.QueryContext(ctx, "SELECT "+containerColumns+
+		" FROM container_instances WHERE current = 1 AND present = 1 AND state = 'running' ORDER BY name, container_id")
+	if err != nil {
+		return nil, fmt.Errorf("listing running containers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	instances := []model.ContainerInstance{}
+	for rows.Next() {
+		instance, err := scanContainer(rows)
+		if err != nil {
+			return nil, err
+		}
+		instances = append(instances, instance)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating running containers: %w", err)
+	}
+	return instances, nil
+}
+
+// ListAllCurrent returns every current identity in one SQLite snapshot for
+// classification finding evaluation, including absent expected containers.
+func (s *ContainerStore) ListAllCurrent(ctx context.Context) ([]model.ContainerInstance, error) {
+	rows, err := s.db.sql.QueryContext(ctx, "SELECT "+containerColumns+
+		" FROM container_instances WHERE current = 1 ORDER BY name, container_id")
+	if err != nil {
+		return nil, fmt.Errorf("listing current containers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	instances := []model.ContainerInstance{}
+	for rows.Next() {
+		instance, err := scanContainer(rows)
+		if err != nil {
+			return nil, err
+		}
+		instances = append(instances, instance)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating current containers: %w", err)
+	}
+	return instances, nil
+}
+
+// ListClassificationCandidates includes current rows plus retired identities
+// with active inventory findings so replacement can emit a negative recovery.
+func (s *ContainerStore) ListClassificationCandidates(ctx context.Context) ([]model.ContainerInstance, error) {
+	rows, err := s.db.sql.QueryContext(ctx, "SELECT "+containerColumns+` FROM container_instances
+		WHERE current = 1 OR container_id IN (
+			SELECT DISTINCT container_id FROM security_findings
+			WHERE status IN ('open','acknowledged','suppressed')
+			AND rule_id IN ('inventory.unknown_container','inventory.missing_expected')
+		) ORDER BY name, container_id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing classification candidates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	instances := []model.ContainerInstance{}
+	for rows.Next() {
+		instance, err := scanContainer(rows)
+		if err != nil {
+			return nil, err
+		}
+		instances = append(instances, instance)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating classification candidates: %w", err)
 	}
 	return instances, nil
 }

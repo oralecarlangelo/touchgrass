@@ -57,21 +57,22 @@ type containerListResponse struct {
 }
 
 type safeInspectionResponse struct {
-	User            string            `json:"user"`
-	EntrypointHash  string            `json:"entrypoint_hash,omitempty"`
-	CommandHash     string            `json:"command_hash,omitempty"`
-	Privileged      bool              `json:"privileged"`
-	ReadonlyRootFS  bool              `json:"readonly_root_fs"`
-	CapAdd          []string          `json:"cap_add"`
-	PIDMode         string            `json:"pid_mode,omitempty"`
-	IPCMode         string            `json:"ipc_mode,omitempty"`
-	NetworkMode     string            `json:"network_mode,omitempty"`
-	RestartPolicy   string            `json:"restart_policy,omitempty"`
-	MemoryBytes     int64             `json:"memory_bytes,omitempty"`
-	NanoCPUs        int64             `json:"nano_cpus,omitempty"`
-	PIDsLimit       *int64            `json:"pids_limit,omitempty"`
-	Mounts          []model.SafeMount `json:"mounts"`
-	HasDockerSocket bool              `json:"has_docker_socket"`
+	CoverageComplete bool              `json:"coverage_complete"`
+	User             string            `json:"user"`
+	EntrypointHash   string            `json:"entrypoint_hash,omitempty"`
+	CommandHash      string            `json:"command_hash,omitempty"`
+	Privileged       bool              `json:"privileged"`
+	ReadonlyRootFS   bool              `json:"readonly_root_fs"`
+	CapAdd           []string          `json:"cap_add"`
+	PIDMode          string            `json:"pid_mode,omitempty"`
+	IPCMode          string            `json:"ipc_mode,omitempty"`
+	NetworkMode      string            `json:"network_mode,omitempty"`
+	RestartPolicy    string            `json:"restart_policy,omitempty"`
+	MemoryBytes      int64             `json:"memory_bytes,omitempty"`
+	NanoCPUs         int64             `json:"nano_cpus,omitempty"`
+	PIDsLimit        *int64            `json:"pids_limit,omitempty"`
+	Mounts           []model.SafeMount `json:"mounts"`
+	HasDockerSocket  bool              `json:"has_docker_socket"`
 }
 
 type containerDetailResponse struct {
@@ -105,8 +106,23 @@ func (s *Server) handleContainers(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 
 	items := make([]containerListItem, 0, len(instances))
+	containerIDs := make([]string, 0, len(instances))
 	for _, instance := range instances {
-		items = append(items, listItem(instance))
+		containerIDs = append(containerIDs, instance.ID)
+	}
+	risks, err := s.security.ActiveRiskCounts(r.Context(), containerIDs)
+	if err != nil {
+		writeServiceError(w, s.logger, err, "failed to load container risk counts")
+		return
+	}
+	for _, instance := range instances {
+		item := listItem(instance)
+		counts := risks[instance.ID]
+		item.RiskCounts = containerRiskCounts{
+			Critical: counts[model.SecuritySeverityCritical], High: counts[model.SecuritySeverityHigh],
+			Medium: counts[model.SecuritySeverityMedium], Low: counts[model.SecuritySeverityLow],
+		}
+		items = append(items, item)
 	}
 	// Databases upgraded before the first reconciliation can still expose their
 	// legacy samples. Once a reconciliation timestamp exists, inventory is the
@@ -145,7 +161,8 @@ func (s *Server) handleContainer(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, s.logger, nethttp.StatusOK, containerDetailResponse{
 		Container: listItem(instance), Image: instance.Image, ImageID: instance.ImageID,
 		Inspection: safeInspectionResponse{
-			User: inspection.User, EntrypointHash: inspection.EntrypointHash,
+			CoverageComplete: inspection.CoverageComplete,
+			User:             inspection.User, EntrypointHash: inspection.EntrypointHash,
 			CommandHash: inspection.CommandHash, Privileged: inspection.Privileged,
 			ReadonlyRootFS: inspection.ReadonlyRootFS, CapAdd: nonNilStrings(inspection.CapAdd),
 			PIDMode: inspection.PIDMode, IPCMode: inspection.IPCMode, NetworkMode: inspection.NetworkMode,

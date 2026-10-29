@@ -321,6 +321,9 @@ func runServe(args []string) error {
 	auth := http.NewAuthenticator(managedUsers, cfg.CookieSecure)
 	hub := http.NewHub(logger)
 	securityStore := store.NewSecurityStore(db)
+	if _, err := securityStore.Activate(ctx, "system:startup"); err != nil {
+		return fmt.Errorf("activating container security monitoring: %w", err)
+	}
 	securityService := service.NewSecurity(service.SecurityConfig{
 		Store: securityStore, Notifications: notificationStore, Audit: audit,
 		Cursors: store.NewCursorStore(db), Emit: hub.Broadcast, Logger: logger,
@@ -379,6 +382,7 @@ func runServe(args []string) error {
 		processSecurity:     processSecurity,
 		diffSecurity:        diffSecurity,
 	}, &group, logger)
+	group.Go(func() { securityService.RunSuppressionExpiry(ctx, time.Minute) })
 
 	server, err := newServeServer(cfg, logger, serveServices{
 		inventory: inv, sampler: sampler, deploys: deploys,

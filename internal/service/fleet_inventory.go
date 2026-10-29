@@ -118,7 +118,9 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 	defer f.reconcileMu.Unlock()
 
 	observedAt := time.Now().UTC()
-	containers, err := f.docker.ListAll(ctx)
+	listCtx, cancelList := context.WithTimeout(ctx, 10*time.Second)
+	containers, err := f.docker.ListAll(listCtx)
+	cancelList()
 	if err != nil {
 		if f.evaluator != nil {
 			_ = f.evaluator.RecordCollector(ctx, "security_posture", false, "docker_inventory_unavailable", f.interval)
@@ -153,9 +155,15 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 		}
 	}
 	if err := f.containers.Reconcile(ctx, model.InventoryBatch{
-		ObservedAt: observedAt, Instances: instances, Complete: true,
+		ObservedAt: observedAt, Instances: instances, Complete: true, MissingGrace: 2 * f.interval,
 	}); err != nil {
 		return model.InventorySummary{}, fmt.Errorf("persisting container inventory: %w", err)
+	}
+	if err := f.evaluateClassifications(ctx, observedAt); err != nil {
+		if f.evaluator != nil {
+			_ = f.evaluator.RecordCollector(ctx, "security_posture", false, "classification_evaluation_failed", f.interval)
+		}
+		return model.InventorySummary{}, err
 	}
 	if err := f.evaluatePosture(ctx, instances, inspectionCoverage); err != nil {
 		if f.evaluator != nil {
@@ -177,6 +185,54 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 		}
 	}
 	return f.containers.Summary(ctx)
+}
+
+func (f *FleetInventory) evaluateClassifications(ctx context.Context, observedAt time.Time) error {
+	if f.security == nil || f.evaluator == nil {
+		return nil
+	}
+	activation, err := f.security.Activation(ctx)
+	if err != nil {
+		return fmt.Errorf("reading security activation: %w", err)
+	}
+	if activation.ActivatedAt == nil {
+		return nil
+	}
+	instances, err := f.containers.ListClassificationCandidates(ctx)
+	if err != nil {
+		return err
+	}
+	for _, instance := range instances {
+		observations := []model.SecurityObservation{
+			classificationObservation(instance, "inventory.unknown_container", model.SecuritySeverityHigh,
+				instance.Current && instance.Classification == model.ContainerClassificationUnknown),
+			classificationObservation(instance, "inventory.missing_expected", model.SecuritySeverityCritical,
+				instance.Current && instance.Classification == model.ContainerClassificationMissingExpected),
+		}
+		for _, observation := range observations {
+			observation.ObservedAt = observedAt
+			if _, err := f.evaluator.Evaluate(ctx, model.SecurityEvaluation{
+				Observation: observation, ServiceID: instance.ServiceID,
+			}); err != nil {
+				return fmt.Errorf("evaluating inventory classification for container %q: %w", instance.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func classificationObservation(
+	instance model.ContainerInstance,
+	ruleID string,
+	severity model.SecuritySeverity,
+	detected bool,
+) model.SecurityObservation {
+	return model.SecurityObservation{
+		ContainerID: instance.ID, RuleID: ruleID, Category: model.SecurityCategoryDrift,
+		Severity: severity, Confidence: model.SecurityConfidenceHigh,
+		Detected: detected, CoverageComplete: true,
+		Evidence: map[string]string{"classification": string(instance.Classification)},
+	}
 }
 
 func (f *FleetInventory) summaryWithError(ctx context.Context, reconcileErr error) (model.InventorySummary, error) {
@@ -206,7 +262,9 @@ func (f *FleetInventory) inspectAll(
 	for range workers {
 		group.Go(func() {
 			for index := range jobs {
-				inspection, err := f.docker.Inspect(ctx, containers[index].ID)
+				inspectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				inspection, err := f.docker.Inspect(inspectCtx, containers[index].ID)
+				cancel()
 				results <- inspectionResult{index: index, inspection: inspection, err: err}
 			}
 		})
@@ -227,6 +285,7 @@ func (f *FleetInventory) inspectAll(
 	}()
 
 	byIndex := make(map[int]docker.Inspection, len(containers))
+	priorInspections := make(map[int]model.SafeInspection)
 	coverage := make(map[string]bool, len(containers))
 	vanished := make(map[int]bool)
 	for result := range results {
@@ -237,6 +296,10 @@ func (f *FleetInventory) inspectAll(
 			}
 			f.logger.Warn("container inspection failed", "container", containers[result.index].Name,
 				"error_category", "docker_inspect_unavailable")
+			if previous, getErr := f.containers.Get(ctx, containers[result.index].ID); getErr == nil {
+				previous.Inspection.CoverageComplete = false
+				priorInspections[result.index] = previous.Inspection
+			}
 			continue
 		}
 		byIndex[result.index] = result.inspection
@@ -252,7 +315,11 @@ func (f *FleetInventory) inspectAll(
 		if owners[item.ID] != "" {
 			classification = model.ContainerClassificationManaged
 		}
-		inspection := safeInspection(byIndex[index])
+		inspection, hasPrior := priorInspections[index]
+		if !hasPrior {
+			inspection = safeInspection(byIndex[index])
+			inspection.CoverageComplete = coverage[item.ID]
+		}
 		inspection.PublishedPorts = publishedPorts(item.Published)
 		instances = append(instances, model.ContainerInstance{
 			ID: item.ID, Name: item.Name, Image: item.Image, ImageID: item.ImageID,
@@ -283,7 +350,7 @@ func (f *FleetInventory) evaluatePosture(
 		return nil
 	}
 	for _, instance := range instances {
-		policy, err := f.security.Policy(ctx, instance.ServiceID)
+		policy, err := f.security.PolicyFor(ctx, instance.ServiceID, instance.ID)
 		if err != nil {
 			return err
 		}
@@ -325,6 +392,12 @@ func (f *FleetInventory) Containers(ctx context.Context, query model.ContainerQu
 	return f.containers.List(ctx, query)
 }
 
+// RunningContainers returns one stable, unbounded database snapshot for
+// security scanners. It avoids offset shifts during concurrent reconciliation.
+func (f *FleetInventory) RunningContainers(ctx context.Context) ([]model.ContainerInstance, error) {
+	return f.containers.ListAllRunning(ctx)
+}
+
 // Container returns one durable container identity.
 func (f *FleetInventory) Container(ctx context.Context, id string) (model.ContainerInstance, error) {
 	return f.containers.Get(ctx, id)
@@ -344,7 +417,7 @@ func (f *FleetInventory) Summary(ctx context.Context) (model.InventorySummary, e
 // ApproveContainer records the current image/configuration fingerprint as an
 // explicit operator baseline.
 func (f *FleetInventory) ApproveContainer(ctx context.Context, id, actor string) (model.ContainerBaseline, error) {
-	if f.security == nil || f.audit == nil {
+	if f.security == nil {
 		return model.ContainerBaseline{}, fmt.Errorf("approving container: security workflow is unavailable")
 	}
 	instance, err := f.containers.Get(ctx, id)
@@ -359,32 +432,18 @@ func (f *FleetInventory) ApproveContainer(ctx context.Context, id, actor string)
 	if err != nil {
 		return model.ContainerBaseline{}, err
 	}
-	_, err = f.audit.Record(ctx, model.AuditRecord{
-		Actor: actor, Action: model.AuditContainerApprove,
-		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s image_fingerprint=%s", id, instance.ImageID),
-	})
-	if err != nil {
-		return model.ContainerBaseline{}, fmt.Errorf("auditing container approval: %w", err)
-	}
 	return baseline, nil
 }
 
 // IgnoreContainer records a reasoned bounded or explicitly non-expiring
 // suppression of unknown-container classification.
 func (f *FleetInventory) IgnoreContainer(ctx context.Context, ignore model.ContainerIgnore) (model.ContainerIgnore, error) {
-	if f.security == nil || f.audit == nil {
+	if f.security == nil {
 		return model.ContainerIgnore{}, fmt.Errorf("ignoring container: security workflow is unavailable")
 	}
 	result, err := f.security.Ignore(ctx, ignore)
 	if err != nil {
 		return model.ContainerIgnore{}, err
-	}
-	_, err = f.audit.Record(ctx, model.AuditRecord{
-		Actor: ignore.Actor, Action: model.AuditContainerIgnore,
-		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s ignore=recorded", ignore.ContainerID),
-	})
-	if err != nil {
-		return model.ContainerIgnore{}, fmt.Errorf("auditing container ignore: %w", err)
 	}
 	return result, nil
 }
@@ -395,7 +454,8 @@ func safeInspection(value docker.Inspection) model.SafeInspection {
 		mounts = append(mounts, model.SafeMount{Type: item.Type, Destination: item.Destination, Writable: item.Writable})
 	}
 	return model.SafeInspection{
-		User: value.User, EntrypointHash: value.EntrypointHash, CommandHash: value.CommandHash,
+		CoverageComplete: true,
+		User:             value.User, EntrypointHash: value.EntrypointHash, CommandHash: value.CommandHash,
 		Privileged: value.Privileged, ReadonlyRootFS: value.ReadonlyRootFS,
 		CapAdd: slices.Clone(value.CapAdd), PIDMode: value.PIDMode, IPCMode: value.IPCMode,
 		NetworkMode: value.NetworkMode, RestartPolicy: value.RestartPolicy,

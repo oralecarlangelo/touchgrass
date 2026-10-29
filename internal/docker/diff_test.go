@@ -58,3 +58,18 @@ func TestDiffNormalizationContainsNoFileContent(t *testing.T) {
 		t.Fatalf("normalized diff exposes file content field: %s", encoded)
 	}
 }
+
+func TestDiffSnapshotMarksTruncationIncomplete(t *testing.T) {
+	t.Parallel()
+	values := make([]containertypes.FilesystemChange, maxLayerChanges+1)
+	for index := range values {
+		values[index] = containertypes.FilesystemChange{Kind: containertypes.ChangeAdd, Path: "/tmp/item"}
+	}
+	snapshot, err := normalizeLayerSnapshot(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Complete || len(snapshot.Changes) != maxLayerChanges {
+		t.Fatalf("snapshot = %+v, want bounded incomplete result", snapshot)
+	}
+}

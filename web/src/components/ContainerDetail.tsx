@@ -37,6 +37,11 @@ export function ContainerDetailView({ detail, findings = [], onSelectFinding }: 
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {!inspection.coverage_complete && (
+            <p role="status" className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              Docker inspection is currently unavailable. Values below are the last known posture and must not be treated as current.
+            </p>
+          )}
           <dl>
             <DetailRow label="Instance ID" value={container.id} />
             <DetailRow label="Image" value={detail.image || 'n/a'} />

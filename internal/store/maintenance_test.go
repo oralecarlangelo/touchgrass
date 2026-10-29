@@ -173,6 +173,22 @@ func TestSecurityRetentionTrimsRawBeforeResolvedAndPreservesUnresolved(t *testin
 			t.Fatal(err)
 		}
 	}
+	containers := NewContainerStore(db)
+	oldTime := now.Add(-100 * 24 * time.Hour)
+	if err := containers.Reconcile(ctx, model.InventoryBatch{ObservedAt: oldTime, Complete: true, Instances: []model.ContainerInstance{
+		{ID: "historical", Name: "historical", Classification: model.ContainerClassificationUnknown},
+		{ID: "referenced", Name: "referenced", Classification: model.ContainerClassificationUnknown},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := containers.Reconcile(ctx, model.InventoryBatch{ObservedAt: oldTime.Add(time.Minute), Complete: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO security_findings
+		(fingerprint, episode, container_id, rule_id, category, severity, confidence, status, evidence_json, opened_at, last_seen_at)
+		VALUES ('referenced', 1, 'referenced', 'inventory.unknown_container', 'drift', 'high', 'high', 'open', '{}', ?, ?)`, old, old); err != nil {
+		t.Fatal(err)
+	}
 	result, err := NewMaintenanceStore(db).Run(ctx, model.MaintenancePolicy{
 		Now: now, BatchSize: 10, MaxBytes: 1 << 30,
 		RetentionSecurityObservations: 7 * 24 * time.Hour,
@@ -182,7 +198,7 @@ func TestSecurityRetentionTrimsRawBeforeResolvedAndPreservesUnresolved(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"security_observations", "container_events", "security_findings"} {
+	for _, table := range []string{"security_observations", "container_events", "security_findings", "container_instances"} {
 		if result.DeletedByTable[table] != 1 {
 			t.Errorf("deleted %s=%d, want 1", table, result.DeletedByTable[table])
 		}
@@ -191,8 +207,12 @@ func TestSecurityRetentionTrimsRawBeforeResolvedAndPreservesUnresolved(t *testin
 	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_findings WHERE status = 'open'`).Scan(&open); err != nil {
 		t.Fatal(err)
 	}
-	if open != 1 {
-		t.Fatalf("open findings=%d, want unresolved retained", open)
+	if open != 2 {
+		t.Fatalf("open findings=%d, want both unresolved findings retained", open)
+	}
+	var referenced int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM container_instances WHERE container_id = 'referenced'`).Scan(&referenced); err != nil || referenced != 1 {
+		t.Fatalf("referenced container rows=%d err=%v, want unresolved evidence retained", referenced, err)
 	}
 }
 

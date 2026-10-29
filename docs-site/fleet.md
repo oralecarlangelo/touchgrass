@@ -43,10 +43,12 @@ show unavailable live metrics as null/“not running”; zero is never invented.
 
 ## Security activation and findings
 
-Container security starts disabled. An admin first reviews the complete
-inventory and activates monitoring once. Activation does not approve,
-ignore, restart, or modify anything. Posture, process, and writable-layer
-collectors then create durable finding episodes for:
+Schema migration leaves container security disabled so backup and rollback
+rehearsals remain inert. The native service activates monitoring as
+`system:startup` after migrations succeed. Activation does not approve,
+ignore, restart, or modify anything. Admins review unknown containers in the
+complete inventory while posture, process, and writable-layer collectors
+create durable finding episodes for:
 
 - risky configuration such as privileged mode, host namespaces, Docker
   socket access, root, mutable filesystems, excess capabilities, missing

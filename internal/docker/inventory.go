@@ -74,10 +74,12 @@ func (c *Client) Inspect(ctx context.Context, id string) (Inspection, error) {
 		return Inspection{}, fmt.Errorf("inspecting container %q: %w", id, err)
 	}
 
-	return normalizeInspection(response), nil
+	return NormalizeInspection(response), nil
 }
 
-func normalizeInspection(response container.InspectResponse) Inspection {
+// NormalizeInspection converts Docker's raw response to the same secret-safe
+// representation persisted by the production collector.
+func NormalizeInspection(response container.InspectResponse) Inspection {
 	inspection := Inspection{
 		Mounts: make([]InspectionMount, 0, len(response.Mounts)),
 		Labels: make(map[string]string, 2),

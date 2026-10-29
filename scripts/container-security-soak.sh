@@ -43,7 +43,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && docker im
   docker_mode=1
   index=0
   while [ "$index" -lt "$count" ]; do
-    docker create --label "$label" --name "touchgrass-security-soak-$run_id-$index" \
+    docker run -d --label "$label" --name "touchgrass-security-soak-$run_id-$index" \
       "$fixture_image" sleep 300 >/dev/null
     index=$((index + 1))
   done

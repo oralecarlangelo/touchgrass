@@ -167,8 +167,10 @@ reconciliations never do. Docker events reduce update latency but do not
 replace polling. Live metrics remain a separate running-container stream, so
 stopped rows correctly carry null metrics.
 
-Security monitoring is opt-in and read-only. Admin review activates posture,
-process, and writable-layer collectors. Each collector normalizes data before
+Security monitoring is native and read-only. Migrations leave activation off
+so a migrated backup can be validated without collection; a successful
+`touchgrass serve` startup activates posture, process, and writable-layer
+collectors as `system:startup`. Each collector normalizes data before
 the service layer: inspect excludes environment/arbitrary labels/host sources,
 top keeps only executable identity, and diff keeps path operations without
 contents. The security service fingerprints `(container, rule, baseline)` into

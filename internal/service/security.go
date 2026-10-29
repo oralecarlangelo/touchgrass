@@ -102,7 +102,7 @@ func (s *Security) RecordCollector(
 		Observation: model.SecurityObservation{
 			ContainerID: "collector:" + source, RuleID: "collector." + source + ".failure",
 			Category: model.SecurityCategoryDrift, Severity: model.SecuritySeverityHigh,
-			Confidence: model.SecurityConfidenceHigh, Detected: !complete, CoverageComplete: true,
+			Confidence: model.SecurityConfidenceHigh, Detected: !complete, CoverageComplete: complete,
 			Evidence: map[string]string{
 				"source": source, "error_category": errorCategory,
 				"effective_interval_secs": fmt.Sprintf("%d", int64(effectiveInterval/time.Second)),
@@ -157,17 +157,68 @@ func (s *Security) notifyOpened(ctx context.Context, serviceID string, finding m
 
 // Summary returns aggregate active-finding posture.
 func (s *Security) Summary(ctx context.Context) (model.SecuritySummary, error) {
+	if err := s.expireSuppressions(ctx); err != nil {
+		return model.SecuritySummary{}, err
+	}
 	return s.store.Summary(ctx)
+}
+
+// ActiveRiskCounts returns active finding counts for one bounded inventory page.
+func (s *Security) ActiveRiskCounts(ctx context.Context, containerIDs []string) (map[string]map[model.SecuritySeverity]int, error) {
+	return s.store.ActiveRiskCounts(ctx, containerIDs)
 }
 
 // Findings returns bounded findings matching query.
 func (s *Security) Findings(ctx context.Context, query model.SecurityFindingQuery) ([]model.SecurityFinding, error) {
+	if err := s.expireSuppressions(ctx); err != nil {
+		return nil, err
+	}
 	return s.store.Findings(ctx, query)
 }
 
 // Finding returns one finding episode by id.
 func (s *Security) Finding(ctx context.Context, id int64) (model.SecurityFinding, error) {
+	if err := s.expireSuppressions(ctx); err != nil {
+		return model.SecurityFinding{}, err
+	}
 	return s.store.Finding(ctx, id)
+}
+
+// RunSuppressionExpiry reopens elapsed temporary suppressions even when a
+// container is stopped and produces no further scanner observations.
+func (s *Security) RunSuppressionExpiry(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	if err := s.expireSuppressions(ctx); err != nil && ctx.Err() == nil {
+		s.logger.Error("expiring container security suppressions", "error", err)
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.expireSuppressions(ctx); err != nil {
+				s.logger.Error("expiring container security suppressions", "error", err)
+			}
+		}
+	}
+}
+
+func (s *Security) expireSuppressions(ctx context.Context) error {
+	findings, err := s.store.ExpireSuppressions(ctx, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	for _, finding := range findings {
+		s.notifyOpened(ctx, "", finding)
+		s.emit(model.Event{
+			Type: model.EventSecurityFinding, Message: securityEventMessage(finding), At: time.Now().UTC(),
+		})
+	}
+	return nil
 }
 
 // Policies returns every persisted security policy.
@@ -181,7 +232,7 @@ func (s *Security) CreatePolicy(ctx context.Context, policy model.SecurityPolicy
 	if err != nil {
 		return model.SecurityPolicy{}, err
 	}
-	return created, s.recordAudit(ctx, actor, model.AuditSecurityPolicyCreate, created.ID)
+	return created, nil
 }
 
 // UpdatePolicy replaces and audits a policy body.
@@ -190,7 +241,7 @@ func (s *Security) UpdatePolicy(ctx context.Context, id int64, policy model.Secu
 	if err != nil {
 		return model.SecurityPolicy{}, err
 	}
-	return updated, s.recordAudit(ctx, actor, model.AuditSecurityPolicyUpdate, id)
+	return updated, nil
 }
 
 // DeletePolicy deletes and audits a policy.
@@ -198,10 +249,10 @@ func (s *Security) DeletePolicy(ctx context.Context, id int64, actor string) err
 	if strings.TrimSpace(actor) == "" {
 		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
 	}
-	if err := s.store.DeletePolicy(ctx, id); err != nil {
+	if err := s.store.DeletePolicy(ctx, id, actor); err != nil {
 		return err
 	}
-	return s.recordAudit(ctx, actor, model.AuditSecurityPolicyDelete, id)
+	return nil
 }
 
 // Acknowledge records an operator acknowledgement and audit entry.
@@ -210,7 +261,7 @@ func (s *Security) Acknowledge(ctx context.Context, id int64, actor string) (mod
 	if err != nil {
 		return model.SecurityFinding{}, err
 	}
-	return finding, s.recordAudit(ctx, actor, model.AuditSecurityAcknowledge, id)
+	return finding, nil
 }
 
 // Resolve records an operator resolution and audit entry.
@@ -219,7 +270,7 @@ func (s *Security) Resolve(ctx context.Context, id int64, actor string) (model.S
 	if err != nil {
 		return model.SecurityFinding{}, err
 	}
-	return finding, s.recordAudit(ctx, actor, model.AuditSecurityResolve, id)
+	return finding, nil
 }
 
 // Suppress records a bounded operator suppression and audit entry.
@@ -231,18 +282,7 @@ func (s *Security) Suppress(ctx context.Context, id int64, suppression model.Fin
 	if err != nil {
 		return model.SecurityFinding{}, err
 	}
-	return finding, s.recordAudit(ctx, suppression.Actor, model.AuditSecuritySuppress, id)
-}
-
-func (s *Security) recordAudit(ctx context.Context, actor, action string, findingID int64) error {
-	if s.audit == nil {
-		return nil
-	}
-	_, err := s.audit.Record(ctx, model.AuditRecord{
-		Actor: actor, Action: action, Result: model.AuditSuccess,
-		Detail: fmt.Sprintf("security object %d", findingID),
-	})
-	return err
+	return finding, nil
 }
 
 func securityEventMessage(finding model.SecurityFinding) string {

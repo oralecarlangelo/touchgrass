@@ -123,6 +123,10 @@ func (s *SecurityStore) Approve(ctx context.Context, approval model.ContainerApp
 	if _, err := tx.ExecContext(ctx, `DELETE FROM container_security_ignores WHERE container_id = ?`, approval.ContainerID); err != nil {
 		return model.ContainerBaseline{}, fmt.Errorf("clearing container ignore: %w", err)
 	}
+	if err := insertSecurityAudit(ctx, tx, approval.Actor, model.AuditContainerApprove,
+		fmt.Sprintf("container_id=%s image_fingerprint=%s", approval.ContainerID, approval.ImageFingerprint)); err != nil {
+		return model.ContainerBaseline{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return model.ContainerBaseline{}, fmt.Errorf("committing container approval: %w", err)
 	}
@@ -183,6 +187,10 @@ func (s *SecurityStore) Ignore(ctx context.Context, ignore model.ContainerIgnore
 		ignore.Actor, formatTime(ignore.CreatedAt))
 	if err != nil {
 		return model.ContainerIgnore{}, fmt.Errorf("saving container ignore: %w", err)
+	}
+	if err := insertSecurityAudit(ctx, tx, ignore.Actor, model.AuditContainerIgnore,
+		fmt.Sprintf("container_id=%s ignore=recorded", ignore.ContainerID)); err != nil {
+		return model.ContainerIgnore{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return model.ContainerIgnore{}, err
@@ -270,7 +278,17 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 		return SecurityEvaluationResult{}, err
 	}
 	result := SecurityEvaluationResult{}
-	if observation.Detected && observation.CoverageComplete {
+	reopened := false
+	if found && open.Status == model.SecurityFindingStatusSuppressed && open.SuppressedUntil != nil &&
+		!open.SuppressedUntil.After(observation.ObservedAt) {
+		if _, err := tx.ExecContext(ctx, `UPDATE security_findings SET status = 'open',
+			last_seen_at = ? WHERE id = ?`, formatTime(observation.ObservedAt), open.ID); err != nil {
+			return SecurityEvaluationResult{}, fmt.Errorf("expiring finding suppression: %w", err)
+		}
+		open.Status = model.SecurityFindingStatusOpen
+		reopened = true
+	}
+	if observation.Detected {
 		if found {
 			_, err = tx.ExecContext(ctx, `UPDATE security_findings SET occurrence_count = occurrence_count + 1,
 				last_seen_at = ?, severity = ?, confidence = ?, evidence_json = ? WHERE id = ?`,
@@ -284,6 +302,7 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 			open.Confidence = observation.Confidence
 			open.Evidence = cloneEvidence(observation.Evidence)
 			result.Finding = open
+			result.Opened = reopened
 		} else {
 			var episode int
 			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(episode), 0) + 1
@@ -316,12 +335,87 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 	return result, nil
 }
 
+// ExpireSuppressions reopens every elapsed temporary suppression while
+// preserving its actor, reason, and deadline as immutable episode history.
+func (s *SecurityStore) ExpireSuppressions(ctx context.Context, now time.Time) ([]model.SecurityFinding, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	ids, err := s.expiredSuppressionIDs(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []model.SecurityFinding{}, nil
+	}
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("beginning suppression expiry: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	transitioned := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		result, err := tx.ExecContext(ctx, `UPDATE security_findings SET status = 'open'
+			WHERE id = ? AND status = 'suppressed' AND suppressed_until IS NOT NULL AND suppressed_until <= ?`,
+			id, formatTime(now))
+		if err != nil {
+			return nil, fmt.Errorf("expiring suppression %d: %w", id, err)
+		}
+		if affected, _ := result.RowsAffected(); affected > 0 {
+			transitioned = append(transitioned, id)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing suppression expiry: %w", err)
+	}
+	findings := make([]model.SecurityFinding, 0, len(transitioned))
+	for _, id := range transitioned {
+		finding, err := s.findingByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if finding.Status == model.SecurityFindingStatusOpen {
+			findings = append(findings, finding)
+		}
+	}
+	return findings, nil
+}
+
+func (s *SecurityStore) expiredSuppressionIDs(ctx context.Context, now time.Time) ([]int64, error) {
+	rows, err := s.db.sql.QueryContext(ctx, `SELECT id FROM security_findings
+		WHERE status = 'suppressed' AND suppressed_until IS NOT NULL AND suppressed_until <= ?
+		ORDER BY id`, formatTime(now))
+	if err != nil {
+		return nil, fmt.Errorf("listing expired suppressions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning expired suppression: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating expired suppressions: %w", err)
+	}
+	return ids, nil
+}
+
 // Policy returns the service-specific policy, then the global policy, or the
 // conservative zero-value policy when no override exists.
 func (s *SecurityStore) Policy(ctx context.Context, serviceID string) (model.SecurityPolicy, error) {
-	queries := [][2]string{{"service", serviceID}, {"global", ""}}
+	return s.PolicyFor(ctx, serviceID, "")
+}
+
+// PolicyFor resolves the most-specific supported scope: container, service,
+// then global. Scope identifiers are exact durable IDs, never image names or
+// mutable Compose metadata.
+func (s *SecurityStore) PolicyFor(ctx context.Context, serviceID, containerID string) (model.SecurityPolicy, error) {
+	queries := [][2]string{{"container", containerID}, {"service", serviceID}, {"global", ""}}
 	for _, query := range queries {
-		if query[0] == "service" && query[1] == "" {
+		if query[0] != "global" && query[1] == "" {
 			continue
 		}
 		var encoded string
@@ -399,18 +493,76 @@ func (s *SecurityStore) Summary(ctx context.Context) (model.SecuritySummary, err
 	if err != nil {
 		return model.SecuritySummary{}, fmt.Errorf("summarizing security findings: %w", err)
 	}
-	var lastObserved sql.NullString
-	var coverage sql.NullInt64
-	if err := s.db.sql.QueryRowContext(ctx, `SELECT coverage_complete, observed_at
-		FROM security_observations ORDER BY observed_at DESC, id DESC LIMIT 1`).Scan(&coverage, &lastObserved); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	rows, err := s.db.sql.QueryContext(ctx, `SELECT coverage_complete, last_recorded_at, effective_interval_secs
+		FROM collector_cursors WHERE source IN ('security_posture','security_process','security_diff')`)
+	if err != nil {
 		return model.SecuritySummary{}, fmt.Errorf("reading security coverage: %w", err)
 	}
-	summary.CoverageComplete = coverage.Valid && coverage.Int64 != 0
-	summary.LastObservedAt, err = parseNullTime(lastObserved, "observed_at")
-	if err != nil {
-		return model.SecuritySummary{}, err
+	defer func() { _ = rows.Close() }()
+	collectorCount := 0
+	coverageComplete := true
+	var latest time.Time
+	now := time.Now().UTC()
+	for rows.Next() {
+		var complete bool
+		var recorded sql.NullString
+		var intervalSeconds int64
+		if err := rows.Scan(&complete, &recorded, &intervalSeconds); err != nil {
+			return model.SecuritySummary{}, fmt.Errorf("scanning security coverage: %w", err)
+		}
+		collectorCount++
+		recordedAt, err := parseNullTime(recorded, "last_recorded_at")
+		if err != nil {
+			return model.SecuritySummary{}, err
+		}
+		if recordedAt == nil || intervalSeconds <= 0 || now.Sub(*recordedAt) > 2*time.Duration(intervalSeconds)*time.Second {
+			complete = false
+		}
+		coverageComplete = coverageComplete && complete
+		if recordedAt != nil && recordedAt.After(latest) {
+			latest = *recordedAt
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return model.SecuritySummary{}, fmt.Errorf("iterating security coverage: %w", err)
+	}
+	summary.CoverageComplete = collectorCount == 3 && coverageComplete
+	if !latest.IsZero() {
+		summary.LastObservedAt = &latest
 	}
 	return summary, nil
+}
+
+// ActiveRiskCounts returns active finding counts grouped by container and severity.
+func (s *SecurityStore) ActiveRiskCounts(ctx context.Context, containerIDs []string) (map[string]map[model.SecuritySeverity]int, error) {
+	result := make(map[string]map[model.SecuritySeverity]int, len(containerIDs))
+	if len(containerIDs) == 0 {
+		return result, nil
+	}
+	encodedIDs, err := json.Marshal(containerIDs)
+	if err != nil {
+		return nil, fmt.Errorf("encoding container risk ids: %w", err)
+	}
+	rows, err := s.db.sql.QueryContext(ctx, `SELECT container_id, severity, COUNT(*)
+		FROM security_findings WHERE status IN ('open','acknowledged')
+		AND container_id IN (SELECT value FROM json_each(?))
+		GROUP BY container_id, severity`, string(encodedIDs))
+	if err != nil {
+		return nil, fmt.Errorf("counting active container risks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var containerID, severity string
+		var count int
+		if err := rows.Scan(&containerID, &severity, &count); err != nil {
+			return nil, fmt.Errorf("scanning active container risks: %w", err)
+		}
+		if result[containerID] == nil {
+			result[containerID] = map[model.SecuritySeverity]int{}
+		}
+		result[containerID][model.SecuritySeverity(severity)] = count
+	}
+	return result, rows.Err()
 }
 
 // Finding returns one finding episode by id.
@@ -454,7 +606,12 @@ func (s *SecurityStore) CreatePolicy(ctx context.Context, policy model.SecurityP
 	if err != nil {
 		return model.SecurityPolicy{}, err
 	}
-	result, err := s.db.sql.ExecContext(ctx, `INSERT INTO security_policies
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return model.SecurityPolicy{}, fmt.Errorf("beginning security policy creation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `INSERT INTO security_policies
 		(scope, scope_id, policy_json, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)`,
 		policy.Scope, policy.ScopeID, encoded, actor, formatTime(now))
 	if err != nil {
@@ -463,6 +620,12 @@ func (s *SecurityStore) CreatePolicy(ctx context.Context, policy model.SecurityP
 	id, err := result.LastInsertId()
 	if err != nil {
 		return model.SecurityPolicy{}, err
+	}
+	if err := insertSecurityAudit(ctx, tx, actor, model.AuditSecurityPolicyCreate, fmt.Sprintf("security object %d", id)); err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.SecurityPolicy{}, fmt.Errorf("committing security policy creation: %w", err)
 	}
 	return s.SecurityPolicy(ctx, id)
 }
@@ -481,24 +644,46 @@ func (s *SecurityStore) UpdatePolicy(ctx context.Context, id int64, policy model
 	if err != nil {
 		return model.SecurityPolicy{}, err
 	}
-	_, err = s.db.sql.ExecContext(ctx, `UPDATE security_policies SET policy_json = ?, updated_by = ?, updated_at = ? WHERE id = ?`,
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return model.SecurityPolicy{}, fmt.Errorf("beginning security policy update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `UPDATE security_policies SET policy_json = ?, updated_by = ?, updated_at = ? WHERE id = ?`,
 		encoded, actor, formatTime(time.Now().UTC()), id)
 	if err != nil {
 		return model.SecurityPolicy{}, fmt.Errorf("updating security policy: %w", err)
+	}
+	if err := insertSecurityAudit(ctx, tx, actor, model.AuditSecurityPolicyUpdate, fmt.Sprintf("security object %d", id)); err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.SecurityPolicy{}, fmt.Errorf("committing security policy update: %w", err)
 	}
 	return s.SecurityPolicy(ctx, id)
 }
 
 // DeletePolicy removes one policy by id.
-func (s *SecurityStore) DeletePolicy(ctx context.Context, id int64) error {
-	result, err := s.db.sql.ExecContext(ctx, `DELETE FROM security_policies WHERE id = ?`, id)
+func (s *SecurityStore) DeletePolicy(ctx context.Context, id int64, actor string) error {
+	if strings.TrimSpace(actor) == "" {
+		return errors.New("deleting security policy: actor is required")
+	}
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning security policy deletion: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `DELETE FROM security_policies WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("deleting security policy: %w", err)
 	}
 	if count, _ := result.RowsAffected(); count == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if err := insertSecurityAudit(ctx, tx, actor, model.AuditSecurityPolicyDelete, fmt.Sprintf("security object %d", id)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *SecurityStore) Acknowledge(ctx context.Context, id int64, actor string) (model.SecurityFinding, error) {
@@ -516,12 +701,26 @@ func (s *SecurityStore) Suppress(ctx context.Context, id int64, suppression mode
 	if suppression.Until != nil && !suppression.Until.After(time.Now()) {
 		return model.SecurityFinding{}, errors.New("suppressing finding: until must be in the future")
 	}
-	_, err := s.db.sql.ExecContext(ctx, `UPDATE security_findings SET status = 'suppressed',
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("beginning finding suppression: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE security_findings SET status = 'suppressed',
 		suppressed_until = ?, suppression_reason = ?, suppression_actor = ?
 		WHERE id = ? AND status IN ('open','acknowledged')`, formatNullTime(suppression.Until),
 		suppression.Reason, suppression.Actor, id)
 	if err != nil {
 		return model.SecurityFinding{}, fmt.Errorf("suppressing finding: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return model.SecurityFinding{}, sql.ErrNoRows
+	}
+	if err := insertSecurityAudit(ctx, tx, suppression.Actor, model.AuditSecuritySuppress, fmt.Sprintf("security object %d", id)); err != nil {
+		return model.SecurityFinding{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("committing finding suppression: %w", err)
 	}
 	return s.findingByID(ctx, id)
 }
@@ -550,10 +749,43 @@ func (s *SecurityStore) setFindingStatus(ctx context.Context, id int64, status m
 	case model.SecurityFindingStatusUnknown, model.SecurityFindingStatusOpen, model.SecurityFindingStatusSuppressed:
 		return model.SecurityFinding{}, errors.New("updating finding: invalid status")
 	}
-	if _, err := s.db.sql.ExecContext(ctx, statement, formatTime(now), actor, id); err != nil {
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("beginning finding status update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, statement, formatTime(now), actor, id)
+	if err != nil {
 		return model.SecurityFinding{}, fmt.Errorf("updating finding status: %w", err)
 	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		return model.SecurityFinding{}, sql.ErrNoRows
+	}
+	action := model.AuditSecurityAcknowledge
+	if status == model.SecurityFindingStatusResolved {
+		action = model.AuditSecurityResolve
+	}
+	if err := insertSecurityAudit(ctx, tx, actor, action, fmt.Sprintf("security object %d", id)); err != nil {
+		return model.SecurityFinding{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("committing finding status update: %w", err)
+	}
 	return s.findingByID(ctx, id)
+}
+
+type securityAuditExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertSecurityAudit(ctx context.Context, execer securityAuditExecer, actor, action, detail string) error {
+	_, err := execer.ExecContext(ctx, `INSERT INTO audit
+		(service_id, actor, action, result, detail, created_at) VALUES (NULL, ?, ?, 'success', ?, ?)`,
+		actor, action, detail, formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("inserting atomic security audit: %w", err)
+	}
+	return nil
 }
 
 func (s *SecurityStore) findingByID(ctx context.Context, id int64) (model.SecurityFinding, error) {

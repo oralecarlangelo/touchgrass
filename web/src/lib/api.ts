@@ -1202,15 +1202,22 @@ export interface FleetContainersResponse {
 }
 
 export async function fetchFleetContainers(): Promise<FleetContainersResponse> {
-  const body = await request<FleetContainersResponse>('/api/system/containers');
-
-  return {
-    containers: body.containers ?? [],
-    freshness: body.freshness,
-  };
+  const pageSize = 500;
+  const containers: FleetContainer[] = [];
+  let freshness: ContainerFreshness | undefined;
+  for (let offset = 0; ; offset += pageSize) {
+    const body = await request<FleetContainersResponse>(`/api/system/containers?limit=${pageSize}&offset=${offset}`);
+    const page = body.containers ?? [];
+    containers.push(...page);
+    freshness = body.freshness;
+    if (page.length < pageSize) break;
+  }
+  if (!freshness) throw new Error('Container inventory response did not include freshness metadata');
+  return { containers, freshness };
 }
 
 export interface SafeContainerInspection {
+  coverage_complete: boolean;
   user: string;
   entrypoint_hash?: string;
   command_hash?: string;

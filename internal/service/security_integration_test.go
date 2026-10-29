@@ -17,6 +17,10 @@ import (
 	"testing"
 	"time"
 
+	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/strslice"
+
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -79,6 +83,26 @@ func TestSecurityReplayDoesNotPersistSecrets(t *testing.T) {
 	fixture.SensitiveInputs.Labels = map[string]string{"private.label": canaries[1]}
 	fixture.SensitiveInputs.MountSource = "/host/" + canaries[2]
 	fixture.SensitiveInputs.ProcessArguments = []string{"--token=" + canaries[3]}
+	rawInspection := docker.NormalizeInspection(containertypes.InspectResponse{
+		ContainerJSONBase: &containertypes.ContainerJSONBase{HostConfig: &containertypes.HostConfig{}},
+		Config: &containertypes.Config{
+			Env:    []string{"TOKEN=" + canaries[0]},
+			Cmd:    strslice.StrSlice{"run", "--token=" + canaries[3]},
+			Labels: map[string]string{"private.label": canaries[1]},
+		},
+		Mounts: []containertypes.MountPoint{{
+			Type: mount.TypeBind, Source: "/host/" + canaries[2], Destination: "/data",
+		}},
+	})
+	fixture.Container.Inspection = safeInspection(rawInspection)
+	normalizedProcesses, err := docker.NormalizeProcesses(containertypes.TopResponse{
+		Titles:    []string{"PID", "PPID", "USER", "COMMAND"},
+		Processes: [][]string{{"99", "1", "app", "/tmp/replay-worker --token=" + canaries[3]}},
+	}, 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.Processes = normalizedProcesses
 
 	security, db, paths := openSecurityReplay(t)
 	result := runSecurityReplay(t, security, fixture)
@@ -146,6 +170,15 @@ func TestContainerSecuritySoak(t *testing.T) {
 
 	beforeGoroutines := runtime.NumGoroutine()
 	beforeBytes := securitySoakDatabaseBytes(t, paths.database)
+	processScanner := NewProcessScanner(ProcessScannerConfig{
+		Inventory: inventory, Docker: source, Security: security, Policies: store.NewSecurityStore(db),
+		Interval: 30 * time.Second, Workers: 4, Logger: slog.New(slog.DiscardHandler),
+	})
+	diffScanner := NewDiffScanner(DiffScannerConfig{
+		Inventory: inventory, Docker: source, Security: security, Policies: store.NewSecurityStore(db),
+		Interval: 10 * time.Minute, Workers: 4, Logger: slog.New(slog.DiscardHandler),
+	})
+	measurementDeadline := beginSecuritySoakMeasurement(t)
 	reconciliation := make([]time.Duration, 0, 5)
 	for range 5 {
 		started := time.Now()
@@ -157,23 +190,15 @@ func TestContainerSecuritySoak(t *testing.T) {
 			t.Fatalf("present containers = %d, want %d", summary.PresentCount, count)
 		}
 		reconciliation = append(reconciliation, time.Since(started))
-	}
-
-	processScanner := NewProcessScanner(ProcessScannerConfig{
-		Inventory: inventory, Docker: source, Security: security, Policies: store.NewSecurityStore(db),
-		Interval: 30 * time.Second, Workers: 4, Logger: slog.New(slog.DiscardHandler),
-	})
-	for range 5 {
 		if err := processScanner.Scan(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	diffScanner := NewDiffScanner(DiffScannerConfig{
-		Inventory: inventory, Docker: source, Security: security, Policies: store.NewSecurityStore(db),
-		Interval: 10 * time.Minute, Workers: 4, Logger: slog.New(slog.DiscardHandler),
-	})
 	if err := diffScanner.Scan(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if remaining := time.Until(measurementDeadline); !measurementDeadline.IsZero() && remaining > 0 {
+		time.Sleep(remaining)
 	}
 
 	eventSource := &securitySoakEventSource{event: docker.Event{
@@ -210,7 +235,6 @@ func TestContainerSecuritySoak(t *testing.T) {
 	}
 	t.Logf("SECURITY_SOAK containers=%d reconciliation_p95_ms=%.2f event_update_ms=%.2f goroutine_delta=%d sqlite_growth_bytes=%d",
 		count, float64(p95)/float64(time.Millisecond), float64(eventDelay)/float64(time.Millisecond), goroutineDelta, growth)
-	holdSecuritySoak(t)
 }
 
 type securityReplayArtifacts struct {
@@ -325,8 +349,8 @@ func (f *fakeSecuritySoakDocker) Processes(context.Context, string) (docker.Proc
 	return docker.ProcessSnapshot{Processes: []docker.Process{{PID: 1, User: "1000", Command: "/usr/bin/generic-web"}}, Complete: true}, nil
 }
 
-func (f *fakeSecuritySoakDocker) Diff(context.Context, string) ([]docker.LayerChange, error) {
-	return []docker.LayerChange{}, nil
+func (f *fakeSecuritySoakDocker) Diff(context.Context, string) (docker.LayerSnapshot, error) {
+	return docker.LayerSnapshot{Changes: []docker.LayerChange{}, Complete: true}, nil
 }
 
 type labeledSecuritySoakDocker struct {
@@ -357,7 +381,7 @@ func (l *labeledSecuritySoakDocker) Processes(ctx context.Context, id string) (d
 	return l.client.Processes(ctx, id)
 }
 
-func (l *labeledSecuritySoakDocker) Diff(ctx context.Context, id string) ([]docker.LayerChange, error) {
+func (l *labeledSecuritySoakDocker) Diff(ctx context.Context, id string) (docker.LayerSnapshot, error) {
 	return l.client.Diff(ctx, id)
 }
 
@@ -436,6 +460,26 @@ func holdSecuritySoak(t *testing.T) {
 		duration = parsed
 	}
 	time.Sleep(duration)
+}
+
+func beginSecuritySoakMeasurement(t *testing.T) time.Time {
+	t.Helper()
+	ready := os.Getenv("TOUCHGRASS_SECURITY_SOAK_READY_FILE")
+	if ready == "" {
+		return time.Time{}
+	}
+	if err := os.WriteFile(ready, []byte("ready\n"), 0o600); err != nil { //nolint:gosec // the release harness supplies its private ready-file path.
+		t.Fatal(err)
+	}
+	duration := 10 * time.Second
+	if raw := os.Getenv("TOUCHGRASS_SECURITY_SOAK_HOLD"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		duration = parsed
+	}
+	return time.Now().Add(duration)
 }
 
 type securitySoakEventSource struct {

@@ -90,7 +90,7 @@ func (s *DiffScanner) Scan(ctx context.Context) error {
 	if activation.ActivatedAt == nil {
 		return nil
 	}
-	instances, err := s.inventory.Containers(ctx, model.ContainerQuery{State: "running", Limit: 1000})
+	instances, err := s.inventory.RunningContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("listing running containers for layer scan: %w", err)
 	}
@@ -144,21 +144,25 @@ type diffScanResult struct {
 }
 
 func (s *DiffScanner) scanContainer(ctx context.Context, instance model.ContainerInstance) (bool, error) {
-	policy, err := s.policies.Policy(ctx, instance.ServiceID)
+	policy, err := s.policies.PolicyFor(ctx, instance.ServiceID, instance.ID)
 	if err != nil {
 		return false, err
 	}
-	changes, diffErr := s.docker.Diff(ctx, instance.ID)
-	complete := diffErr == nil
+	diffCtx, cancelDiff := context.WithTimeout(ctx, 30*time.Second)
+	snapshot, diffErr := s.docker.Diff(diffCtx, instance.ID)
+	cancelDiff()
+	complete := diffErr == nil && snapshot.Complete
 	if diffErr != nil {
-		changes = []docker.LayerChange{}
+		snapshot = docker.LayerSnapshot{Changes: []docker.LayerChange{}, Complete: false}
 		s.logger.Warn("container layer collection failed", "container", instance.Name,
 			"error_category", "docker_diff_unavailable")
 	}
-	diffObservations := EvaluateLayerChanges(instance.ID, changes, policy, complete)
+	diffObservations := EvaluateLayerChanges(instance.ID, snapshot.Changes, policy, complete)
 	processObservations := []model.SecurityObservation{}
 	if processLister, ok := s.docker.(docker.ProcessLister); ok {
-		snapshot, processErr := processLister.Processes(ctx, instance.ID)
+		processCtx, cancelProcess := context.WithTimeout(ctx, 10*time.Second)
+		snapshot, processErr := processLister.Processes(processCtx, instance.ID)
+		cancelProcess()
 		if processErr != nil {
 			snapshot = docker.ProcessSnapshot{Processes: []docker.Process{}, Complete: false}
 		}

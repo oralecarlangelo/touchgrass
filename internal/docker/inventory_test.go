@@ -28,7 +28,7 @@ func TestFromSummaryMapsAllLifecycleStates(t *testing.T) {
 func TestNormalizeInspectionExcludesSensitiveFields(t *testing.T) {
 	t.Parallel()
 
-	got := normalizeInspection(container.InspectResponse{
+	got := NormalizeInspection(container.InspectResponse{
 		ContainerJSONBase: &container.ContainerJSONBase{
 			ID:    "container-id",
 			Image: "sha256:image-id",
@@ -89,7 +89,7 @@ func TestNormalizeInspectionExcludesSensitiveFields(t *testing.T) {
 func TestNormalizeInspectionRedactsMountSources(t *testing.T) {
 	t.Parallel()
 
-	got := normalizeInspection(container.InspectResponse{
+	got := NormalizeInspection(container.InspectResponse{
 		ContainerJSONBase: &container.ContainerJSONBase{HostConfig: &container.HostConfig{}},
 		Mounts: []container.MountPoint{
 			{Type: mount.TypeBind, Source: "/var/run/docker.sock", Destination: "/run/docker.sock", RW: true},

@@ -358,8 +358,17 @@ func (s *SecurityStore) Findings(ctx context.Context, query model.SecurityFindin
 		statement += " AND container_id = ?"
 		args = append(args, query.ContainerID)
 	}
-	statement += " ORDER BY last_seen_at DESC, id DESC LIMIT ?"
-	args = append(args, securityLimit(query.Limit))
+	switch query.Sort {
+	case "opened":
+		statement += " ORDER BY opened_at DESC, id DESC"
+	case "severity":
+		statement += ` ORDER BY CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3
+			WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END DESC, last_seen_at DESC, id DESC`
+	default:
+		statement += " ORDER BY last_seen_at DESC, id DESC"
+	}
+	statement += " LIMIT ? OFFSET ?"
+	args = append(args, securityLimit(query.Limit), max(query.Offset, 0))
 	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing security findings: %w", err)
@@ -387,7 +396,106 @@ func (s *SecurityStore) Summary(ctx context.Context) (model.SecuritySummary, err
 	if err != nil {
 		return model.SecuritySummary{}, fmt.Errorf("summarizing security findings: %w", err)
 	}
+	var lastObserved sql.NullString
+	var coverage sql.NullInt64
+	if err := s.db.sql.QueryRowContext(ctx, `SELECT coverage_complete, observed_at
+		FROM security_observations ORDER BY observed_at DESC, id DESC LIMIT 1`).Scan(&coverage, &lastObserved); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return model.SecuritySummary{}, fmt.Errorf("reading security coverage: %w", err)
+	}
+	summary.CoverageComplete = coverage.Valid && coverage.Int64 != 0
+	summary.LastObservedAt, err = parseNullTime(lastObserved, "observed_at")
+	if err != nil {
+		return model.SecuritySummary{}, err
+	}
 	return summary, nil
+}
+
+// Finding returns one finding episode by id.
+func (s *SecurityStore) Finding(ctx context.Context, id int64) (model.SecurityFinding, error) {
+	return s.findingByID(ctx, id)
+}
+
+// Policies lists every policy in deterministic scope order.
+func (s *SecurityStore) Policies(ctx context.Context) ([]model.SecurityPolicy, error) {
+	rows, err := s.db.sql.QueryContext(ctx, `SELECT id, scope, scope_id, policy_json, updated_by, updated_at
+		FROM security_policies ORDER BY scope, scope_id, id`)
+	if err != nil {
+		return nil, fmt.Errorf("listing security policies: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	policies := []model.SecurityPolicy{}
+	for rows.Next() {
+		policy, err := scanSecurityPolicy(rows)
+		if err != nil {
+			return nil, err
+		}
+		policies = append(policies, policy)
+	}
+	return policies, rows.Err()
+}
+
+// SecurityPolicy returns one persisted policy by id.
+func (s *SecurityStore) SecurityPolicy(ctx context.Context, id int64) (model.SecurityPolicy, error) {
+	row := s.db.sql.QueryRowContext(ctx, `SELECT id, scope, scope_id, policy_json, updated_by, updated_at
+		FROM security_policies WHERE id = ?`, id)
+	return scanSecurityPolicy(row)
+}
+
+// CreatePolicy persists one validated policy.
+func (s *SecurityStore) CreatePolicy(ctx context.Context, policy model.SecurityPolicy, actor string) (model.SecurityPolicy, error) {
+	if err := validatePolicy(policy, actor); err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	now := time.Now().UTC()
+	encoded, err := encodePolicy(policy)
+	if err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	result, err := s.db.sql.ExecContext(ctx, `INSERT INTO security_policies
+		(scope, scope_id, policy_json, updated_by, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		policy.Scope, policy.ScopeID, encoded, actor, formatTime(now))
+	if err != nil {
+		return model.SecurityPolicy{}, fmt.Errorf("creating security policy: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	return s.SecurityPolicy(ctx, id)
+}
+
+// UpdatePolicy replaces the policy body while preserving its scope.
+func (s *SecurityStore) UpdatePolicy(ctx context.Context, id int64, policy model.SecurityPolicy, actor string) (model.SecurityPolicy, error) {
+	current, err := s.SecurityPolicy(ctx, id)
+	if err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	policy.Scope, policy.ScopeID = current.Scope, current.ScopeID
+	if err := validatePolicy(policy, actor); err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	encoded, err := encodePolicy(policy)
+	if err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	_, err = s.db.sql.ExecContext(ctx, `UPDATE security_policies SET policy_json = ?, updated_by = ?, updated_at = ? WHERE id = ?`,
+		encoded, actor, formatTime(time.Now().UTC()), id)
+	if err != nil {
+		return model.SecurityPolicy{}, fmt.Errorf("updating security policy: %w", err)
+	}
+	return s.SecurityPolicy(ctx, id)
+}
+
+// DeletePolicy removes one policy by id.
+func (s *SecurityStore) DeletePolicy(ctx context.Context, id int64) error {
+	result, err := s.db.sql.ExecContext(ctx, `DELETE FROM security_policies WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("deleting security policy: %w", err)
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *SecurityStore) Acknowledge(ctx context.Context, id int64, actor string) (model.SecurityFinding, error) {
@@ -401,6 +509,9 @@ func (s *SecurityStore) Resolve(ctx context.Context, id int64, actor string) (mo
 func (s *SecurityStore) Suppress(ctx context.Context, id int64, suppression model.FindingSuppression) (model.SecurityFinding, error) {
 	if strings.TrimSpace(suppression.Actor) == "" || strings.TrimSpace(suppression.Reason) == "" {
 		return model.SecurityFinding{}, errors.New("suppressing finding: actor and reason are required")
+	}
+	if suppression.Until != nil && !suppression.Until.After(time.Now()) {
+		return model.SecurityFinding{}, errors.New("suppressing finding: until must be in the future")
 	}
 	_, err := s.db.sql.ExecContext(ctx, `UPDATE security_findings SET status = 'suppressed',
 		suppressed_until = ?, suppression_reason = ?, suppression_actor = ?
@@ -561,4 +672,66 @@ func securityLimit(value int) int {
 		return 100
 	}
 	return value
+}
+
+func validatePolicy(policy model.SecurityPolicy, actor string) error {
+	if strings.TrimSpace(actor) == "" {
+		return errors.New("security policy actor is required")
+	}
+	switch policy.Scope {
+	case "global":
+		if policy.ScopeID != "" {
+			return errors.New("global security policy must not have a scope id")
+		}
+	case "service", "container":
+		if strings.TrimSpace(policy.ScopeID) == "" {
+			return errors.New("scoped security policy requires a scope id")
+		}
+	default:
+		return errors.New("security policy scope must be global, service, or container")
+	}
+	for _, values := range [][]string{
+		policy.AllowedCapabilities, policy.AllowedPublishedPorts,
+		policy.AllowedExecutablePaths, policy.AllowedWritablePaths,
+	} {
+		if len(values) > 128 {
+			return errors.New("security policy allowlist is too large")
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) == "" || len(value) > 256 || strings.ContainsAny(value, "\r\n\x00") {
+				return errors.New("security policy contains an invalid allowlist value")
+			}
+		}
+	}
+	return nil
+}
+
+func encodePolicy(policy model.SecurityPolicy) (string, error) {
+	policy.ID = 0
+	policy.Scope = ""
+	policy.ScopeID = ""
+	policy.UpdatedBy = ""
+	policy.UpdatedAt = time.Time{}
+	encoded, err := json.Marshal(policy)
+	if err != nil {
+		return "", fmt.Errorf("encoding security policy: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func scanSecurityPolicy(scanner securityFindingScanner) (model.SecurityPolicy, error) {
+	var policy model.SecurityPolicy
+	var encoded, updatedAt string
+	if err := scanner.Scan(&policy.ID, &policy.Scope, &policy.ScopeID, &encoded, &policy.UpdatedBy, &updatedAt); err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	if err := json.Unmarshal([]byte(encoded), &policy); err != nil {
+		return model.SecurityPolicy{}, fmt.Errorf("decoding security policy: %w", err)
+	}
+	parsed, err := parseTime(updatedAt, "updated_at")
+	if err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	policy.UpdatedAt = parsed
+	return policy, nil
 }

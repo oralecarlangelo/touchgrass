@@ -437,6 +437,12 @@ func TestViewerForbiddenMatrix(t *testing.T) {
 		{name: "disable user", method: nethttp.MethodPost, target: "/api/users/1/disable"},
 		{name: "enable user", method: nethttp.MethodPost, target: "/api/users/1/enable"},
 		{name: "delete user", method: nethttp.MethodDelete, target: "/api/users/1"},
+		{name: "acknowledge security finding", method: nethttp.MethodPost, target: "/api/security/findings/1/acknowledge"},
+		{name: "resolve security finding", method: nethttp.MethodPost, target: "/api/security/findings/1/resolve"},
+		{name: "suppress security finding", method: nethttp.MethodPost, target: "/api/security/findings/1/suppress"},
+		{name: "create security policy", method: nethttp.MethodPost, target: "/api/security/policies"},
+		{name: "update security policy", method: nethttp.MethodPatch, target: "/api/security/policies/1"},
+		{name: "delete security policy", method: nethttp.MethodDelete, target: "/api/security/policies/1"},
 	}
 
 	for _, tt := range tests {
@@ -503,6 +509,9 @@ func TestViewerReadsStayOpen(t *testing.T) {
 		{name: "images", method: nethttp.MethodGet, target: "/api/docker/images", status: nethttp.StatusOK},
 		{name: "system", method: nethttp.MethodGet, target: "/api/system", status: nethttp.StatusOK},
 		{name: "fleet", method: nethttp.MethodGet, target: "/api/system/containers", status: nethttp.StatusOK},
+		{name: "security summary", method: nethttp.MethodGet, target: "/api/security/summary", status: nethttp.StatusOK},
+		{name: "security findings", method: nethttp.MethodGet, target: "/api/security/findings", status: nethttp.StatusOK},
+		{name: "security policies", method: nethttp.MethodGet, target: "/api/security/policies", status: nethttp.StatusOK},
 		{name: "me", method: nethttp.MethodGet, target: "/api/auth/me", status: nethttp.StatusOK},
 		{name: "logout", method: nethttp.MethodPost, target: "/api/auth/logout", status: nethttp.StatusNoContent},
 	}

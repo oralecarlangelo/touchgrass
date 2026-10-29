@@ -97,7 +97,8 @@ CREATE TABLE audit_security_new (
   action TEXT NOT NULL CHECK (action IN (
     'cutover', 'rollback', 'login', 'deploy', 'db_backup', 'db_restore',
     'service_create', 'service_delete', 'user_create', 'user_update', 'user_delete',
-    'container_approve', 'container_ignore', 'security_acknowledge', 'security_resolve', 'security_suppress'
+    'container_approve', 'container_ignore', 'security_acknowledge', 'security_resolve', 'security_suppress',
+    'security_policy_create', 'security_policy_update', 'security_policy_delete'
   )),
   result TEXT NOT NULL CHECK (result IN ('success', 'failure')),
   detail TEXT NOT NULL DEFAULT '',

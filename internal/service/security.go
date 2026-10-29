@@ -99,6 +99,45 @@ func (s *Security) Findings(ctx context.Context, query model.SecurityFindingQuer
 	return s.store.Findings(ctx, query)
 }
 
+// Finding returns one finding episode by id.
+func (s *Security) Finding(ctx context.Context, id int64) (model.SecurityFinding, error) {
+	return s.store.Finding(ctx, id)
+}
+
+// Policies returns every persisted security policy.
+func (s *Security) Policies(ctx context.Context) ([]model.SecurityPolicy, error) {
+	return s.store.Policies(ctx)
+}
+
+// CreatePolicy persists and audits a policy.
+func (s *Security) CreatePolicy(ctx context.Context, policy model.SecurityPolicy, actor string) (model.SecurityPolicy, error) {
+	created, err := s.store.CreatePolicy(ctx, policy, actor)
+	if err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	return created, s.recordAudit(ctx, actor, model.AuditSecurityPolicyCreate, created.ID)
+}
+
+// UpdatePolicy replaces and audits a policy body.
+func (s *Security) UpdatePolicy(ctx context.Context, id int64, policy model.SecurityPolicy, actor string) (model.SecurityPolicy, error) {
+	updated, err := s.store.UpdatePolicy(ctx, id, policy, actor)
+	if err != nil {
+		return model.SecurityPolicy{}, err
+	}
+	return updated, s.recordAudit(ctx, actor, model.AuditSecurityPolicyUpdate, id)
+}
+
+// DeletePolicy deletes and audits a policy.
+func (s *Security) DeletePolicy(ctx context.Context, id int64, actor string) error {
+	if strings.TrimSpace(actor) == "" {
+		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+	if err := s.store.DeletePolicy(ctx, id); err != nil {
+		return err
+	}
+	return s.recordAudit(ctx, actor, model.AuditSecurityPolicyDelete, id)
+}
+
 // Acknowledge records an operator acknowledgement and audit entry.
 func (s *Security) Acknowledge(ctx context.Context, id int64, actor string) (model.SecurityFinding, error) {
 	finding, err := s.store.Acknowledge(ctx, id, actor)
@@ -135,7 +174,7 @@ func (s *Security) recordAudit(ctx context.Context, actor, action string, findin
 	}
 	_, err := s.audit.Record(ctx, model.AuditRecord{
 		Actor: actor, Action: action, Result: model.AuditSuccess,
-		Detail: fmt.Sprintf("security finding %d", findingID),
+		Detail: fmt.Sprintf("security object %d", findingID),
 	})
 	return err
 }

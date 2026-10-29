@@ -66,16 +66,21 @@ type ContainerIgnore struct {
 }
 
 type SecurityPolicy struct {
-	AllowPrivileged        bool     `json:"allow_privileged"`
-	AllowHostPID           bool     `json:"allow_host_pid"`
-	AllowHostNetwork       bool     `json:"allow_host_network"`
-	AllowDockerSocket      bool     `json:"allow_docker_socket"`
-	AllowRoot              bool     `json:"allow_root"`
-	AllowWritableRootFS    bool     `json:"allow_writable_root_fs"`
-	AllowedCapabilities    []string `json:"allowed_capabilities"`
-	AllowedPublishedPorts  []string `json:"allowed_published_ports"`
-	AllowedExecutablePaths []string `json:"allowed_executable_paths"`
-	AllowedWritablePaths   []string `json:"allowed_writable_paths"`
+	ID                     int64     `json:"id,omitempty"`
+	Scope                  string    `json:"scope,omitempty"`
+	ScopeID                string    `json:"scope_id,omitempty"`
+	AllowPrivileged        bool      `json:"allow_privileged"`
+	AllowHostPID           bool      `json:"allow_host_pid"`
+	AllowHostNetwork       bool      `json:"allow_host_network"`
+	AllowDockerSocket      bool      `json:"allow_docker_socket"`
+	AllowRoot              bool      `json:"allow_root"`
+	AllowWritableRootFS    bool      `json:"allow_writable_root_fs"`
+	AllowedCapabilities    []string  `json:"allowed_capabilities"`
+	AllowedPublishedPorts  []string  `json:"allowed_published_ports"`
+	AllowedExecutablePaths []string  `json:"allowed_executable_paths"`
+	AllowedWritablePaths   []string  `json:"allowed_writable_paths"`
+	UpdatedBy              string    `json:"updated_by,omitempty"`
+	UpdatedAt              time.Time `json:"updated_at,omitempty"`
 }
 
 type SecurityObservation struct {
@@ -124,14 +129,18 @@ type SecurityFindingQuery struct {
 	Status      SecurityFindingStatus
 	Severity    SecuritySeverity
 	ContainerID string
+	Sort        string
 	Limit       int
+	Offset      int
 }
 
 type SecuritySummary struct {
-	Open       int `json:"open"`
-	Critical   int `json:"critical"`
-	High       int `json:"high"`
-	Suppressed int `json:"suppressed"`
+	Open             int        `json:"open"`
+	Critical         int        `json:"critical"`
+	High             int        `json:"high"`
+	Suppressed       int        `json:"suppressed"`
+	CoverageComplete bool       `json:"coverage_complete"`
+	LastObservedAt   *time.Time `json:"last_observed_at,omitempty"`
 }
 
 type FindingSuppression struct {

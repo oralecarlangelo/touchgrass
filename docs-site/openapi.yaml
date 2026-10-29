@@ -35,6 +35,8 @@ tags:
     description: Container and SDK log ingest, search, and context
   - name: system
     description: Host snapshot and image management
+  - name: security
+    description: Container posture, runtime findings, policies, and operator workflows
   - name: databases
     description: Postgres health, backups, and restores
   - name: performance
@@ -1495,6 +1497,169 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DBJob' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /security/summary:
+    get:
+      operationId: getSecuritySummary
+      tags: [security]
+      summary: Current finding counts and collector coverage
+      responses:
+        '200':
+          description: Security posture summary; coverage_complete is false after a partial collector result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SecuritySummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /security/findings:
+    get:
+      operationId: listSecurityFindings
+      tags: [security]
+      summary: List bounded finding episodes
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, acknowledged, resolved, suppressed] } }
+        - { name: severity, in: query, schema: { type: string, enum: [low, medium, high, critical] } }
+        - { name: container_id, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string, enum: [last_seen, opened, severity] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        '200':
+          description: Findings (the findings array is always present)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [findings, limit, offset]
+                properties:
+                  findings: { type: array, items: { $ref: '#/components/schemas/SecurityFinding' } }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /security/findings/{id}:
+    get:
+      operationId: getSecurityFinding
+      tags: [security]
+      summary: Get one finding episode
+      parameters: [{ $ref: '#/components/parameters/SecurityID' }]
+      responses:
+        '200':
+          description: Finding
+          content: { application/json: { schema: { $ref: '#/components/schemas/SecurityFinding' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /security/findings/{id}/acknowledge:
+    post:
+      operationId: acknowledgeSecurityFinding
+      tags: [security]
+      summary: Acknowledge one open finding as the authenticated admin
+      parameters: [{ $ref: '#/components/parameters/SecurityID' }]
+      responses:
+        '200': { description: Acknowledged finding, content: { application/json: { schema: { $ref: '#/components/schemas/SecurityFinding' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /security/findings/{id}/resolve:
+    post:
+      operationId: resolveSecurityFinding
+      tags: [security]
+      summary: Resolve one active finding as the authenticated admin
+      parameters: [{ $ref: '#/components/parameters/SecurityID' }]
+      responses:
+        '200': { description: Resolved finding, content: { application/json: { schema: { $ref: '#/components/schemas/SecurityFinding' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /security/findings/{id}/suppress:
+    post:
+      operationId: suppressSecurityFinding
+      tags: [security]
+      summary: Suppress one active finding with an auditable reason
+      parameters: [{ $ref: '#/components/parameters/SecurityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1 }
+                until: { type: ['string', 'null'], format: date-time, description: Must be in the future; null is non-expiring }
+      responses:
+        '200': { description: Suppressed finding, content: { application/json: { schema: { $ref: '#/components/schemas/SecurityFinding' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /security/policies:
+    get:
+      operationId: listSecurityPolicies
+      tags: [security]
+      summary: List security policies
+      responses:
+        '200':
+          description: Policies (the policies array is always present)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [policies]
+                properties: { policies: { type: array, items: { $ref: '#/components/schemas/SecurityPolicy' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createSecurityPolicy
+      tags: [security]
+      summary: Create a global, service, or container policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope, policy]
+              properties:
+                scope: { type: string, enum: [global, service, container] }
+                scope_id: { type: string, description: Required for service and container scopes }
+                policy: { $ref: '#/components/schemas/SecurityPolicyBody' }
+      responses:
+        '201': { description: Created policy, content: { application/json: { schema: { $ref: '#/components/schemas/SecurityPolicy' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /security/policies/{id}:
+    patch:
+      operationId: updateSecurityPolicy
+      tags: [security]
+      summary: Replace a policy body while preserving scope
+      parameters: [{ $ref: '#/components/parameters/SecurityID' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [policy]
+              properties: { policy: { $ref: '#/components/schemas/SecurityPolicyBody' } }
+      responses:
+        '200': { description: Updated policy, content: { application/json: { schema: { $ref: '#/components/schemas/SecurityPolicy' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSecurityPolicy
+      tags: [security]
+      summary: Delete a security policy
+      parameters: [{ $ref: '#/components/parameters/SecurityID' }]
+      responses:
+        '204': { description: Policy deleted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 components:
   securitySchemes:
     cookieAuth:
@@ -1561,6 +1726,11 @@ components:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+    SecurityID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
   responses:
     BadRequest:
       description: Invalid input
@@ -1583,6 +1753,68 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    SecuritySummary:
+      type: object
+      required: [open, critical, high, suppressed, coverage_complete]
+      properties:
+        open: { type: integer, minimum: 0 }
+        critical: { type: integer, minimum: 0 }
+        high: { type: integer, minimum: 0 }
+        suppressed: { type: integer, minimum: 0 }
+        coverage_complete: { type: boolean, description: False when the latest collector observation was partial }
+        last_observed_at: { type: ['string', 'null'], format: date-time }
+    SecurityFinding:
+      type: object
+      required: [id, fingerprint, episode, container_id, rule_id, category, severity, confidence, status, occurrence_count, opened_at, last_seen_at, evidence]
+      properties:
+        id: { type: integer }
+        fingerprint: { type: string }
+        episode: { type: integer, minimum: 1 }
+        container_id: { type: string }
+        rule_id: { type: string }
+        category: { type: string, enum: [posture, process, drift] }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        confidence: { type: string, enum: [low, medium, high] }
+        status: { type: string, enum: [open, acknowledged, resolved, suppressed] }
+        occurrence_count: { type: integer, minimum: 1 }
+        evidence:
+          type: object
+          additionalProperties: { type: string }
+          description: Bounded normalized metadata only; never environment values, full arguments, mount sources, or file contents
+        opened_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        acknowledged_at: { type: ['string', 'null'], format: date-time }
+        acknowledged_by: { type: string }
+        resolved_at: { type: ['string', 'null'], format: date-time }
+        resolved_by: { type: string }
+        suppressed_until: { type: ['string', 'null'], format: date-time }
+        suppression_reason: { type: string }
+        suppression_actor: { type: string }
+        notification_status: { type: string, enum: ['', delivered, degraded] }
+    SecurityPolicyBody:
+      type: object
+      properties:
+        allow_privileged: { type: boolean }
+        allow_host_pid: { type: boolean }
+        allow_host_network: { type: boolean }
+        allow_docker_socket: { type: boolean }
+        allow_root: { type: boolean }
+        allow_writable_root_fs: { type: boolean }
+        allowed_capabilities: { type: array, maxItems: 128, items: { type: string, maxLength: 256 } }
+        allowed_published_ports: { type: array, maxItems: 128, items: { type: string, maxLength: 256 } }
+        allowed_executable_paths: { type: array, maxItems: 128, items: { type: string, maxLength: 256 } }
+        allowed_writable_paths: { type: array, maxItems: 128, items: { type: string, maxLength: 256 } }
+    SecurityPolicy:
+      allOf:
+        - $ref: '#/components/schemas/SecurityPolicyBody'
+        - type: object
+          required: [id, scope, scope_id, updated_by, updated_at]
+          properties:
+            id: { type: integer }
+            scope: { type: string, enum: [global, service, container] }
+            scope_id: { type: string }
+            updated_by: { type: string }
+            updated_at: { type: string, format: date-time }
     Error:
       type: object
       required: [error, code]

@@ -66,14 +66,15 @@ type ContainerIgnore struct {
 }
 
 type SecurityPolicy struct {
-	AllowPrivileged       bool     `json:"allow_privileged"`
-	AllowHostPID          bool     `json:"allow_host_pid"`
-	AllowHostNetwork      bool     `json:"allow_host_network"`
-	AllowDockerSocket     bool     `json:"allow_docker_socket"`
-	AllowRoot             bool     `json:"allow_root"`
-	AllowWritableRootFS   bool     `json:"allow_writable_root_fs"`
-	AllowedCapabilities   []string `json:"allowed_capabilities"`
-	AllowedPublishedPorts []string `json:"allowed_published_ports"`
+	AllowPrivileged        bool     `json:"allow_privileged"`
+	AllowHostPID           bool     `json:"allow_host_pid"`
+	AllowHostNetwork       bool     `json:"allow_host_network"`
+	AllowDockerSocket      bool     `json:"allow_docker_socket"`
+	AllowRoot              bool     `json:"allow_root"`
+	AllowWritableRootFS    bool     `json:"allow_writable_root_fs"`
+	AllowedCapabilities    []string `json:"allowed_capabilities"`
+	AllowedPublishedPorts  []string `json:"allowed_published_ports"`
+	AllowedExecutablePaths []string `json:"allowed_executable_paths"`
 }
 
 type SecurityObservation struct {

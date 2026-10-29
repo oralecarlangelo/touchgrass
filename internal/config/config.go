@@ -20,6 +20,7 @@ const (
 	defaultInventoryWorkers          = "4"
 	defaultSecurityProcessInterval   = "30s"
 	defaultSecurityWorkers           = "4"
+	defaultSecurityDiffInterval      = "10m"
 	defaultRetentionMetrics          = "168h"
 	defaultRetentionNotifications    = "720h"
 	defaultRetentionDeploys          = "8760h"
@@ -54,6 +55,7 @@ const (
 	inventoryWorkersEnvVar           = "TOUCHGRASS_INVENTORY_WORKERS"
 	securityProcessIntervalEnvVar    = "TOUCHGRASS_SECURITY_PROCESS_INTERVAL"
 	securityWorkersEnvVar            = "TOUCHGRASS_SECURITY_WORKERS"
+	securityDiffIntervalEnvVar       = "TOUCHGRASS_SECURITY_DIFF_INTERVAL"
 	retentionMetricsEnvVar           = "TOUCHGRASS_RETENTION_METRICS"
 	retentionNotificationsEnvVar     = "TOUCHGRASS_RETENTION_NOTIFICATIONS"
 	retentionDeploysEnvVar           = "TOUCHGRASS_RETENTION_DEPLOYS"
@@ -108,6 +110,8 @@ type Config struct {
 	SecurityProcessInterval time.Duration
 	// SecurityWorkers bounds concurrent container process snapshots.
 	SecurityWorkers int
+	// SecurityDiffInterval paces bounded writable-layer snapshots.
+	SecurityDiffInterval time.Duration
 	// Retention bounds per-area max age.
 	RetentionMetrics       time.Duration
 	RetentionNotifications time.Duration
@@ -191,6 +195,7 @@ type scheduleConfig struct {
 	inventoryWorkers       int
 	securityProcess        time.Duration
 	securityWorkers        int
+	securityDiff           time.Duration
 	retentionMetrics       time.Duration
 	retentionNotifications time.Duration
 	retentionDeploys       time.Duration
@@ -288,6 +293,7 @@ func load(getenv func(string) string) (Config, error) {
 		InventoryWorkers:           schedule.inventoryWorkers,
 		SecurityProcessInterval:    schedule.securityProcess,
 		SecurityWorkers:            schedule.securityWorkers,
+		SecurityDiffInterval:       schedule.securityDiff,
 		RetentionMetrics:           schedule.retentionMetrics,
 		RetentionNotifications:     schedule.retentionNotifications,
 		RetentionDeploys:           schedule.retentionDeploys,
@@ -456,6 +462,17 @@ func loadSchedule(getenv func(string) string) (scheduleConfig, error) {
 		}
 		return scheduleConfig{}, fmt.Errorf("invalid %s %q: want integer from 1 to 32", securityWorkersEnvVar, raw)
 	}
+	securityDiff, err := parseDuration(getenv, securityDiffIntervalEnvVar, defaultSecurityDiffInterval)
+	if err != nil {
+		return scheduleConfig{}, err
+	}
+	if securityDiff < time.Minute || securityDiff > 24*time.Hour {
+		raw := getenv(securityDiffIntervalEnvVar)
+		if raw == "" {
+			raw = defaultSecurityDiffInterval
+		}
+		return scheduleConfig{}, fmt.Errorf("invalid %s %q: want duration from 1m to 24h", securityDiffIntervalEnvVar, raw)
+	}
 
 	retentionMetrics, err := parseDuration(getenv, retentionMetricsEnvVar, defaultRetentionMetrics)
 	if err != nil {
@@ -508,6 +525,7 @@ func loadSchedule(getenv func(string) string) (scheduleConfig, error) {
 		inventoryWorkers:       inventoryWorkers,
 		securityProcess:        securityProcess,
 		securityWorkers:        securityWorkers,
+		securityDiff:           securityDiff,
 		retentionMetrics:       retentionMetrics,
 		retentionNotifications: retentionNotifications,
 		retentionDeploys:       retentionDeploys,

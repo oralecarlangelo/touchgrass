@@ -15,6 +15,7 @@ func defaultTestConfig() Config {
 		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
 		InventoryInterval: 30 * time.Second, InventoryWorkers: 4,
 		SecurityProcessInterval: 30 * time.Second, SecurityWorkers: 4,
+		SecurityDiffInterval:   10 * time.Minute,
 		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
 		AdminPassword: testAdminPassword, CookieSecure: false,
 		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
@@ -42,6 +43,7 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.InventoryWorkers = 8
 	cfg.SecurityProcessInterval = 45 * time.Second
 	cfg.SecurityWorkers = 6
+	cfg.SecurityDiffInterval = 12 * time.Minute
 	cfg.CookieSecure = true
 	cfg.WatchInterval = 2 * time.Second
 	cfg.RetentionErrors = 24 * time.Hour
@@ -90,6 +92,7 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_METRICS_INTERVAL": "10s", adminPasswordEnvVar: testAdminPassword,
 				inventoryIntervalEnvVar: "12s", inventoryWorkersEnvVar: "8",
 				securityProcessIntervalEnvVar: "45s", securityWorkersEnvVar: "6",
+				securityDiffIntervalEnvVar: "12m",
 				"TOUCHGRASS_COOKIE_SECURE": "true", "TOUCHGRASS_WATCH_INTERVAL": "2s",
 				"TOUCHGRASS_RETENTION_ERRORS": "24h", "TOUCHGRASS_INGEST_MAX_OCCURRENCES": "500",
 				"TOUCHGRASS_RETENTION_LOGS": "48h", "TOUCHGRASS_LOGS_MAX_LINES": "1000",
@@ -151,6 +154,16 @@ func TestLoad(t *testing.T) {
 		{
 			name:        "security workers out of range",
 			env:         map[string]string{securityWorkersEnvVar: "33", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "security diff interval too short",
+			env:         map[string]string{securityDiffIntervalEnvVar: "30s", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "security diff interval too long",
+			env:         map[string]string{securityDiffIntervalEnvVar: "25h", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 		{

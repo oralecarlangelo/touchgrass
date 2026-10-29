@@ -87,6 +87,7 @@ type backgroundLoops struct {
 	runtimeEvents       *service.ContainerEventCollector
 	fleetInventory      *service.FleetInventory
 	processSecurity     *service.ProcessScanner
+	diffSecurity        *service.DiffScanner
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -97,7 +98,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(9)
+	group.Add(10)
 
 	go func() {
 		defer group.Done()
@@ -151,6 +152,12 @@ func startBackground(
 		defer group.Done()
 
 		loops.processSecurity.Run(ctx)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.diffSecurity.Run(ctx)
 	}()
 
 	logger.Info("starting background loops",
@@ -341,6 +348,11 @@ func runServe(args []string) error {
 		Policies: securityStore, Interval: cfg.SecurityProcessInterval,
 		Workers: cfg.SecurityWorkers, Logger: logger,
 	})
+	diffSecurity := service.NewDiffScanner(service.DiffScannerConfig{
+		Inventory: fleetInventory, Docker: dockerClient, Security: securityService,
+		Policies: securityStore, Interval: cfg.SecurityDiffInterval,
+		Workers: cfg.SecurityWorkers, Logger: logger,
+	})
 	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
 		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),
 		Environment: cfg.Env, Expected: cutover.Active, Logger: logger,
@@ -365,6 +377,7 @@ func runServe(args []string) error {
 		runtimeEvents:       runtimeEvents,
 		fleetInventory:      fleetInventory,
 		processSecurity:     processSecurity,
+		diffSecurity:        diffSecurity,
 	}, &group, logger)
 
 	server, err := newServeServer(cfg, logger, serveServices{

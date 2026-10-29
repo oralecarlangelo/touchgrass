@@ -75,6 +75,7 @@ type SecurityPolicy struct {
 	AllowedCapabilities    []string `json:"allowed_capabilities"`
 	AllowedPublishedPorts  []string `json:"allowed_published_ports"`
 	AllowedExecutablePaths []string `json:"allowed_executable_paths"`
+	AllowedWritablePaths   []string `json:"allowed_writable_paths"`
 }
 
 type SecurityObservation struct {

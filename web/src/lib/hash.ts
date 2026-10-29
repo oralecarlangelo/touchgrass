@@ -7,6 +7,7 @@ const views: ViewId[] = [
   'issues',
   'logs',
   'notifications',
+  'security',
   'images',
   'fleet',
   'audit',
@@ -14,6 +15,7 @@ const views: ViewId[] = [
   'keys',
   'databases',
   'users',
+  'help',
 ];
 
 export interface HashState {

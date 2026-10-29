@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ChevronDown, Menu } from 'lucide-react';
+import { BookOpen, ChevronDown, CircleHelp, Menu } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -100,6 +100,15 @@ export default function AppShell({
             </nav>
 
             <div className="ml-auto flex items-center gap-1">
+              <Button
+                variant={view === 'help' ? 'secondary' : 'ghost'}
+                size="icon"
+                aria-label="Help and how-to guides"
+                title="Help and how-to guides"
+                onClick={() => onView('help')}
+              >
+                <CircleHelp className="h-4 w-4" aria-hidden />
+              </Button>
               <NotificationBell
                 onViewAll={() => onView('notifications')}
                 onUnauthorized={onUnauthorized}
@@ -125,6 +134,17 @@ export default function AppShell({
                       ))}
                     </DropdownMenuGroup>
                   ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => onView('help')}>
+                    <CircleHelp aria-hidden />
+                    Help and how-to guides
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <a href="/docs/" target="_blank" rel="noreferrer">
+                      <BookOpen aria-hidden />
+                      Full documentation
+                    </a>
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

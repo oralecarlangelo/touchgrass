@@ -12,7 +12,8 @@ export type ViewId =
   | 'rules'
   | 'keys'
   | 'databases'
-  | 'users';
+  | 'users'
+  | 'help';
 
 export interface NavTab {
   id: ViewId;

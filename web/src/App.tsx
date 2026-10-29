@@ -6,6 +6,7 @@ import Dashboard from './components/Dashboard.tsx';
 import ContainerDetail from './components/ContainerDetail.tsx';
 import DatabasesScreen from './components/DatabasesScreen.tsx';
 import HistoryScreen from './components/HistoryScreen.tsx';
+import HelpScreen from './components/HelpScreen.tsx';
 import ImagesScreen from './components/ImagesScreen.tsx';
 import IssuesScreen from './components/IssuesScreen.tsx';
 import KeysScreen from './components/KeysScreen.tsx';
@@ -303,6 +304,8 @@ export default function App() {
           />
         ) : view === 'audit' ? (
           <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+        ) : view === 'help' ? (
+          <HelpScreen isAdmin={isAdmin} onView={handleView} />
         ) : view === 'notifications' ? (
           <NotificationsScreen
             services={services ?? []}

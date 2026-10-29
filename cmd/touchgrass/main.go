@@ -327,7 +327,7 @@ func runServe(args []string) error {
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: serviceStore, Containers: store.NewContainerStore(db), Docker: dockerClient,
 		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
-		Security: securityStore, Audit: audit,
+		Security: securityStore, Evaluator: securityService, Audit: audit,
 	})
 	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
 		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),

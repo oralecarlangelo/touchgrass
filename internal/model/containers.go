@@ -39,6 +39,7 @@ type SafeInspection struct {
 	NanoCPUs        int64       `json:"nano_cpus,omitempty"`
 	PIDsLimit       *int64      `json:"pids_limit,omitempty"`
 	Mounts          []SafeMount `json:"mounts"`
+	PublishedPorts  []string    `json:"published_ports,omitempty"`
 	HasDockerSocket bool        `json:"has_docker_socket"`
 }
 

@@ -46,6 +46,7 @@ func FingerprintInspection(value model.SafeInspection) string {
 		MemoryBytes, NanoCPUs                                                           int64
 		PIDsLimit                                                                       *int64
 		Mounts                                                                          []model.SafeMount
+		PublishedPorts                                                                  []string
 	}{
 		User: value.User, EntrypointHash: value.EntrypointHash, CommandHash: value.CommandHash,
 		PIDMode: value.PIDMode, IPCMode: value.IPCMode, NetworkMode: value.NetworkMode,
@@ -53,6 +54,7 @@ func FingerprintInspection(value model.SafeInspection) string {
 		ReadonlyRootFS: value.ReadonlyRootFS, HasDockerSocket: value.HasDockerSocket,
 		CapAdd: capabilities, MemoryBytes: value.MemoryBytes, NanoCPUs: value.NanoCPUs,
 		PIDsLimit: value.PIDsLimit, Mounts: mounts,
+		PublishedPorts: slices.Sorted(slices.Values(value.PublishedPorts)),
 	}
 	encoded, _ := json.Marshal(canonical)
 	sum := sha256.Sum256(encoded)
@@ -265,7 +267,7 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 		return SecurityEvaluationResult{}, err
 	}
 	result := SecurityEvaluationResult{}
-	if observation.Detected {
+	if observation.Detected && observation.CoverageComplete {
 		if found {
 			_, err = tx.ExecContext(ctx, `UPDATE security_findings SET occurrence_count = occurrence_count + 1,
 				last_seen_at = ?, severity = ?, confidence = ?, evidence_json = ? WHERE id = ?`,
@@ -309,6 +311,32 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 		return SecurityEvaluationResult{}, fmt.Errorf("committing security evaluation: %w", err)
 	}
 	return result, nil
+}
+
+// Policy returns the service-specific policy, then the global policy, or the
+// conservative zero-value policy when no override exists.
+func (s *SecurityStore) Policy(ctx context.Context, serviceID string) (model.SecurityPolicy, error) {
+	queries := [][2]string{{"service", serviceID}, {"global", ""}}
+	for _, query := range queries {
+		if query[0] == "service" && query[1] == "" {
+			continue
+		}
+		var encoded string
+		err := s.db.sql.QueryRowContext(ctx, `SELECT policy_json FROM security_policies
+			WHERE scope = ? AND scope_id = ?`, query[0], query[1]).Scan(&encoded)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return model.SecurityPolicy{}, fmt.Errorf("reading security policy: %w", err)
+		}
+		var policy model.SecurityPolicy
+		if err := json.Unmarshal([]byte(encoded), &policy); err != nil {
+			return model.SecurityPolicy{}, fmt.Errorf("decoding security policy: %w", err)
+		}
+		return policy, nil
+	}
+	return model.SecurityPolicy{}, nil
 }
 
 func (s *SecurityStore) Findings(ctx context.Context, query model.SecurityFindingQuery) ([]model.SecurityFinding, error) {

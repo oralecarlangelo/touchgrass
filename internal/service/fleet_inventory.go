@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -28,6 +30,7 @@ type FleetInventoryConfig struct {
 	InspectLimit int
 	Logger       *slog.Logger
 	Security     *store.SecurityStore
+	Evaluator    *Security
 	Audit        *Audit
 }
 
@@ -40,6 +43,7 @@ type FleetInventory struct {
 	inspectLimit int
 	logger       *slog.Logger
 	security     *store.SecurityStore
+	evaluator    *Security
 	audit        *Audit
 	requests     chan struct{}
 	reconcileMu  sync.Mutex
@@ -62,7 +66,7 @@ func NewFleetInventory(cfg FleetInventoryConfig) *FleetInventory {
 	return &FleetInventory{
 		services: cfg.Services, containers: cfg.Containers, docker: cfg.Docker,
 		interval: interval, inspectLimit: inspectLimit, logger: logger,
-		security: cfg.Security, audit: cfg.Audit,
+		security: cfg.Security, evaluator: cfg.Evaluator, audit: cfg.Audit,
 		requests: make(chan struct{}, 1),
 	}
 }
@@ -134,7 +138,7 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 		return model.InventorySummary{}, err
 	}
 
-	instances := f.inspectAll(ctx, containers, owners, observedAt)
+	instances, inspectionCoverage := f.inspectAll(ctx, containers, owners, observedAt)
 	if f.security != nil {
 		for index := range instances {
 			instances[index].ConfigurationFingerprint = store.FingerprintInspection(instances[index].Inspection)
@@ -149,6 +153,9 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 		ObservedAt: observedAt, Instances: instances, Complete: true,
 	}); err != nil {
 		return model.InventorySummary{}, fmt.Errorf("persisting container inventory: %w", err)
+	}
+	if err := f.evaluatePosture(ctx, instances, inspectionCoverage); err != nil {
+		return model.InventorySummary{}, err
 	}
 	return f.containers.Summary(ctx)
 }
@@ -172,7 +179,7 @@ func (f *FleetInventory) inspectAll(
 	containers []docker.Container,
 	owners map[string]string,
 	observedAt time.Time,
-) []model.ContainerInstance {
+) ([]model.ContainerInstance, map[string]bool) {
 	jobs := make(chan int)
 	results := make(chan inspectionResult, len(containers))
 	workers := min(f.inspectLimit, max(len(containers), 1))
@@ -201,6 +208,7 @@ func (f *FleetInventory) inspectAll(
 	}()
 
 	byIndex := make(map[int]docker.Inspection, len(containers))
+	coverage := make(map[string]bool, len(containers))
 	vanished := make(map[int]bool)
 	for result := range results {
 		if result.err != nil {
@@ -213,6 +221,7 @@ func (f *FleetInventory) inspectAll(
 			continue
 		}
 		byIndex[result.index] = result.inspection
+		coverage[containers[result.index].ID] = true
 	}
 
 	instances := make([]model.ContainerInstance, 0, len(containers)-len(vanished))
@@ -224,6 +233,8 @@ func (f *FleetInventory) inspectAll(
 		if owners[item.ID] != "" {
 			classification = model.ContainerClassificationManaged
 		}
+		inspection := safeInspection(byIndex[index])
+		inspection.PublishedPorts = publishedPorts(item.Published)
 		instances = append(instances, model.ContainerInstance{
 			ID: item.ID, Name: item.Name, Image: item.Image, ImageID: item.ImageID,
 			State: item.State, Status: item.Status,
@@ -231,10 +242,63 @@ func (f *FleetInventory) inspectAll(
 			ComposeService: item.Labels[docker.LabelComposeService],
 			ServiceID:      owners[item.ID], Classification: classification,
 			Current: true, Present: true, FirstSeenAt: observedAt, LastSeenAt: observedAt,
-			ImageFingerprint: item.ImageID, Inspection: safeInspection(byIndex[index]),
+			ImageFingerprint: item.ImageID, Inspection: inspection,
 		})
 	}
-	return instances
+	return instances, coverage
+}
+
+func (f *FleetInventory) evaluatePosture(
+	ctx context.Context,
+	instances []model.ContainerInstance,
+	coverage map[string]bool,
+) error {
+	if f.security == nil || f.evaluator == nil {
+		return nil
+	}
+	activation, err := f.security.Activation(ctx)
+	if err != nil {
+		return fmt.Errorf("reading security activation: %w", err)
+	}
+	if activation.ActivatedAt == nil {
+		return nil
+	}
+	for _, instance := range instances {
+		policy, err := f.security.Policy(ctx, instance.ServiceID)
+		if err != nil {
+			return err
+		}
+		baselineFingerprint := ""
+		expected := instance
+		baseline, err := f.security.Baseline(ctx, instance.ID)
+		if err == nil {
+			expected.ImageFingerprint = baseline.ImageFingerprint
+			expected.ConfigurationFingerprint = baseline.ConfigurationFingerprint
+			baselineFingerprint = baseline.ImageFingerprint + ":" + baseline.ConfigurationFingerprint
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("reading posture baseline: %w", err)
+		}
+		for _, observation := range EvaluatePosture(expected, instance.Inspection, policy) {
+			observation.CoverageComplete = coverage[instance.ID]
+			observation.ObservedAt = instance.LastSeenAt
+			if _, err := f.evaluator.Evaluate(ctx, model.SecurityEvaluation{
+				Observation: observation, BaselineFingerprint: baselineFingerprint,
+				ServiceID: instance.ServiceID,
+			}); err != nil {
+				return fmt.Errorf("evaluating posture for container %q: %w", instance.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func publishedPorts(values []docker.PublishedPort) []string {
+	ports := make([]string, 0, len(values))
+	for _, value := range values {
+		ports = append(ports, fmt.Sprintf("%s:%d->%d/%s", value.HostIP, value.HostPort, value.ContainerPort, value.Proto))
+	}
+	slices.Sort(ports)
+	return ports
 }
 
 // Containers returns bounded inventory rows.

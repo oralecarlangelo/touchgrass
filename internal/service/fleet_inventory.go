@@ -27,6 +27,8 @@ type FleetInventoryConfig struct {
 	Interval     time.Duration
 	InspectLimit int
 	Logger       *slog.Logger
+	Security     *store.SecurityStore
+	Audit        *Audit
 }
 
 // FleetInventory reconciles complete Docker inventory into durable identity.
@@ -37,6 +39,8 @@ type FleetInventory struct {
 	interval     time.Duration
 	inspectLimit int
 	logger       *slog.Logger
+	security     *store.SecurityStore
+	audit        *Audit
 	requests     chan struct{}
 	reconcileMu  sync.Mutex
 }
@@ -58,6 +62,7 @@ func NewFleetInventory(cfg FleetInventoryConfig) *FleetInventory {
 	return &FleetInventory{
 		services: cfg.Services, containers: cfg.Containers, docker: cfg.Docker,
 		interval: interval, inspectLimit: inspectLimit, logger: logger,
+		security: cfg.Security, audit: cfg.Audit,
 		requests: make(chan struct{}, 1),
 	}
 }
@@ -130,6 +135,16 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 	}
 
 	instances := f.inspectAll(ctx, containers, owners, observedAt)
+	if f.security != nil {
+		for index := range instances {
+			instances[index].ConfigurationFingerprint = store.FingerprintInspection(instances[index].Inspection)
+			classification, classifyErr := f.security.Classify(ctx, instances[index], observedAt)
+			if classifyErr != nil {
+				return model.InventorySummary{}, fmt.Errorf("classifying container %q: %w", instances[index].ID, classifyErr)
+			}
+			instances[index].Classification = classification
+		}
+	}
 	if err := f.containers.Reconcile(ctx, model.InventoryBatch{
 		ObservedAt: observedAt, Instances: instances, Complete: true,
 	}); err != nil {
@@ -243,14 +258,54 @@ func (f *FleetInventory) Summary(ctx context.Context) (model.InventorySummary, e
 	return summary, nil
 }
 
+// ApproveContainer records the current image/configuration fingerprint as an
+// explicit operator baseline.
+func (f *FleetInventory) ApproveContainer(ctx context.Context, id, actor string) (model.ContainerBaseline, error) {
+	if f.security == nil || f.audit == nil {
+		return model.ContainerBaseline{}, fmt.Errorf("approving container: security workflow is unavailable")
+	}
+	instance, err := f.containers.Get(ctx, id)
+	if err != nil {
+		return model.ContainerBaseline{}, err
+	}
+	configuration := store.FingerprintInspection(instance.Inspection)
+	baseline, err := f.security.Approve(ctx, model.ContainerApproval{
+		ContainerID: id, ImageFingerprint: instance.ImageID,
+		ConfigurationFingerprint: configuration, Actor: actor,
+	})
+	if err != nil {
+		return model.ContainerBaseline{}, err
+	}
+	_, err = f.audit.Record(ctx, model.AuditRecord{Actor: actor, Action: model.AuditContainerApprove,
+		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s image_fingerprint=%s", id, instance.ImageID)})
+	if err != nil {
+		return model.ContainerBaseline{}, fmt.Errorf("auditing container approval: %w", err)
+	}
+	return baseline, nil
+}
+
+// IgnoreContainer records a reasoned bounded or explicitly non-expiring
+// suppression of unknown-container classification.
+func (f *FleetInventory) IgnoreContainer(ctx context.Context, ignore model.ContainerIgnore) (model.ContainerIgnore, error) {
+	if f.security == nil || f.audit == nil {
+		return model.ContainerIgnore{}, fmt.Errorf("ignoring container: security workflow is unavailable")
+	}
+	result, err := f.security.Ignore(ctx, ignore)
+	if err != nil {
+		return model.ContainerIgnore{}, err
+	}
+	_, err = f.audit.Record(ctx, model.AuditRecord{Actor: ignore.Actor, Action: model.AuditContainerIgnore,
+		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s ignore=recorded", ignore.ContainerID)})
+	if err != nil {
+		return model.ContainerIgnore{}, fmt.Errorf("auditing container ignore: %w", err)
+	}
+	return result, nil
+}
+
 func safeInspection(value docker.Inspection) model.SafeInspection {
 	mounts := make([]model.SafeMount, 0, len(value.Mounts))
 	for _, item := range value.Mounts {
 		mounts = append(mounts, model.SafeMount{Type: item.Type, Destination: item.Destination, Writable: item.Writable})
-	}
-	labels := make(map[string]string, len(value.Labels))
-	for key, label := range value.Labels {
-		labels[key] = label
 	}
 	return model.SafeInspection{
 		User: value.User, EntrypointHash: value.EntrypointHash, CommandHash: value.CommandHash,
@@ -258,7 +313,7 @@ func safeInspection(value docker.Inspection) model.SafeInspection {
 		CapAdd: slices.Clone(value.CapAdd), PIDMode: value.PIDMode, IPCMode: value.IPCMode,
 		NetworkMode: value.NetworkMode, RestartPolicy: value.RestartPolicy,
 		MemoryBytes: value.MemoryBytes, NanoCPUs: value.NanoCPUs, PIDsLimit: value.PIDsLimit,
-		Mounts: mounts, HasDockerSocket: value.HasDockerSocket, Labels: labels,
+		Mounts: mounts, HasDockerSocket: value.HasDockerSocket,
 	}
 }
 

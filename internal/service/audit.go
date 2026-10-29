@@ -37,10 +37,15 @@ func (a *Audit) Record(ctx context.Context, record model.AuditRecord) (int64, er
 		model.AuditServiceDelete,
 		model.AuditUserCreate,
 		model.AuditUserUpdate,
-		model.AuditUserDelete:
+		model.AuditUserDelete,
+		model.AuditContainerApprove,
+		model.AuditContainerIgnore,
+		model.AuditSecurityAcknowledge,
+		model.AuditSecurityResolve,
+		model.AuditSecuritySuppress:
 	default:
 		return 0, fmt.Errorf(
-			"%w: action %q (want cutover, rollback, login, deploy, service_create, service_delete, user_create, user_update, or user_delete)",
+			"%w: unsupported audit action %q",
 			ErrInvalidInput,
 			record.Action,
 		)

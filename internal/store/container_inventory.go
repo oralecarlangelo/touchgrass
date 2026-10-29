@@ -104,10 +104,7 @@ func upsertContainer(ctx context.Context, tx *sql.Tx, instance model.ContainerIn
 		state = excluded.state, status = excluded.status,
 		compose_project = excluded.compose_project, compose_service = excluded.compose_service,
 		service_id = excluded.service_id,
-		classification = CASE
-			WHEN container_instances.classification IN ('approved_observed', 'ignored')
-				AND excluded.classification = 'unknown' THEN container_instances.classification
-			ELSE excluded.classification END,
+		classification = excluded.classification,
 		current = 1, present = 1, last_seen_at = excluded.last_seen_at, absent_at = NULL,
 		image_fingerprint = excluded.image_fingerprint,
 		configuration_fingerprint = excluded.configuration_fingerprint,
@@ -301,9 +298,6 @@ func normalizeSafeInspection(value model.SafeInspection) model.SafeInspection {
 	}
 	if value.Mounts == nil {
 		value.Mounts = []model.SafeMount{}
-	}
-	if value.Labels == nil {
-		value.Labels = map[string]string{}
 	}
 	return value
 }

@@ -144,6 +144,8 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/system", server.handleSystem)
 	mux.HandleFunc("GET /api/system/containers", server.handleContainers)
 	mux.HandleFunc("GET /api/system/containers/{id}", server.handleContainer)
+	mux.HandleFunc("POST /api/system/containers/{id}/approve", server.requireAdmin(server.handleApproveContainer))
+	mux.HandleFunc("POST /api/system/containers/{id}/ignore", server.requireAdmin(server.handleIgnoreContainer))
 	mux.HandleFunc("GET /api/system/history", server.handleSystemHistory)
 	mux.HandleFunc("GET /api/databases", server.handleDatabases)
 	mux.HandleFunc("GET /api/databases/backups", server.handleBackups)

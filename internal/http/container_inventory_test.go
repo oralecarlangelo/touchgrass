@@ -3,11 +3,13 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	nethttp "net/http"
+	"net/http/httptest"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -53,7 +55,6 @@ func TestHandleContainerDetailExcludesSensitiveInspection(t *testing.T) {
 			ID: "detail-id", Name: "api-1", State: "running",
 			Inspection: model.SafeInspection{
 				User: "10001", CommandHash: "safe-command-hash",
-				Labels: map[string]string{"private.token": "secret-label"},
 				Mounts: []model.SafeMount{{Type: "bind", Destination: "/data", Writable: true}},
 			},
 		}}})
@@ -62,7 +63,7 @@ func TestHandleContainerDetailExcludesSensitiveInspection(t *testing.T) {
 	if status != nethttp.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
 	}
-	for _, forbidden := range []string{"secret-label", "private.token", "environment", "source"} {
+	for _, forbidden := range []string{"private.token", "environment", "source"} {
 		if strings.Contains(string(body), forbidden) {
 			t.Errorf("detail response contains forbidden inspection value %q: %s", forbidden, body)
 		}
@@ -115,6 +116,69 @@ func TestHandleContainersShowsStaleCollector(t *testing.T) {
 	if !got.Freshness.Stale || !got.Freshness.Complete {
 		t.Errorf("freshness = %+v, want complete and stale", got.Freshness)
 	}
+}
+
+func TestApproveContainerViewerForbiddenAndAdminAudited(t *testing.T) {
+	t.Parallel()
+
+	server, db := fullTestServer(t)
+	seedContainerInventory(t, db, model.InventoryBatch{ObservedAt: time.Now().UTC(), Complete: true,
+		Instances: []model.ContainerInstance{{
+			ID: "approve-http", Name: "helper-1", ImageID: "sha256:image", State: "running",
+			Inspection: model.SafeInspection{User: "10001", CapAdd: []string{}, Mounts: []model.SafeMount{}},
+		}}})
+
+	status, _ := requestWithCookie(t, server, viewerCookie(t, server), nethttp.MethodPost,
+		"/api/system/containers/approve-http/approve", "")
+	if status != nethttp.StatusForbidden {
+		t.Fatalf("viewer status = %d, want 403", status)
+	}
+	status, body := doRequest(t, server, nethttp.MethodPost, "/api/system/containers/approve-http/approve", "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("admin status = %d, want 200 (body: %s)", status, body)
+	}
+	entries, err := store.NewAuditStore(db).List(context.Background(), "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, entry := range entries {
+		if entry.Action == model.AuditContainerApprove && entry.Actor == defaultLoginUsername &&
+			strings.Contains(entry.Detail, "approve-http") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("audit entries = %+v, want admin container approval", entries)
+	}
+}
+
+func TestIgnoreContainerRequiresReasonHandler(t *testing.T) {
+	t.Parallel()
+
+	server, db := fullTestServer(t)
+	seedContainerInventory(t, db, model.InventoryBatch{ObservedAt: time.Now().UTC(), Complete: true,
+		Instances: []model.ContainerInstance{{ID: "ignore-http", Name: "helper-1"}}})
+	status, _ := doRequest(t, server, nethttp.MethodPost, "/api/system/containers/ignore-http/ignore",
+		`{"non_expiring":true}`)
+	if status != nethttp.StatusBadRequest {
+		t.Errorf("status = %d, want 400", status)
+	}
+}
+
+func requestWithCookie(t *testing.T, server *Server, cookie *nethttp.Cookie, method, target, body string) (int, []byte) {
+	t.Helper()
+	req := httptest.NewRequestWithContext(t.Context(), method, target, strings.NewReader(body))
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	server.handler.ServeHTTP(rec, req)
+	res := rec.Result()
+	defer func() { _ = res.Body.Close() }()
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res.StatusCode, data
 }
 
 func seedContainerInventory(t *testing.T, db *store.DB, batch model.InventoryBatch) {

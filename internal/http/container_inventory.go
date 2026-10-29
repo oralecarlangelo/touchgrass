@@ -81,6 +81,12 @@ type containerDetailResponse struct {
 	Inspection safeInspectionResponse `json:"inspection"`
 }
 
+type ignoreContainerRequest struct {
+	Reason      string     `json:"reason"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+	NonExpiring bool       `json:"non_expiring"`
+}
+
 func (s *Server) handleContainers(w nethttp.ResponseWriter, r *nethttp.Request) {
 	query, ok := parseContainerQuery(w, s, r)
 	if !ok {
@@ -148,6 +154,39 @@ func (s *Server) handleContainer(w nethttp.ResponseWriter, r *nethttp.Request) {
 			Mounts: nonNilMounts(inspection.Mounts), HasDockerSocket: inspection.HasDockerSocket,
 		},
 	})
+}
+
+func (s *Server) handleApproveContainer(w nethttp.ResponseWriter, r *nethttp.Request) {
+	baseline, err := s.fleetInventory.ApproveContainer(r.Context(), r.PathValue("id"), requestActor(r))
+	if errors.Is(err, store.ErrContainerNotFound) {
+		writeError(w, s.logger, err, "container not found", "not_found", nethttp.StatusNotFound)
+		return
+	}
+	if err != nil {
+		writeServiceError(w, s.logger, err, "failed to approve container")
+		return
+	}
+	writeJSON(w, s.logger, nethttp.StatusOK, baseline)
+}
+
+func (s *Server) handleIgnoreContainer(w nethttp.ResponseWriter, r *nethttp.Request) {
+	body, ok := decodeBody[ignoreContainerRequest](w, s.logger, r)
+	if !ok {
+		return
+	}
+	ignored, err := s.fleetInventory.IgnoreContainer(r.Context(), model.ContainerIgnore{
+		ContainerID: r.PathValue("id"), Reason: body.Reason, ExpiresAt: body.ExpiresAt,
+		NonExpiring: body.NonExpiring, Actor: requestActor(r),
+	})
+	if errors.Is(err, store.ErrContainerNotFound) {
+		writeError(w, s.logger, err, "container not found", "not_found", nethttp.StatusNotFound)
+		return
+	}
+	if err != nil {
+		writeError(w, s.logger, err, "invalid ignore request", "invalid_request", nethttp.StatusBadRequest)
+		return
+	}
+	writeJSON(w, s.logger, nethttp.StatusOK, ignored)
 }
 
 func parseContainerQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.Request) (model.ContainerQuery, bool) {

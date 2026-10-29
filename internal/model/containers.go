@@ -25,22 +25,21 @@ type SafeMount struct {
 // SafeInspection contains security-relevant normalized configuration. It has
 // no fields capable of accepting environment values or host mount sources.
 type SafeInspection struct {
-	User            string            `json:"user"`
-	EntrypointHash  string            `json:"entrypoint_hash,omitempty"`
-	CommandHash     string            `json:"command_hash,omitempty"`
-	Privileged      bool              `json:"privileged"`
-	ReadonlyRootFS  bool              `json:"readonly_root_fs"`
-	CapAdd          []string          `json:"cap_add"`
-	PIDMode         string            `json:"pid_mode,omitempty"`
-	IPCMode         string            `json:"ipc_mode,omitempty"`
-	NetworkMode     string            `json:"network_mode,omitempty"`
-	RestartPolicy   string            `json:"restart_policy,omitempty"`
-	MemoryBytes     int64             `json:"memory_bytes,omitempty"`
-	NanoCPUs        int64             `json:"nano_cpus,omitempty"`
-	PIDsLimit       *int64            `json:"pids_limit,omitempty"`
-	Mounts          []SafeMount       `json:"mounts"`
-	HasDockerSocket bool              `json:"has_docker_socket"`
-	Labels          map[string]string `json:"labels"`
+	User            string      `json:"user"`
+	EntrypointHash  string      `json:"entrypoint_hash,omitempty"`
+	CommandHash     string      `json:"command_hash,omitempty"`
+	Privileged      bool        `json:"privileged"`
+	ReadonlyRootFS  bool        `json:"readonly_root_fs"`
+	CapAdd          []string    `json:"cap_add"`
+	PIDMode         string      `json:"pid_mode,omitempty"`
+	IPCMode         string      `json:"ipc_mode,omitempty"`
+	NetworkMode     string      `json:"network_mode,omitempty"`
+	RestartPolicy   string      `json:"restart_policy,omitempty"`
+	MemoryBytes     int64       `json:"memory_bytes,omitempty"`
+	NanoCPUs        int64       `json:"nano_cpus,omitempty"`
+	PIDsLimit       *int64      `json:"pids_limit,omitempty"`
+	Mounts          []SafeMount `json:"mounts"`
+	HasDockerSocket bool        `json:"has_docker_socket"`
 }
 
 // ContainerInstance is one durable Docker identity. Names may be reused;

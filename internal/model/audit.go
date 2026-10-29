@@ -6,15 +6,20 @@ import (
 
 // Audit actions recorded in the append-only log.
 const (
-	AuditCutover       = "cutover"
-	AuditRollback      = "rollback"
-	AuditLogin         = "login"
-	AuditDeploy        = "deploy"
-	AuditServiceCreate = "service_create"
-	AuditServiceDelete = "service_delete"
-	AuditUserCreate    = "user_create"
-	AuditUserUpdate    = "user_update"
-	AuditUserDelete    = "user_delete"
+	AuditCutover             = "cutover"
+	AuditRollback            = "rollback"
+	AuditLogin               = "login"
+	AuditDeploy              = "deploy"
+	AuditServiceCreate       = "service_create"
+	AuditServiceDelete       = "service_delete"
+	AuditUserCreate          = "user_create"
+	AuditUserUpdate          = "user_update"
+	AuditUserDelete          = "user_delete"
+	AuditContainerApprove    = "container_approve"
+	AuditContainerIgnore     = "container_ignore"
+	AuditSecurityAcknowledge = "security_acknowledge"
+	AuditSecurityResolve     = "security_resolve"
+	AuditSecuritySuppress    = "security_suppress"
 )
 
 // Audit results recorded in the append-only log.

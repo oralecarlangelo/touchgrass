@@ -100,14 +100,15 @@ func (p *Postgres) Collect(ctx context.Context) (model.PostgresSnapshot, error) 
 	output, err := p.query(ctx, postgresStatementsQuery)
 	if err != nil {
 		snapshot.Errors = append(snapshot.Errors, "postgres_statements_unavailable")
-		return snapshot, nil
+	} else {
+		statements, parseErr := parsePostgresStatements(string(output))
+		if parseErr != nil {
+			snapshot.Errors = append(snapshot.Errors, "postgres_statements_invalid")
+		} else {
+			snapshot.Statements = statements
+		}
 	}
-	statements, err := parsePostgresStatements(string(output))
-	if err != nil {
-		snapshot.Errors = append(snapshot.Errors, "postgres_statements_invalid")
-		return snapshot, nil
-	}
-	snapshot.Statements = statements
+
 	return snapshot, nil
 }
 

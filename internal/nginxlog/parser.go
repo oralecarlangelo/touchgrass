@@ -139,7 +139,7 @@ func normalizeUpstream(value string) string {
 		return "multiple"
 	}
 	for _, char := range value {
-		if !(unicode.IsLetter(char) || unicode.IsDigit(char) || strings.ContainsRune("._:-[]", char)) {
+		if !unicode.IsLetter(char) && !unicode.IsDigit(char) && !strings.ContainsRune("._:-[]", char) {
 			return "other"
 		}
 	}

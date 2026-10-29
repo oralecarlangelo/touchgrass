@@ -232,7 +232,7 @@ func TestSQLiteBackupIsConsistent(t *testing.T) {
 	defer func() { _ = backup.Close() }()
 
 	var integrity string
-	if err := backup.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil {
+	if err := backup.QueryRowContext(t.Context(), "PRAGMA integrity_check").Scan(&integrity); err != nil {
 		t.Fatalf("integrity_check error = %v", err)
 	}
 	if integrity != "ok" {
@@ -240,7 +240,7 @@ func TestSQLiteBackupIsConsistent(t *testing.T) {
 	}
 
 	var migrations int
-	if err := backup.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
+	if err := backup.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatalf("counting backup migrations: %v", err)
 	}
 	if migrations == 0 {

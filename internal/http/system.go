@@ -59,19 +59,6 @@ type fleetResponse struct {
 	Containers []model.FleetContainer `json:"containers"`
 }
 
-// handleFleetContainers lists the latest sample per container, hottest
-// CPU first.
-func (s *Server) handleFleetContainers(w nethttp.ResponseWriter, r *nethttp.Request) {
-	containers, err := s.sampler.FleetContainers(r.Context())
-	if err != nil {
-		writeServiceError(w, s.logger, err, "failed to load fleet containers")
-
-		return
-	}
-
-	writeJSON(w, s.logger, nethttp.StatusOK, fleetResponse{Containers: containers})
-}
-
 // historyResponse is the bucket-averaged host history payload.
 type historyResponse struct {
 	Points []model.HistoryPoint `json:"points"`

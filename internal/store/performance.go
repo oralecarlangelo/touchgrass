@@ -152,6 +152,7 @@ func (s *PerformanceStore) listHTTP(ctx context.Context, table, prefix string, q
 	if limit <= 0 || limit > 10000 {
 		limit = 1000
 	}
+	// #nosec G201 -- table and prefix are private constants supplied only by ListHTTP and ListHTTPHourly.
 	statement := fmt.Sprintf(`SELECT bucket_start, service_id, environment, method, route_family,
 		upstream, status_class, request_count, error_count, duration_total_ms,
 		upstream_connect_total_ms, upstream_header_total_ms, upstream_response_total_ms,

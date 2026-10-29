@@ -9,9 +9,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import ErrorState from './ErrorState.tsx';
 import {
   fetchNotifications,
+  fetchFleetContainers,
   fetchSystem,
   isUnauthorized,
   type Notification,
+  type FleetContainersResponse,
   type ServiceView,
   type SystemSnapshot,
 } from '@/lib/api.ts';
@@ -23,6 +25,17 @@ const refreshIntervalMs = 30_000;
 const activityConfig = {
   count: { label: 'Notifications', color: 'var(--chart-1)' },
 } satisfies ChartConfig;
+
+export function containerPostureLabel(fleet: FleetContainersResponse): string {
+  if (fleet.freshness.stale || !fleet.freshness.complete) return 'degraded collection';
+  const critical = fleet.containers.filter((container) => container.risk_counts.critical > 0).length;
+  const unknown = fleet.containers.filter((container) => container.classification === 'unknown').length;
+  const stopped = fleet.containers.filter((container) => container.state !== 'running').length;
+  if (critical > 0) return `${critical} critical`;
+  if (unknown > 0) return `${unknown} unknown`;
+  if (stopped > 0) return `${stopped} stopped`;
+  return `${fleet.containers.length} observed`;
+}
 
 function bucketByHour(items: Notification[]): { hour: string; count: number }[] {
   const buckets = new Map<string, number>();
@@ -62,19 +75,22 @@ export default function Dashboard({
   const [system, setSystem] = useState<SystemSnapshot | null>(null);
   const [notes, setNotes] = useState<Notification[] | null>(null);
   const [unread, setUnread] = useState(0);
+  const [fleet, setFleet] = useState<FleetContainersResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
 
     try {
-      const [snapshot, fetched] = await Promise.all([
+      const [snapshot, fetched, containerFleet] = await Promise.all([
         fetchSystem(),
         fetchNotifications('', 100),
+        fetchFleetContainers(),
       ]);
       setSystem(snapshot);
       setNotes(fetched.notifications);
       setUnread(fetched.unread);
+      setFleet(containerFleet);
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -101,10 +117,10 @@ export default function Dashboard({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Fleet health</CardTitle>
+            <CardTitle className="text-sm font-medium">Managed services</CardTitle>
           </CardHeader>
           <CardContent>
             {services === null ? (
@@ -116,6 +132,36 @@ export default function Dashboard({
                   /{services.length} healthy
                 </span>
               </p>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Containers</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {fleet === null ? <Skeleton className="h-8 w-24" /> : (
+              <div>
+                <p className="text-2xl font-semibold">{fleet.containers.length}</p>
+                <p className="text-muted-foreground text-xs">{containerPostureLabel(fleet)}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Collector freshness</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {fleet === null ? <Skeleton className="h-8 w-24" /> : (
+              <div>
+                <p className="text-2xl font-semibold">
+                  {fleet.freshness.stale || !fleet.freshness.complete ? 'Degraded' : 'Current'}
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  {fleet.freshness.reconciled_at === null ? 'Never reconciled' : timeAgo(fleet.freshness.reconciled_at)}
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>

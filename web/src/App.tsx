@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import EmptyState from './components/EmptyState.tsx';
 import ErrorState from './components/ErrorState.tsx';
 import Dashboard from './components/Dashboard.tsx';
+import ContainerDetail from './components/ContainerDetail.tsx';
 import DatabasesScreen from './components/DatabasesScreen.tsx';
 import HistoryScreen from './components/HistoryScreen.tsx';
 import ImagesScreen from './components/ImagesScreen.tsx';
@@ -46,6 +47,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<ServiceView | null>(null);
+  const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
   const [view, setView] = useState<ViewId>(() => parseHash(window.location.hash).view);
 
   // Deep-link: the hash mirrors the view + selected service both ways.
@@ -74,6 +76,7 @@ export default function App() {
     setSession({ authenticated: false, username: '', role: '' });
     setServices(null);
     setSelected(null);
+    setSelectedContainerId(null);
     setView('dashboard');
     setLoginError('Session expired. Log in again to continue.');
   }, []);
@@ -163,6 +166,7 @@ export default function App() {
     setSession({ authenticated: false, username: '', role: '' });
     setServices(null);
     setSelected(null);
+    setSelectedContainerId(null);
     setView('dashboard');
     setPassword('');
     sessionStorage.removeItem('tg-landed');
@@ -172,6 +176,8 @@ export default function App() {
     if (next !== 'services') {
       setSelected(null);
     }
+
+    setSelectedContainerId(null);
 
     setView(next);
   }, []);
@@ -264,7 +270,13 @@ export default function App() {
         username={session.username}
         isAdmin={isAdmin}
       >
-        {selected !== null ? (
+        {selectedContainerId !== null ? (
+          <ContainerDetail
+            id={selectedContainerId}
+            onBack={() => setSelectedContainerId(null)}
+            onUnauthorized={handleUnauthorized}
+          />
+        ) : selected !== null ? (
           <ServiceWorkspace
             service={selected}
             onBack={() => setSelected(null)}
@@ -299,6 +311,7 @@ export default function App() {
           <FleetScreen
             onUnauthorized={handleUnauthorized}
             onSelectService={handleSelectService}
+            onSelectContainer={setSelectedContainerId}
             isAdmin={isAdmin}
           />
         ) : view === 'databases' ? (

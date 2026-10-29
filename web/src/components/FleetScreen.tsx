@@ -29,6 +29,7 @@ import {
   fetchSystem,
   fetchSystemHistory,
   isUnauthorized,
+  type ContainerFreshness,
   type FleetContainer,
   type HistoryPoint,
   type SystemSnapshot,
@@ -162,24 +163,55 @@ function ManagedBadge({
 }
 
 function memPercent(container: FleetContainer): number | null {
-  if (container.mem_limit <= 0) {
+  if (container.mem_bytes === null || container.mem_limit === null || container.mem_limit <= 0) {
     return null;
   }
 
   return (container.mem_bytes / container.mem_limit) * 100;
 }
 
+export type ContainerFilter = 'all' | 'running' | 'stopped' | 'unknown' | 'risky';
+
+export function filterFleetContainers(
+  containers: FleetContainer[],
+  filter: ContainerFilter,
+  query: string,
+): FleetContainer[] {
+  const needle = query.trim().toLowerCase();
+
+  return containers
+    .filter((container) => {
+      const matchesText = needle === '' || container.name.toLowerCase().includes(needle) ||
+        container.project.toLowerCase().includes(needle) || container.id.toLowerCase().includes(needle);
+      if (!matchesText) return false;
+      switch (filter) {
+        case 'running': return container.state === 'running';
+        case 'stopped': return container.state !== 'running';
+        case 'unknown': return container.classification === 'unknown';
+        case 'risky': return Object.values(container.risk_counts).some((count) => count > 0);
+        case 'all': return true;
+      }
+    })
+    .sort((a, b) => {
+      if (a.managed !== b.managed) return a.managed ? 1 : -1;
+      return (b.cpu_percent ?? -1) - (a.cpu_percent ?? -1) || a.name.localeCompare(b.name);
+    });
+}
+
 export default function FleetScreen({
   onUnauthorized,
   onSelectService,
+  onSelectContainer,
   isAdmin,
 }: {
   onUnauthorized: () => void;
   onSelectService: (id: string) => void;
+  onSelectContainer: (id: string) => void;
   isAdmin: boolean;
 }) {
   const [system, setSystem] = useState<SystemSnapshot | null>(null);
   const [containers, setContainers] = useState<FleetContainer[] | null>(null);
+  const [freshness, setFreshness] = useState<ContainerFreshness | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState(24);
   const [cpu, setCpu] = useState<HistoryPoint[] | null>(null);
@@ -188,6 +220,7 @@ export default function FleetScreen({
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<ContainerFilter>('all');
 
   const load = useCallback(async () => {
     setError(null);
@@ -195,7 +228,8 @@ export default function FleetScreen({
     try {
       const [snapshot, fleet] = await Promise.all([fetchSystem(), fetchFleetContainers()]);
       setSystem(snapshot);
-      setContainers(fleet);
+      setContainers(fleet.containers);
+      setFreshness(fleet.freshness);
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -253,25 +287,9 @@ export default function FleetScreen({
   );
   const unmanagedCount = (containers?.length ?? 0) - managedCount;
 
-  // Unmanaged first (they need attention), then hottest CPU first.
   const visibleContainers = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-
-    return (containers ?? [])
-      .filter(
-        (container) =>
-          needle === '' ||
-          container.name.toLowerCase().includes(needle) ||
-          container.project.toLowerCase().includes(needle),
-      )
-      .sort((a, b) => {
-        if (a.managed !== b.managed) {
-          return a.managed ? 1 : -1;
-        }
-
-        return b.cpu_percent - a.cpu_percent;
-      });
-  }, [containers, query]);
+    return filterFleetContainers(containers ?? [], filter, query);
+  }, [containers, filter, query]);
 
   if (error !== null && system === null) {
     return <ErrorState title="Couldn't load fleet info" message={error} onRetry={() => void load()} />;
@@ -280,6 +298,12 @@ export default function FleetScreen({
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold tracking-tight">Fleet</h1>
+
+      {freshness?.stale === true && (
+        <div className="border-amber-500/40 bg-amber-500/10 rounded-md border px-4 py-3 text-sm" role="status">
+          Container collection is stale. Inventory may be incomplete until the Docker collector recovers.
+        </div>
+      )}
 
       {system === null ? (
         <div className="grid gap-4 lg:grid-cols-3">
@@ -448,6 +472,18 @@ export default function FleetScreen({
               />
             </CardHeader>
             <CardContent>
+              <div className="mb-4 flex flex-wrap gap-2" aria-label="Container filters">
+                {(['all', 'running', 'stopped', 'unknown', 'risky'] as ContainerFilter[]).map((value) => (
+                  <Button
+                    key={value}
+                    size="sm"
+                    variant={filter === value ? 'default' : 'outline'}
+                    onClick={() => setFilter(value)}
+                  >
+                    {value[0]?.toUpperCase()}{value.slice(1)}
+                  </Button>
+                ))}
+              </div>
               {containers === null ? (
                 <div className="space-y-2" aria-label="Loading containers">
                   <Skeleton className="h-10 w-full" />
@@ -478,9 +514,11 @@ export default function FleetScreen({
                       const serviceId = container.service_id ?? '';
 
                       return (
-                        <TableRow key={container.name}>
+                        <TableRow key={container.id}>
                           <TableCell className="font-mono text-xs font-medium">
-                            {container.name}
+                            <button type="button" className="hover:underline" onClick={() => onSelectContainer(container.id)}>
+                              {container.name}
+                            </button>
                           </TableCell>
                           <TableCell>
                             {container.project === '' ? (
@@ -500,23 +538,23 @@ export default function FleetScreen({
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono">
-                            {container.cpu_percent.toFixed(1)}%
+                            {container.cpu_percent === null ? 'n/a' : `${container.cpu_percent.toFixed(1)}%`}
                           </TableCell>
                           <TableCell className="text-right font-mono">
-                            {formatBytes(container.mem_bytes)}
+                            {container.mem_bytes === null ? 'n/a' : formatBytes(container.mem_bytes)}
                             {mem !== null && (
                               <span className="text-muted-foreground"> ({mem.toFixed(1)}%)</span>
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono">
-                            {container.restarts > 0 ? (
+                            {container.restarts === null ? 'n/a' : container.restarts > 0 ? (
                               <Badge variant="destructive">{container.restarts}</Badge>
                             ) : (
                               container.restarts
                             )}
                           </TableCell>
                           <TableCell className="text-muted-foreground text-right text-xs">
-                            {timeAgo(container.sampled_at)}
+                            {container.last_seen_at === undefined ? 'n/a' : timeAgo(container.last_seen_at)}
                           </TableCell>
                           <TableCell className="text-right">
                             {!container.managed ? (

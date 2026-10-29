@@ -1030,26 +1030,77 @@ export async function fetchSystem(): Promise<SystemSnapshot> {
 }
 
 export interface FleetContainer {
+  id: string;
   name: string;
   project: string;
   managed: boolean;
   service_id?: string | null;
   state: string;
-  cpu_percent: number;
-  mem_bytes: number;
-  mem_limit: number;
-  restarts: number;
-  sampled_at: string;
+  status?: string;
+  classification: 'managed' | 'approved_observed' | 'unknown' | 'ignored' | 'missing_expected';
+  current: boolean;
+  present: boolean;
+  health: string;
+  cpu_percent: number | null;
+  mem_bytes: number | null;
+  mem_limit: number | null;
+  restarts: number | null;
+  sampled_at?: string;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  absent_at?: string | null;
+  risk_counts: { critical: number; high: number; medium: number; low: number };
 }
 
-interface FleetContainersResponse {
+export interface ContainerFreshness {
+  reconciled_at: string | null;
+  complete: boolean;
+  stale: boolean;
+  last_error_category?: string;
+  observed_count: number;
+}
+
+export interface FleetContainersResponse {
   containers: FleetContainer[];
+  freshness: ContainerFreshness;
 }
 
-export async function fetchFleetContainers(): Promise<FleetContainer[]> {
+export async function fetchFleetContainers(): Promise<FleetContainersResponse> {
   const body = await request<FleetContainersResponse>('/api/system/containers');
 
-  return body.containers ?? [];
+  return {
+    containers: body.containers ?? [],
+    freshness: body.freshness,
+  };
+}
+
+export interface SafeContainerInspection {
+  user: string;
+  entrypoint_hash?: string;
+  command_hash?: string;
+  privileged: boolean;
+  readonly_root_fs: boolean;
+  cap_add: string[];
+  pid_mode?: string;
+  ipc_mode?: string;
+  network_mode?: string;
+  restart_policy?: string;
+  memory_bytes?: number;
+  nano_cpus?: number;
+  pids_limit?: number | null;
+  mounts: { type: string; destination: string; writable: boolean }[];
+  has_docker_socket: boolean;
+}
+
+export interface ContainerDetailResponse {
+  container: FleetContainer;
+  image: string;
+  image_id: string;
+  inspection: SafeContainerInspection;
+}
+
+export async function fetchContainer(id: string): Promise<ContainerDetailResponse> {
+  return request<ContainerDetailResponse>(`/api/system/containers/${encodeURIComponent(id)}`);
 }
 
 export type SystemHistoryMetric = 'cpu' | 'mem' | 'load';

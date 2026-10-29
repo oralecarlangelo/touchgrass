@@ -32,7 +32,10 @@ var performanceSorts = map[string]bool{
 	"p95_ms": true, "request_count": true, "error_rate": true, "route_family": true,
 }
 
-var collectorSources = []string{"nginx", "postgres", "redis", "log_volume", "docker_events"}
+var collectorSources = []string{
+	"nginx", "postgres", "redis", "log_volume", "docker_events",
+	"security_posture", "security_process", "security_diff",
+}
 
 // PerformanceConfig wires bounded investigation reads.
 type PerformanceConfig struct {
@@ -350,7 +353,8 @@ func (p *Performance) CollectorStatus(ctx context.Context) ([]model.CollectorSta
 			return nil, fmt.Errorf("loading collector status: %w", err)
 		}
 		status := model.CollectorStatus{Source: source, LastSuccessAt: cursor.LastSuccessAt,
-			LastRecordedAt: cursor.LastRecordedAt, LastError: cursor.LastError, DroppedRecords: cursor.DroppedRecords}
+			LastRecordedAt: cursor.LastRecordedAt, LastError: cursor.LastError, DroppedRecords: cursor.DroppedRecords,
+			CoverageComplete: cursor.CoverageComplete, EffectiveIntervalSecs: cursor.EffectiveIntervalSecs}
 		status.Stale = status.LastSuccessAt.IsZero() || now.Sub(status.LastSuccessAt) > collectorStaleAfter
 		if source == dockerEventCursorSource && status.LastError == "" && !status.LastSuccessAt.IsZero() {
 			status.Stale = false

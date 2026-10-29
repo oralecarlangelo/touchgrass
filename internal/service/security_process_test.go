@@ -62,9 +62,22 @@ func TestProcessScannerFailurePreservesFinding(t *testing.T) {
 		t.Fatalf("Scan() error = %v, want degraded success", err)
 	}
 	findings, err := security.Findings(context.Background(), model.SecurityFindingQuery{Status: model.SecurityFindingStatusOpen})
-	if err != nil || len(findings) != 1 {
-		t.Fatalf("open findings = %+v, %v; want preserved episode", findings, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if !containsFindingRule(findings, "process.high_risk_path") ||
+		!containsFindingRule(findings, "collector.security_process.failure") {
+		t.Fatalf("open findings = %+v; want preserved process episode and collector incident", findings)
+	}
+}
+
+func containsFindingRule(findings []model.SecurityFinding, rule string) bool {
+	for _, finding := range findings {
+		if finding.RuleID == rule {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProcessScannerStopsOnCancellation(t *testing.T) {

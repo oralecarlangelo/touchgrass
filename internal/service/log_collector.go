@@ -663,12 +663,14 @@ func (c *LogCollector) recordLogVolumeCursor(ctx context.Context, lastRecorded t
 	cursor.Source = "log_volume"
 	if failed {
 		cursor.LastError = "log_volume_write_failed"
+		cursor.CoverageComplete = false
 		cursor.DroppedRecords = boundedDrops(cursor.DroppedRecords, 1)
 	} else {
 		now := time.Now().UTC()
 		cursor.LastSuccessAt = now
 		cursor.LastRecordedAt = lastRecorded.UTC()
 		cursor.LastError = ""
+		cursor.CoverageComplete = true
 	}
 	if err := c.cursorsStore.Upsert(ctx, cursor); err != nil {
 		c.logger.Warn("persisting log volume cursor", "error_category", "cursor_write_failed")

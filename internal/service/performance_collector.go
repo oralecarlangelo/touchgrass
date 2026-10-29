@@ -270,6 +270,7 @@ func (c *PerformanceCollector) collectHTTP(ctx context.Context, minute time.Time
 	}
 
 	cursor = c.mergePersistedDrops(ctx, boundedCursor(cursor))
+	cursor.CoverageComplete = true
 	if err := c.writer.Upsert(ctx, cursor); err != nil {
 		c.logger.Warn("persisting nginx collector cursor", "error_category", "cursor_write_failed")
 		return
@@ -334,6 +335,7 @@ func (c *PerformanceCollector) collectLogVolume(ctx context.Context) {
 			return
 		}
 	}
+	cursor.CoverageComplete = true
 	if err := c.writer.Upsert(ctx, boundedCursor(cursor)); err != nil {
 		c.logger.Warn("persisting log volume cursor", "error_category", "cursor_write_failed")
 	}
@@ -343,6 +345,7 @@ func (c *PerformanceCollector) recordFailure(ctx context.Context, source, catego
 	cursor, _ := c.writer.Get(ctx, source)
 	cursor.Source = source
 	cursor.LastError = category
+	cursor.CoverageComplete = false
 	cursor.DroppedRecords = boundedDrops(cursor.DroppedRecords, 1)
 	cursor.UpdatedAt = c.clock.Now().UTC()
 	if err := c.writer.Upsert(ctx, cursor); err != nil {
@@ -359,6 +362,7 @@ func (c *PerformanceCollector) recordSuccess(ctx context.Context, source string,
 	cursor.LastRecordedAt = recorded.UTC()
 	cursor.LastSuccessAt = c.clock.Now().UTC()
 	cursor.LastError = strings.Join(partial, ",")
+	cursor.CoverageComplete = len(partial) == 0
 	cursor.DroppedRecords = boundedDrops(cursor.DroppedRecords, dropped)
 	cursor.UpdatedAt = c.clock.Now().UTC()
 	if err := c.writer.Upsert(ctx, cursor); err != nil {

@@ -202,7 +202,7 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 	securityStore := store.NewSecurityStore(db)
 	securityService := service.NewSecurity(service.SecurityConfig{
 		Store: securityStore, Notifications: store.NewNotificationStore(db), Audit: audit,
-		Emit: hub.Broadcast, Logger: logger,
+		Cursors: store.NewCursorStore(db), Emit: hub.Broadcast, Logger: logger,
 	})
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: services, Containers: store.NewContainerStore(db), Docker: stubStatsLister{},

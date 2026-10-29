@@ -33,10 +33,11 @@ func (s *CursorStore) Get(ctx context.Context, source string) (model.CollectorCu
 	)
 
 	err := s.db.sql.QueryRowContext(ctx, `SELECT source, identity, offset, last_recorded_at,
-		last_success_at, last_error, dropped_records, updated_at
+		last_success_at, last_error, dropped_records, coverage_complete, effective_interval_secs, updated_at
 		FROM collector_cursors WHERE source = ?`, source).Scan(
 		&cursor.Source, &cursor.Identity, &cursor.Offset, &lastRecorded,
-		&lastSuccess, &cursor.LastError, &cursor.DroppedRecords, &updatedRaw,
+		&lastSuccess, &cursor.LastError, &cursor.DroppedRecords, &cursor.CoverageComplete,
+		&cursor.EffectiveIntervalSecs, &updatedRaw,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.CollectorCursor{}, fmt.Errorf("%w: %s", ErrCollectorCursorNotFound, source)
@@ -65,8 +66,9 @@ func (s *CursorStore) Upsert(ctx context.Context, cursor model.CollectorCursor) 
 	}
 
 	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO collector_cursors (
-		source, identity, offset, last_recorded_at, last_success_at, last_error, dropped_records, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		source, identity, offset, last_recorded_at, last_success_at, last_error, dropped_records,
+		coverage_complete, effective_interval_secs, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(source) DO UPDATE SET
 		identity = excluded.identity,
 		offset = excluded.offset,
@@ -74,9 +76,12 @@ func (s *CursorStore) Upsert(ctx context.Context, cursor model.CollectorCursor) 
 		last_success_at = excluded.last_success_at,
 		last_error = excluded.last_error,
 		dropped_records = excluded.dropped_records,
+		coverage_complete = excluded.coverage_complete,
+		effective_interval_secs = excluded.effective_interval_secs,
 		updated_at = excluded.updated_at`,
 		cursor.Source, cursor.Identity, cursor.Offset, nullableTime(cursor.LastRecordedAt),
 		nullableTime(cursor.LastSuccessAt), cursor.LastError, cursor.DroppedRecords,
+		boolInteger(cursor.CoverageComplete), cursor.EffectiveIntervalSecs,
 		formatTime(time.Now()),
 	)
 	if err != nil {
@@ -116,6 +121,7 @@ type retentionTarget struct {
 	table     string
 	timestamp string
 	retention time.Duration
+	predicate string
 }
 
 type storageClass struct {
@@ -151,7 +157,9 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		{table: "redis_metric_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
 		{table: "log_volume_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
 		{table: "performance_hourly_rollups", timestamp: "bucket_start", retention: policy.RetentionPerformanceHourly},
-		{table: "container_events", timestamp: "occurred_at", retention: policy.RetentionPerformanceHourly},
+		{table: "security_observations", timestamp: "observed_at", retention: policy.RetentionSecurityObservations},
+		{table: "container_events", timestamp: "occurred_at", retention: policy.RetentionContainerEvents},
+		{table: "security_findings", timestamp: "resolved_at", retention: policy.RetentionSecurityFindings, predicate: "status = 'resolved'"},
 		{table: "performance_ingest_batches", timestamp: "bucket_start", retention: policy.RetentionPerformance},
 	}
 
@@ -198,6 +206,11 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		{name: "administrative", limit: policy.AdministrativeMaxBytes, targets: []retentionTarget{
 			{table: "notifications", timestamp: "created_at"}, {table: "deploy_probes", timestamp: "sampled_at"},
 			{table: "deploys", timestamp: "created_at"}, {table: "db_jobs", timestamp: "created_at"},
+		}},
+		{name: "security", limit: model.DefaultSecurityClassMaxBytes, targets: []retentionTarget{
+			{table: "security_observations", timestamp: "observed_at"},
+			{table: "container_events", timestamp: "occurred_at"},
+			{table: "security_findings", timestamp: "resolved_at", predicate: "status = 'resolved'"},
 		}},
 	}
 	for _, class := range classes {
@@ -281,9 +294,13 @@ func (s *MaintenanceStore) deleteBefore(
 	cutoff time.Time,
 	limit int,
 ) (int64, error) {
+	predicate := ""
+	if target.predicate != "" {
+		predicate = " AND " + target.predicate
+	}
 	query := fmt.Sprintf(`DELETE FROM %s WHERE id IN (
-		SELECT id FROM %s WHERE %s < ? ORDER BY id LIMIT ?
-	)`, target.table, target.table, target.timestamp)
+		SELECT id FROM %s WHERE %s < ?%s ORDER BY id LIMIT ?
+	)`, target.table, target.table, target.timestamp, predicate)
 	res, err := s.db.sql.ExecContext(ctx, query, formatFixedTime(cutoff), limit)
 	if err != nil {
 		return 0, fmt.Errorf("trimming %s: %w", target.table, err)
@@ -298,9 +315,13 @@ func (s *MaintenanceStore) deleteBefore(
 }
 
 func (s *MaintenanceStore) deleteOldest(ctx context.Context, target retentionTarget, limit int) (int64, error) {
+	predicate := ""
+	if target.predicate != "" {
+		predicate = " WHERE " + target.predicate
+	}
 	query := fmt.Sprintf(`DELETE FROM %s WHERE id IN (
-		SELECT id FROM %s ORDER BY %s, id LIMIT ?
-	)`, target.table, target.table, target.timestamp)
+		SELECT id FROM %s%s ORDER BY %s, id LIMIT ?
+	)`, target.table, target.table, predicate, target.timestamp)
 	res, err := s.db.sql.ExecContext(ctx, query, limit)
 	if err != nil {
 		return 0, fmt.Errorf("trimming over-budget %s: %w", target.table, err)
@@ -350,6 +371,10 @@ func (s *MaintenanceStore) classBytes(ctx context.Context) (map[string]int64, er
 			(SELECT COUNT(*) * 128 FROM deploys) +
 			(SELECT COUNT(*) * 48 FROM deploy_probes) +
 			COALESCE((SELECT SUM(length(target)+length(detail)+length(kind)+length(status)) FROM db_jobs), 0)`,
+		"security": `SELECT
+			COALESCE((SELECT SUM(length(container_id)+length(rule_id)+length(category)+length(severity)+length(confidence)+length(evidence_json)+length(observed_at)) FROM security_observations), 0) +
+			COALESCE((SELECT SUM(length(fingerprint)+length(container_id)+length(rule_id)+length(evidence_json)+length(opened_at)+length(last_seen_at)) FROM security_findings), 0) +
+			COALESCE((SELECT COUNT(*) * 192 FROM container_events), 0)`,
 	}
 
 	result := make(map[string]int64, len(queries))

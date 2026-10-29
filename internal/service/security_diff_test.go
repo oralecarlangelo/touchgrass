@@ -79,8 +79,12 @@ func TestDiffFailurePreservesPriorFinding(t *testing.T) {
 		t.Fatalf("Scan() error = %v, want degraded success", err)
 	}
 	findings, err := security.Findings(context.Background(), model.SecurityFindingQuery{Status: model.SecurityFindingStatusOpen})
-	if err != nil || len(findings) != 1 {
-		t.Fatalf("open findings = %+v, %v; want preserved episode", findings, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsFindingRule(findings, "diff.runtime_modification") ||
+		!containsFindingRule(findings, "collector.security_diff.failure") {
+		t.Fatalf("open findings = %+v; want preserved diff episode and collector incident", findings)
 	}
 }
 

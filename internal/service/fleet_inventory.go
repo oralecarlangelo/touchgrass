@@ -120,6 +120,9 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 	observedAt := time.Now().UTC()
 	containers, err := f.docker.ListAll(ctx)
 	if err != nil {
+		if f.evaluator != nil {
+			_ = f.evaluator.RecordCollector(ctx, "security_posture", false, "docker_inventory_unavailable", f.interval)
+		}
 		writeErr := f.containers.Reconcile(ctx, model.InventoryBatch{
 			ObservedAt: observedAt, Complete: false, LastErrorCategory: "docker_inventory_unavailable",
 		})
@@ -155,7 +158,23 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 		return model.InventorySummary{}, fmt.Errorf("persisting container inventory: %w", err)
 	}
 	if err := f.evaluatePosture(ctx, instances, inspectionCoverage); err != nil {
+		if f.evaluator != nil {
+			_ = f.evaluator.RecordCollector(ctx, "security_posture", false, "evaluation_failed", f.interval)
+		}
 		return model.InventorySummary{}, err
+	}
+	if f.evaluator != nil {
+		complete := true
+		for _, instance := range instances {
+			complete = complete && inspectionCoverage[instance.ID]
+		}
+		category := ""
+		if !complete {
+			category = "docker_inspect_unavailable"
+		}
+		if err := f.evaluator.RecordCollector(ctx, "security_posture", complete, category, f.interval); err != nil {
+			return model.InventorySummary{}, fmt.Errorf("recording posture collector health: %w", err)
+		}
 	}
 	return f.containers.Summary(ctx)
 }

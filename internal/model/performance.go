@@ -77,12 +77,14 @@ type HTTPMetricBucket struct {
 
 // CollectorStatus is the safe health projection used by performance queries.
 type CollectorStatus struct {
-	Source         string    `json:"source"`
-	LastSuccessAt  time.Time `json:"last_success_at,omitempty"`
-	LastRecordedAt time.Time `json:"last_recorded_at,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	DroppedRecords int64     `json:"dropped_records"`
-	Stale          bool      `json:"stale"`
+	Source                string    `json:"source"`
+	LastSuccessAt         time.Time `json:"last_success_at,omitempty"`
+	LastRecordedAt        time.Time `json:"last_recorded_at,omitempty"`
+	LastError             string    `json:"last_error,omitempty"`
+	DroppedRecords        int64     `json:"dropped_records"`
+	CoverageComplete      bool      `json:"coverage_complete"`
+	EffectiveIntervalSecs int64     `json:"effective_interval_secs,omitempty"`
+	Stale                 bool      `json:"stale"`
 }
 
 // NumericSample is one bounded database or cache metric. Cumulative marks

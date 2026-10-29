@@ -95,14 +95,13 @@ func (s *DiffScanner) Scan(ctx context.Context) error {
 		return fmt.Errorf("listing running containers for layer scan: %w", err)
 	}
 	jobs := make(chan model.ContainerInstance)
-	errs := make(chan error, len(instances))
+	results := make(chan diffScanResult, len(instances))
 	var group sync.WaitGroup
 	for range min(s.workers, max(len(instances), 1)) {
 		group.Go(func() {
 			for instance := range jobs {
-				if err := s.scanContainer(ctx, instance); err != nil {
-					errs <- err
-				}
+				complete, err := s.scanContainer(ctx, instance)
+				results <- diffScanResult{complete: complete, err: err}
 			}
 		})
 	}
@@ -120,17 +119,34 @@ func (s *DiffScanner) Scan(ctx context.Context) error {
 	}
 	close(jobs)
 	group.Wait()
-	close(errs)
-	for err := range errs {
+	close(results)
+	complete := true
+	for result := range results {
+		complete = complete && result.complete
+		if result.err != nil {
+			_ = s.security.RecordCollector(ctx, "security_diff", false, "evaluation_failed", s.interval)
+			return result.err
+		}
+	}
+	category := ""
+	if !complete {
+		category = "docker_diff_unavailable"
+	}
+	if err := s.security.RecordCollector(ctx, "security_diff", complete, category, s.interval); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *DiffScanner) scanContainer(ctx context.Context, instance model.ContainerInstance) error {
+type diffScanResult struct {
+	complete bool
+	err      error
+}
+
+func (s *DiffScanner) scanContainer(ctx context.Context, instance model.ContainerInstance) (bool, error) {
 	policy, err := s.policies.Policy(ctx, instance.ServiceID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	changes, diffErr := s.docker.Diff(ctx, instance.ID)
 	complete := diffErr == nil
@@ -155,10 +171,10 @@ func (s *DiffScanner) scanContainer(ctx context.Context, instance model.Containe
 			Observation: observation, BaselineFingerprint: instance.ConfigurationFingerprint,
 			ServiceID: instance.ServiceID,
 		}); err != nil {
-			return fmt.Errorf("evaluating layer security for container %q: %w", instance.ID, err)
+			return false, fmt.Errorf("evaluating layer security for container %q: %w", instance.ID, err)
 		}
 	}
-	return nil
+	return complete, nil
 }
 
 // EvaluateLayerChanges produces deterministic aggregate diff observations.

@@ -143,13 +143,14 @@ describe('formatPercentile', () => {
 describe('collectorState', () => {
   it('distinguishes setup, stale, degraded, and healthy collectors', () => {
     expect(
-      collectorState({ source: 'nginx_http', dropped_records: 0, stale: true }),
+      collectorState({ source: 'nginx_http', dropped_records: 0, coverage_complete: false, stale: true }),
     ).toBe('not-configured');
     expect(
       collectorState({
         source: 'nginx_http',
         last_success_at: '0001-01-01T00:00:00Z',
         dropped_records: 0,
+        coverage_complete: false,
         stale: true,
       }),
     ).toBe('not-configured');
@@ -158,6 +159,7 @@ describe('collectorState', () => {
         source: 'postgres',
         last_success_at: '2026-10-16T01:00:00Z',
         dropped_records: 0,
+        coverage_complete: true,
         stale: true,
       }),
     ).toBe('stale');
@@ -167,6 +169,7 @@ describe('collectorState', () => {
         last_success_at: '2026-10-16T02:00:00Z',
         last_error: 'timeout',
         dropped_records: 0,
+        coverage_complete: false,
         stale: false,
       }),
     ).toBe('degraded');
@@ -175,9 +178,19 @@ describe('collectorState', () => {
         source: 'docker_events',
         last_success_at: '2026-10-16T02:00:00Z',
         dropped_records: 0,
+        coverage_complete: true,
         stale: false,
       }),
     ).toBe('healthy');
+    expect(
+      collectorState({
+        source: 'security_process',
+        last_success_at: '2026-10-16T02:00:00Z',
+        dropped_records: 0,
+        coverage_complete: false,
+        stale: false,
+      }),
+    ).toBe('degraded');
   });
 
   it('normalizes the Go zero-time sentinel before rendering freshness copy', () => {
@@ -185,12 +198,14 @@ describe('collectorState', () => {
       source: 'postgres',
       last_success_at: '0001-01-01T00:00:00Z',
       dropped_records: 0,
+      coverage_complete: false,
       stale: true,
     })).toBeNull();
     expect(collectorLastSuccessAt({
       source: 'nginx',
       last_success_at: '2026-10-16T02:00:00Z',
       dropped_records: 0,
+      coverage_complete: true,
       stale: false,
     })).toBe('2026-10-16T02:00:00.000Z');
   });

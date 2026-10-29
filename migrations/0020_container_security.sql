@@ -72,6 +72,9 @@ CREATE INDEX idx_security_findings_status_severity ON security_findings(status, 
 CREATE UNIQUE INDEX idx_security_findings_open_episode ON security_findings(fingerprint)
   WHERE status IN ('open', 'acknowledged', 'suppressed');
 
+ALTER TABLE collector_cursors ADD COLUMN coverage_complete INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE collector_cursors ADD COLUMN effective_interval_secs INTEGER NOT NULL DEFAULT 0;
+
 -- Security findings may be global or tied to an unmanaged container, so
 -- notifications now permit a null service while preserving existing rows.
 CREATE TABLE notifications_security_new (

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -15,6 +16,7 @@ import (
 type SecurityConfig struct {
 	Store         *store.SecurityStore
 	Notifications *store.NotificationStore
+	Cursors       collectorCursorStore
 	Audit         *Audit
 	Emit          func(model.Event)
 	NotifyHigh    bool
@@ -25,6 +27,7 @@ type SecurityConfig struct {
 type Security struct {
 	store         *store.SecurityStore
 	notifications *store.NotificationStore
+	cursors       collectorCursorStore
 	audit         *Audit
 	emit          func(model.Event)
 	notifyHigh    bool
@@ -42,9 +45,71 @@ func NewSecurity(cfg SecurityConfig) *Security {
 		logger = slog.New(slog.DiscardHandler)
 	}
 	return &Security{
-		store: cfg.Store, notifications: cfg.Notifications, audit: cfg.Audit,
+		store: cfg.Store, notifications: cfg.Notifications, cursors: cfg.Cursors, audit: cfg.Audit,
 		emit: emit, notifyHigh: cfg.NotifyHigh, logger: logger,
 	}
+}
+
+type collectorCursorStore interface {
+	Get(context.Context, string) (model.CollectorCursor, error)
+	Upsert(context.Context, model.CollectorCursor) error
+}
+
+// RecordCollector persists explicit coverage health and translates failures
+// into one deduplicated finding episode with one recovery transition.
+func (s *Security) RecordCollector(
+	ctx context.Context,
+	source string,
+	complete bool,
+	errorCategory string,
+	effectiveInterval time.Duration,
+) error {
+	switch source {
+	case "security_posture", "security_process", "security_diff":
+	default:
+		return fmt.Errorf("%w: unknown security collector", ErrInvalidInput)
+	}
+	if len(errorCategory) > 128 || strings.ContainsAny(errorCategory, "\r\n\x00") {
+		return fmt.Errorf("%w: unsafe collector error category", ErrInvalidInput)
+	}
+	now := time.Now().UTC()
+	if s.cursors != nil {
+		cursor, err := s.cursors.Get(ctx, source)
+		if err != nil && !errors.Is(err, store.ErrCollectorCursorNotFound) {
+			return fmt.Errorf("reading security collector health: %w", err)
+		}
+		cursor.Source = source
+		cursor.LastRecordedAt = now
+		cursor.CoverageComplete = complete
+		cursor.EffectiveIntervalSecs = int64(effectiveInterval / time.Second)
+		cursor.LastError = errorCategory
+		if complete {
+			cursor.LastSuccessAt = now
+		}
+		if err := s.cursors.Upsert(ctx, cursor); err != nil {
+			return fmt.Errorf("recording security collector health: %w", err)
+		}
+	}
+	activation, err := s.store.Activation(ctx)
+	if err != nil {
+		return fmt.Errorf("reading security activation for collector: %w", err)
+	}
+	if activation.ActivatedAt == nil {
+		return nil
+	}
+	_, err = s.Evaluate(ctx, model.SecurityEvaluation{
+		BaselineFingerprint: source,
+		Observation: model.SecurityObservation{
+			ContainerID: "collector:" + source, RuleID: "collector." + source + ".failure",
+			Category: model.SecurityCategoryDrift, Severity: model.SecuritySeverityHigh,
+			Confidence: model.SecurityConfidenceHigh, Detected: !complete, CoverageComplete: true,
+			Evidence: map[string]string{
+				"source": source, "error_category": errorCategory,
+				"effective_interval_secs": fmt.Sprintf("%d", int64(effectiveInterval/time.Second)),
+			}, ObservedAt: now,
+		},
+	})
+	return err
 }
 
 // Evaluate persists one observation and emits side effects only for episode

@@ -29,6 +29,9 @@ func defaultTestConfig() Config {
 		SQLiteBackupDir: defaultSQLiteBackupDir, SQLiteBackupKeep: 14,
 		RetentionPerformance: 168 * time.Hour, RetentionPerformanceHourly: 720 * time.Hour,
 		NginxTimingLog: "", PerformanceServiceID: "", PerformanceInterval: 30 * time.Second,
+		RetentionSecurityObservations: 168 * time.Hour,
+		RetentionContainerEvents:      720 * time.Hour,
+		RetentionSecurityFindings:     2160 * time.Hour,
 	}
 }
 
@@ -69,6 +72,9 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.NginxTimingLog = "/var/log/nginx/ticketnation-performance/requests.jsonl"
 	cfg.PerformanceServiceID = "tn-api"
 	cfg.PerformanceInterval = 15 * time.Second
+	cfg.RetentionSecurityObservations = 24 * time.Hour
+	cfg.RetentionContainerEvents = 48 * time.Hour
+	cfg.RetentionSecurityFindings = 720 * time.Hour
 }
 
 func TestLoad(t *testing.T) {
@@ -108,6 +114,9 @@ func TestLoad(t *testing.T) {
 				retentionPerformanceEnvVar: "24h", retentionPerformanceHourlyEnvVar: "240h",
 				nginxTimingLogEnvVar:       "/var/log/nginx/ticketnation-performance/requests.jsonl",
 				performanceServiceIDEnvVar: "tn-api", performanceIntervalEnvVar: "15s",
+				retentionSecurityObservationsEnvVar: "24h",
+				retentionContainerEventsEnvVar:      "48h",
+				retentionSecurityFindingsEnvVar:     "720h",
 			},
 			mutate: mutateCustomTestConfig,
 		},
@@ -169,6 +178,16 @@ func TestLoad(t *testing.T) {
 		{
 			name:        "non-positive retention",
 			env:         map[string]string{"TOUCHGRASS_RETENTION_METRICS": "0s", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "invalid security observations retention",
+			env:         map[string]string{retentionSecurityObservationsEnvVar: "soon", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "non-positive security findings retention",
+			env:         map[string]string{retentionSecurityFindingsEnvVar: "0s", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 		{

@@ -72,6 +72,12 @@ export default function CollectorStatus({ collectors }: { collectors: CollectorS
                       {collector.last_error}
                     </p>
                   )}
+                  {!collector.coverage_complete && (
+                    <p className="text-destructive mt-1 text-xs">Partial coverage; prior findings remain active.</p>
+                  )}
+                  {collector.effective_interval_secs !== undefined && collector.effective_interval_secs > 0 && (
+                    <p className="text-muted-foreground mt-1 text-xs">Effective interval {collector.effective_interval_secs}s</p>
+                  )}
                 </div>
               );
             })}

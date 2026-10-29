@@ -323,7 +323,7 @@ func runServe(args []string) error {
 	securityStore := store.NewSecurityStore(db)
 	securityService := service.NewSecurity(service.SecurityConfig{
 		Store: securityStore, Notifications: notificationStore, Audit: audit,
-		Emit: hub.Broadcast, Logger: logger,
+		Cursors: store.NewCursorStore(db), Emit: hub.Broadcast, Logger: logger,
 	})
 	cutover := service.NewCutover(service.CutoverConfig{
 		Services:      serviceStore,
@@ -533,8 +533,11 @@ func newMaintenance(db *store.DB, cfg config.Config, logger *slog.Logger) *servi
 			RetentionNotifications: cfg.RetentionNotifications,
 			RetentionDeploys:       cfg.RetentionDeploys, RetentionErrors: cfg.RetentionErrors,
 			RetentionLogs: cfg.RetentionLogs, RetentionSDKLogs: cfg.RetentionSDKLogs,
-			RetentionPerformance:       cfg.RetentionPerformance,
-			RetentionPerformanceHourly: cfg.RetentionPerformanceHourly,
+			RetentionPerformance:          cfg.RetentionPerformance,
+			RetentionPerformanceHourly:    cfg.RetentionPerformanceHourly,
+			RetentionSecurityObservations: cfg.RetentionSecurityObservations,
+			RetentionContainerEvents:      cfg.RetentionContainerEvents,
+			RetentionSecurityFindings:     cfg.RetentionSecurityFindings,
 		},
 		Logger: logger,
 	})

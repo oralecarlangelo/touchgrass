@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 	"time"
@@ -106,6 +107,71 @@ func TestCriticalFindingCreatesOneSecurityNotification(t *testing.T) {
 	if len(notes) != 1 || notes[0].Kind != model.NotificationSecurity {
 		t.Errorf("notifications = %+v, want one security notification", notes)
 	}
+}
+
+func TestSecurityCollectorFailureCreatesOneEpisodeAndRecovery(t *testing.T) {
+	t.Parallel()
+	db := openInventoryDB(t)
+	security := NewSecurity(SecurityConfig{
+		Store: store.NewSecurityStore(db), Notifications: store.NewNotificationStore(db),
+		Cursors: store.NewCursorStore(db), Emit: func(model.Event) {}, Logger: slog.New(slog.DiscardHandler),
+	})
+	ctx := context.Background()
+	if _, err := store.NewSecurityStore(db).Activate(ctx, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := security.RecordCollector(ctx, "security_process", false, "docker_top_unavailable", 30*time.Second); err != nil {
+			t.Fatal(err)
+		}
+	}
+	findings, err := security.Findings(ctx, model.SecurityFindingQuery{Status: model.SecurityFindingStatusOpen})
+	if err != nil || len(findings) != 1 || findings[0].OccurrenceCount != 2 {
+		t.Fatalf("collector findings=%+v err=%v", findings, err)
+	}
+	if err := security.RecordCollector(ctx, "security_process", true, "", 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := security.RecordCollector(ctx, "security_process", true, "", 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := security.Findings(ctx, model.SecurityFindingQuery{Status: model.SecurityFindingStatusResolved})
+	if err != nil || len(resolved) != 1 {
+		t.Fatalf("resolved collector findings=%+v err=%v", resolved, err)
+	}
+}
+
+func TestSecurityCollectorEvaluationFailureCannotResolve(t *testing.T) {
+	t.Parallel()
+	security, db := testSecurity(t)
+	ctx := context.Background()
+	if _, err := store.NewSecurityStore(db).Activate(ctx, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if err := security.RecordCollector(ctx, "security_diff", false, "docker_diff_unavailable", 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	failing := NewSecurity(SecurityConfig{
+		Store: store.NewSecurityStore(db), Cursors: failingCursorWriter{},
+		Emit: func(model.Event) {}, Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := failing.RecordCollector(ctx, "security_diff", true, "", 10*time.Minute); err == nil {
+		t.Fatal("RecordCollector() error=nil, want cursor failure")
+	}
+	open, err := security.Findings(ctx, model.SecurityFindingQuery{Status: model.SecurityFindingStatusOpen})
+	if err != nil || len(open) != 1 {
+		t.Fatalf("open collector finding=%+v err=%v, want preserved", open, err)
+	}
+}
+
+type failingCursorWriter struct{}
+
+func (failingCursorWriter) Get(context.Context, string) (model.CollectorCursor, error) {
+	return model.CollectorCursor{}, store.ErrCollectorCursorNotFound
+}
+
+func (failingCursorWriter) Upsert(context.Context, model.CollectorCursor) error {
+	return errors.New("cursor unavailable")
 }
 
 func testSecurity(t *testing.T) (*Security, *store.DB) {

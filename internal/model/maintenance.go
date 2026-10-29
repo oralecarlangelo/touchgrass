@@ -8,39 +8,46 @@ const (
 	DefaultPerformanceClassMaxBytes    int64 = 256 << 20
 	DefaultIssueClassMaxBytes          int64 = 128 << 20
 	DefaultAdministrativeClassMaxBytes int64 = 64 << 20
+	DefaultSecurityClassMaxBytes       int64 = 64 << 20
+	MaximumSecurityEvidenceBytes             = 32 << 10
 	MaximumMaintenanceBatch                  = 1000
 )
 
 // CollectorCursor is durable progress and health for one native source.
 // LastError must contain a safe category, never a rejected payload.
 type CollectorCursor struct {
-	Source         string    `json:"source"`
-	Identity       string    `json:"identity"`
-	Offset         int64     `json:"offset"`
-	LastRecordedAt time.Time `json:"last_recorded_at,omitempty"`
-	LastSuccessAt  time.Time `json:"last_success_at,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	DroppedRecords int64     `json:"dropped_records"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Source                string    `json:"source"`
+	Identity              string    `json:"identity"`
+	Offset                int64     `json:"offset"`
+	LastRecordedAt        time.Time `json:"last_recorded_at,omitempty"`
+	LastSuccessAt         time.Time `json:"last_success_at,omitempty"`
+	LastError             string    `json:"last_error,omitempty"`
+	DroppedRecords        int64     `json:"dropped_records"`
+	CoverageComplete      bool      `json:"coverage_complete"`
+	EffectiveIntervalSecs int64     `json:"effective_interval_secs,omitempty"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // MaintenancePolicy bounds one SQLite maintenance pass.
 type MaintenancePolicy struct {
-	Now                        time.Time
-	BatchSize                  int
-	MaxBytes                   int64
-	LogMaxBytes                int64
-	PerformanceMaxBytes        int64
-	IssueMaxBytes              int64
-	AdministrativeMaxBytes     int64
-	RetentionMetrics           time.Duration
-	RetentionNotifications     time.Duration
-	RetentionDeploys           time.Duration
-	RetentionErrors            time.Duration
-	RetentionLogs              time.Duration
-	RetentionSDKLogs           time.Duration
-	RetentionPerformance       time.Duration
-	RetentionPerformanceHourly time.Duration
+	Now                           time.Time
+	BatchSize                     int
+	MaxBytes                      int64
+	LogMaxBytes                   int64
+	PerformanceMaxBytes           int64
+	IssueMaxBytes                 int64
+	AdministrativeMaxBytes        int64
+	RetentionMetrics              time.Duration
+	RetentionNotifications        time.Duration
+	RetentionDeploys              time.Duration
+	RetentionErrors               time.Duration
+	RetentionLogs                 time.Duration
+	RetentionSDKLogs              time.Duration
+	RetentionPerformance          time.Duration
+	RetentionPerformanceHourly    time.Duration
+	RetentionSecurityObservations time.Duration
+	RetentionContainerEvents      time.Duration
+	RetentionSecurityFindings     time.Duration
 }
 
 // MaintenanceResult reports bounded cleanup and storage pressure.

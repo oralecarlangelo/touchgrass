@@ -128,6 +128,8 @@ export interface CollectorStatusView {
   last_error?: string;
   dropped_records: number;
   stale: boolean;
+  coverage_complete: boolean;
+  effective_interval_secs?: number;
 }
 
 interface ServicesResponse {

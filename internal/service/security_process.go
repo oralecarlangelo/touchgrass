@@ -108,14 +108,13 @@ func (s *ProcessScanner) Scan(ctx context.Context) error {
 		return fmt.Errorf("listing running containers for process scan: %w", err)
 	}
 	jobs := make(chan model.ContainerInstance)
-	errs := make(chan error, len(instances))
+	results := make(chan processScanResult, len(instances))
 	var group sync.WaitGroup
 	for range min(s.workers, max(len(instances), 1)) {
 		group.Go(func() {
 			for instance := range jobs {
-				if err := s.scanContainer(ctx, instance); err != nil {
-					errs <- err
-				}
+				complete, err := s.scanContainer(ctx, instance)
+				results <- processScanResult{complete: complete, err: err}
 			}
 		})
 	}
@@ -133,17 +132,34 @@ func (s *ProcessScanner) Scan(ctx context.Context) error {
 	}
 	close(jobs)
 	group.Wait()
-	close(errs)
-	for err := range errs {
+	close(results)
+	complete := true
+	for result := range results {
+		complete = complete && result.complete
+		if result.err != nil {
+			_ = s.security.RecordCollector(ctx, "security_process", false, "evaluation_failed", s.interval)
+			return result.err
+		}
+	}
+	category := ""
+	if !complete {
+		category = "docker_top_unavailable"
+	}
+	if err := s.security.RecordCollector(ctx, "security_process", complete, category, s.interval); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *ProcessScanner) scanContainer(ctx context.Context, instance model.ContainerInstance) error {
+type processScanResult struct {
+	complete bool
+	err      error
+}
+
+func (s *ProcessScanner) scanContainer(ctx context.Context, instance model.ContainerInstance) (bool, error) {
 	policy, err := s.policies.Policy(ctx, instance.ServiceID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	snapshot, scanErr := s.docker.Processes(ctx, instance.ID)
 	if scanErr != nil {
@@ -158,10 +174,10 @@ func (s *ProcessScanner) scanContainer(ctx context.Context, instance model.Conta
 			Observation: observation, BaselineFingerprint: instance.ConfigurationFingerprint,
 			ServiceID: instance.ServiceID,
 		}); err != nil {
-			return fmt.Errorf("evaluating process security for container %q: %w", instance.ID, err)
+			return false, fmt.Errorf("evaluating process security for container %q: %w", instance.ID, err)
 		}
 	}
-	return nil
+	return snapshot.Complete, nil
 }
 
 func (s *ProcessScanner) observeCount(containerID string, snapshot docker.ProcessSnapshot) (int, bool) {

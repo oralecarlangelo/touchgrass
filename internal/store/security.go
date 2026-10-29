@@ -247,6 +247,9 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 	if err != nil {
 		return SecurityEvaluationResult{}, fmt.Errorf("encoding security evidence: %w", err)
 	}
+	if len(evidence) > model.MaximumSecurityEvidenceBytes {
+		return SecurityEvaluationResult{}, errors.New("evaluating security: evidence metadata exceeds 32 KiB")
+	}
 	tx, err := s.db.sql.BeginTx(ctx, nil)
 	if err != nil {
 		return SecurityEvaluationResult{}, fmt.Errorf("beginning security evaluation: %w", err)

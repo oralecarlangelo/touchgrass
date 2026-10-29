@@ -128,7 +128,7 @@ export function collectorState(status: CollectorStatusView): CollectorState {
     return 'stale';
   }
 
-  if ((status.last_error ?? '') !== '' || status.dropped_records > 0) {
+  if (!status.coverage_complete || (status.last_error ?? '') !== '' || status.dropped_records > 0) {
     return 'degraded';
   }
 

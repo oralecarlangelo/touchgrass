@@ -146,6 +146,56 @@ func TestMaintenanceEnforcesClassCeilingInBatch(t *testing.T) {
 	}
 }
 
+func TestSecurityRetentionTrimsRawBeforeResolvedAndPreservesUnresolved(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	old := formatFixedTime(now.Add(-100 * 24 * time.Hour))
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO security_observations
+		(container_id, rule_id, category, severity, confidence, detected, coverage_complete, evidence_json, observed_at)
+		VALUES ('c', 'old', 'posture', 'high', 'high', 1, 1, '{}', ?)`, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.sql.ExecContext(ctx, `INSERT INTO container_events
+		(source_event_id, occurred_at, service_id, environment, event_type, container_name, compose_service, expected, created_at)
+		VALUES ('old-event', ?, '', 'prod', 'start', 'c', '', 0, ?)`, old, old); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"open", "resolved"} {
+		resolved := any(nil)
+		if status == "resolved" {
+			resolved = old
+		}
+		if _, err := db.sql.ExecContext(ctx, `INSERT INTO security_findings
+			(fingerprint, episode, container_id, rule_id, category, severity, confidence, status, evidence_json, opened_at, last_seen_at, resolved_at)
+			VALUES (?, 1, 'c', ?, 'posture', 'high', 'high', ?, '{}', ?, ?, ?)`, status, status, status, old, old, resolved); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := NewMaintenanceStore(db).Run(ctx, model.MaintenancePolicy{
+		Now: now, BatchSize: 10, MaxBytes: 1 << 30,
+		RetentionSecurityObservations: 7 * 24 * time.Hour,
+		RetentionContainerEvents:      30 * 24 * time.Hour,
+		RetentionSecurityFindings:     90 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"security_observations", "container_events", "security_findings"} {
+		if result.DeletedByTable[table] != 1 {
+			t.Errorf("deleted %s=%d, want 1", table, result.DeletedByTable[table])
+		}
+	}
+	var open int
+	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM security_findings WHERE status = 'open'`).Scan(&open); err != nil {
+		t.Fatal(err)
+	}
+	if open != 1 {
+		t.Fatalf("open findings=%d, want unresolved retained", open)
+	}
+}
+
 func TestSQLiteBackupIsConsistent(t *testing.T) {
 	t.Parallel()
 

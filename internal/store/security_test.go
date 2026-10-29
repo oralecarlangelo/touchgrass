@@ -2,11 +2,25 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
+
+func TestSecurityEvidenceMetadataCap(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	_, err := NewSecurityStore(db).Evaluate(context.Background(), model.SecurityEvaluation{Observation: model.SecurityObservation{
+		ContainerID: "c", RuleID: "posture.cap", Category: model.SecurityCategoryPosture,
+		Severity: model.SecuritySeverityHigh, Confidence: model.SecurityConfidenceHigh,
+		Detected: true, CoverageComplete: true, Evidence: map[string]string{"oversized": strings.Repeat("x", (32<<10)+1)},
+	}})
+	if err == nil {
+		t.Fatal("Evaluate() error = nil, want evidence byte cap")
+	}
+}
 
 func TestSecurityStoreActivationDoesNotAutoApproveExisting(t *testing.T) {
 	t.Parallel()

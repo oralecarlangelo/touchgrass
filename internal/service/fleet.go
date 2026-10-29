@@ -125,6 +125,7 @@ func (c *ContainerEventCollector) runStream(ctx context.Context) error {
 				now := time.Now().UTC()
 				cursor.Source = dockerEventCursorSource
 				cursor.LastError = "docker_events_unavailable"
+				cursor.CoverageComplete = false
 				cursor.UpdatedAt = now
 				if err := c.writer.Upsert(ctx, cursor); err != nil {
 					c.logger.Warn("persisting docker event failure", "error_category", "cursor_write_failed")
@@ -154,6 +155,7 @@ func (c *ContainerEventCollector) persistEvent(ctx context.Context, definitions 
 		cursor.LastRecordedAt = event.OccurredAt
 	}
 	cursor.LastSuccessAt, cursor.UpdatedAt, cursor.LastError = now, now, ""
+	cursor.CoverageComplete = true
 	if err := c.writer.Upsert(ctx, *cursor); err != nil {
 		return fmt.Errorf("persisting docker event cursor: %w", err)
 	}

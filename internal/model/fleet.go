@@ -31,6 +31,7 @@ type HostSample struct {
 type ContainerSample struct {
 	ID            int64     `json:"id"`
 	SampledAt     time.Time `json:"sampled_at"`
+	ContainerID   string    `json:"container_id,omitempty"`
 	ContainerName string    `json:"container_name"`
 	Project       string    `json:"project"`
 	Managed       bool      `json:"managed"`
@@ -44,6 +45,7 @@ type ContainerSample struct {
 
 // FleetContainer is the latest sample per container for the fleet table.
 type FleetContainer struct {
+	ID         string    `json:"id,omitempty"`
 	Name       string    `json:"name"`
 	Project    string    `json:"project"`
 	Managed    bool      `json:"managed"`

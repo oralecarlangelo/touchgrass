@@ -55,11 +55,11 @@ func (s *FleetStore) InsertContainer(ctx context.Context, sample model.Container
 	}
 
 	_, err := s.db.sql.ExecContext(ctx,
-		`INSERT INTO container_samples (sampled_at, container_name, project,
+		`INSERT INTO container_samples (sampled_at, container_id, container_name, project,
 		  managed, service_id, state, cpu_percent, mem_bytes, mem_limit,
 		  restarts)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		formatTime(sample.SampledAt), sample.ContainerName, sample.Project,
+		 VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		formatTime(sample.SampledAt), sample.ContainerID, sample.ContainerName, sample.Project,
 		managed, sample.ServiceID, sample.State, sample.CPUPercent,
 		sample.MemBytes, sample.MemLimit, sample.Restarts,
 	)
@@ -74,10 +74,11 @@ func (s *FleetStore) InsertContainer(ctx context.Context, sample model.Container
 // first with a name tiebreak so the fleet order is deterministic.
 func (s *FleetStore) LatestContainers(ctx context.Context) ([]model.FleetContainer, error) {
 	rows, err := s.db.sql.QueryContext(ctx,
-		`SELECT container_name, project, managed, service_id, state,
+		`SELECT COALESCE(container_id, ''), container_name, project, managed, service_id, state,
 		  cpu_percent, mem_bytes, mem_limit, restarts, sampled_at
 		 FROM container_samples WHERE id IN (
-		   SELECT MAX(id) FROM container_samples GROUP BY container_name
+		   SELECT MAX(id) FROM container_samples
+		   GROUP BY COALESCE(NULLIF(container_id, ''), container_name)
 		 ) ORDER BY cpu_percent DESC, container_name ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("querying latest containers: %w", err)
@@ -96,7 +97,7 @@ func (s *FleetStore) LatestContainers(ctx context.Context) ([]model.FleetContain
 		)
 
 		if err := rows.Scan(
-			&container.Name, &container.Project, &managed,
+			&container.ID, &container.Name, &container.Project, &managed,
 			&container.ServiceID, &container.State, &container.CPUPercent,
 			&container.MemBytes, &container.MemLimit, &container.Restarts,
 			&sampledAt,

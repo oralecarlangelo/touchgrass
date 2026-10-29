@@ -194,7 +194,7 @@ func EvaluateLayerChanges(
 			continue
 		}
 		if userLocalPath == "" && (change.Kind == docker.LayerChangeAdded || change.Kind == docker.LayerChangeModified) &&
-			pathWithin(change.Path, "/usr/local/bin") {
+			(pathWithin(change.Path, "/usr/local/bin") || strings.Contains(change.Path, "/.local/bin/")) {
 			userLocalPath = change.Path
 		}
 		if addedExecutable == "" && change.Kind == docker.LayerChangeAdded && executableLocation(change.Path) {
@@ -276,6 +276,9 @@ func pathWithin(value, prefix string) bool {
 }
 
 func executableLocation(value string) bool {
+	if strings.Contains(value, "/.local/bin/") {
+		return true
+	}
 	for _, prefix := range []string{"/tmp", "/var/tmp", "/dev/shm", "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin"} {
 		if pathWithin(value, prefix) {
 			return true

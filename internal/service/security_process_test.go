@@ -25,6 +25,7 @@ func TestProcessScannerRuleMatrix(t *testing.T) {
 	}{
 		{name: "kernel-like command", processes: []docker.Process{{PID: 8, ParentPID: 1, User: "root", Command: "[kworker/0:1]"}}, rule: "process.kernel_like", detected: true},
 		{name: "high-risk path", processes: []docker.Process{{PID: 8, ParentPID: 1, User: "app", Command: "/dev/shm/update"}}, rule: "process.high_risk_path", detected: true},
+		{name: "user-local executable", processes: []docker.Process{{PID: 8, ParentPID: 1, User: "app", Command: "/home/app/.local/bin/worker"}}, rule: "process.high_risk_path", detected: true},
 		{name: "allowed path", processes: []docker.Process{{PID: 8, ParentPID: 1, User: "app", Command: "/tmp/health"}}, policy: model.SecurityPolicy{AllowedExecutablePaths: []string{"/tmp/health"}}, rule: "process.high_risk_path", detected: false},
 		{name: "parent child mismatch", processes: []docker.Process{{PID: 7, ParentPID: 1, User: "app", Command: "app"}, {PID: 8, ParentPID: 7, User: "root", Command: "helper"}}, rule: "process.parent_child_mismatch", detected: true},
 		{name: "sustained pid spike", processes: make([]docker.Process, 40), baseline: 10, sustained: true, rule: "process.pid_spike", detected: true},

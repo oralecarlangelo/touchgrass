@@ -14,9 +14,11 @@ import (
 
 func TestDiffScannerFlagsUserLocalExecutable(t *testing.T) {
 	t.Parallel()
-	got := observationByRule(EvaluateLayerChanges("c", []docker.LayerChange{{Kind: docker.LayerChangeAdded, Path: "/usr/local/bin/agent"}}, model.SecurityPolicy{}, true), "diff.user_local_executable")
-	if !got.Detected || got.Severity != model.SecuritySeverityHigh {
-		t.Fatalf("observation = %+v, want high detection", got)
+	for _, executable := range []string{"/usr/local/bin/agent", "/home/app/.local/bin/worker"} {
+		got := observationByRule(EvaluateLayerChanges("c", []docker.LayerChange{{Kind: docker.LayerChangeAdded, Path: executable}}, model.SecurityPolicy{}, true), "diff.user_local_executable")
+		if !got.Detected || got.Severity != model.SecuritySeverityHigh {
+			t.Fatalf("observation for %q = %+v, want high detection", executable, got)
+		}
 	}
 }
 

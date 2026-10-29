@@ -259,7 +259,7 @@ func processObservation(
 
 func isHighRiskExecutable(command string) bool {
 	return strings.HasPrefix(command, "/tmp/") || strings.HasPrefix(command, "/var/tmp/") ||
-		strings.HasPrefix(command, "/dev/shm/")
+		strings.HasPrefix(command, "/dev/shm/") || strings.Contains(command, "/.local/bin/")
 }
 
 func isRootProcess(user string) bool {

@@ -316,13 +316,14 @@ func runServe(args []string) error {
 		Logger:        logger,
 	})
 	inv.SetFlipReporter(notificationStore, audit, cutover.Active)
-	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
-		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),
-		Environment: cfg.Env, Expected: cutover.Active, Logger: logger,
-	})
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: serviceStore, Containers: store.NewContainerStore(db), Docker: dockerClient,
 		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
+	})
+	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
+		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),
+		Environment: cfg.Env, Expected: cutover.Active, Logger: logger,
+		RequestReconcile: fleetInventory.RequestReconcile,
 	})
 
 	var group sync.WaitGroup

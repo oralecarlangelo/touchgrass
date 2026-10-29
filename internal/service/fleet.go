@@ -31,22 +31,24 @@ type ContainerEventWriter interface {
 
 // ContainerEventCollectorConfig wires lifecycle collection.
 type ContainerEventCollectorConfig struct {
-	Services    *store.ServiceStore
-	Docker      EventStreamer
-	Writer      ContainerEventWriter
-	Environment string
-	Expected    func(string) bool
-	Logger      *slog.Logger
+	Services         *store.ServiceStore
+	Docker           EventStreamer
+	Writer           ContainerEventWriter
+	Environment      string
+	Expected         func(string) bool
+	Logger           *slog.Logger
+	RequestReconcile func()
 }
 
 // ContainerEventCollector persists bounded Docker lifecycle transitions.
 type ContainerEventCollector struct {
-	services    *store.ServiceStore
-	docker      EventStreamer
-	writer      ContainerEventWriter
-	environment string
-	expected    func(string) bool
-	logger      *slog.Logger
+	services         *store.ServiceStore
+	docker           EventStreamer
+	writer           ContainerEventWriter
+	environment      string
+	expected         func(string) bool
+	logger           *slog.Logger
+	requestReconcile func()
 }
 
 // NewContainerEventCollector builds a collector.
@@ -59,8 +61,12 @@ func NewContainerEventCollector(cfg ContainerEventCollectorConfig) *ContainerEve
 	if logger == nil {
 		logger = slog.Default()
 	}
+	requestReconcile := cfg.RequestReconcile
+	if requestReconcile == nil {
+		requestReconcile = func() {}
+	}
 	return &ContainerEventCollector{services: cfg.Services, docker: cfg.Docker, writer: cfg.Writer,
-		environment: cfg.Environment, expected: expected, logger: logger}
+		environment: cfg.Environment, expected: expected, logger: logger, requestReconcile: requestReconcile}
 }
 
 // Run reconnects after bounded stream failures until cancellation.
@@ -123,17 +129,19 @@ func (c *ContainerEventCollector) runStream(ctx context.Context) error {
 				if err := c.writer.Upsert(ctx, cursor); err != nil {
 					c.logger.Warn("persisting docker event failure", "error_category", "cursor_write_failed")
 				}
+				c.requestReconcile()
 				return errors.New("docker event stream unavailable")
 			}
 		}
 	}
+	c.requestReconcile()
 	return nil
 }
 
 func (c *ContainerEventCollector) persistEvent(ctx context.Context, definitions []model.Service, event docker.Event, cursor *model.CollectorCursor) error {
 	serviceID := ownerForDockerEvent(definitions, event)
 	bounded := model.ContainerEvent{SourceEventID: event.SourceEventID, OccurredAt: event.OccurredAt,
-		ServiceID: serviceID, Environment: c.environment, EventType: event.Action,
+		ContainerID: event.ContainerID, ServiceID: serviceID, Environment: c.environment, EventType: event.Action,
 		ContainerName: event.ContainerName, ComposeService: event.ComposeService,
 		Expected: serviceID != "" && c.expected(serviceID)}
 	if err := c.writer.UpsertContainerEvent(ctx, bounded); err != nil {
@@ -149,6 +157,7 @@ func (c *ContainerEventCollector) persistEvent(ctx context.Context, definitions 
 	if err := c.writer.Upsert(ctx, *cursor); err != nil {
 		return fmt.Errorf("persisting docker event cursor: %w", err)
 	}
+	c.requestReconcile()
 	return nil
 }
 

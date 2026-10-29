@@ -46,7 +46,7 @@ CREATE TABLE container_security_activation (
 );
 INSERT INTO container_security_activation(singleton) VALUES (1);
 
-ALTER TABLE container_samples ADD COLUMN container_id TEXT REFERENCES container_instances(container_id) ON DELETE SET NULL;
-ALTER TABLE container_events ADD COLUMN container_id TEXT REFERENCES container_instances(container_id) ON DELETE SET NULL;
+ALTER TABLE container_samples ADD COLUMN container_id TEXT;
+ALTER TABLE container_events ADD COLUMN container_id TEXT;
 CREATE INDEX idx_container_samples_id_sampled ON container_samples(container_id, sampled_at);
 CREATE INDEX idx_container_events_container_time ON container_events(container_id, occurred_at);

@@ -89,7 +89,7 @@ func TestSampleFleetCollects(t *testing.T) {
 	}
 }
 
-func TestContainerEventCollectorPersistsCursorAndExpectedCutover(t *testing.T) {
+func TestContainerEventCollectorPersistsContainerID(t *testing.T) {
 	t.Parallel()
 
 	db := openInventoryDB(t)
@@ -109,7 +109,8 @@ func TestContainerEventCollectorPersistsCursorAndExpectedCutover(t *testing.T) {
 	}
 
 	events, err := performance.ListContainerEvents(context.Background(), model.PerformanceRange{ServiceID: testServiceAPI, Start: at.Add(-time.Second), End: at.Add(time.Second)})
-	if err != nil || len(events) != 1 || !events[0].Expected || events[0].EventType != "die" {
+	if err != nil || len(events) != 1 || !events[0].Expected || events[0].EventType != "die" ||
+		events[0].ContainerID != testBlueContainerID {
 		t.Fatalf("events = %+v, %v", events, err)
 	}
 	if err := collector.runStream(context.Background()); err != nil {
@@ -139,14 +140,15 @@ func TestContainerEventCollectorStopsOnCancellation(t *testing.T) {
 	}
 }
 
-func TestContainerEventCollectorPersistsStreamFailure(t *testing.T) {
+func TestContainerEventCollectorMarksCursorDegraded(t *testing.T) {
 	t.Parallel()
 
 	db := openInventoryDB(t)
 	performance := store.NewPerformanceStore(db)
+	requests := 0
 	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
 		Services: store.NewServiceStore(db), Docker: errorEventStreamer{}, Writer: performance,
-		Environment: "prod", Logger: slog.New(slog.DiscardHandler),
+		Environment: "prod", Logger: slog.New(slog.DiscardHandler), RequestReconcile: func() { requests++ },
 	})
 	if err := collector.runStream(context.Background()); err == nil {
 		t.Fatal("runStream() error = nil, want daemon failure")
@@ -157,6 +159,51 @@ func TestContainerEventCollectorPersistsStreamFailure(t *testing.T) {
 	}
 	if cursor.LastError != "docker_events_unavailable" || cursor.UpdatedAt.IsZero() {
 		t.Fatalf("failure cursor = %+v", cursor)
+	}
+	if requests != 1 {
+		t.Errorf("reconcile requests = %d, want 1", requests)
+	}
+}
+
+func TestContainerEventCollectorRequestsCoalescedReconcile(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	fleet := NewFleetInventory(FleetInventoryConfig{Services: store.NewServiceStore(db),
+		Containers: store.NewContainerStore(db), Docker: &fakeInventoryDocker{}, Interval: time.Hour})
+	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
+		Services: store.NewServiceStore(db), Writer: store.NewPerformanceStore(db), Environment: "prod",
+		RequestReconcile: fleet.RequestReconcile, Logger: slog.New(slog.DiscardHandler),
+	})
+	event := docker.Event{SourceEventID: "one", OccurredAt: time.Now().UTC(), Action: "start", ContainerID: "id", ContainerName: "api-1"}
+	cursor := model.CollectorCursor{}
+	if err := collector.persistEvent(context.Background(), nil, event, &cursor); err != nil {
+		t.Fatalf("persistEvent() error = %v", err)
+	}
+	event.SourceEventID = "two"
+	if err := collector.persistEvent(context.Background(), nil, event, &cursor); err != nil {
+		t.Fatalf("persistEvent() error = %v", err)
+	}
+	if got := len(fleet.requests); got != 1 {
+		t.Errorf("coalesced reconcile queue = %d, want 1", got)
+	}
+}
+
+func TestContainerEventCollectorRepairsClosedStreamWithFullReconcile(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	requests := 0
+	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: &fakeEventStreamer{},
+		Writer: store.NewPerformanceStore(db), Environment: "prod",
+		RequestReconcile: func() { requests++ }, Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := collector.runStream(context.Background()); err != nil {
+		t.Fatalf("runStream() error = %v, want nil", err)
+	}
+	if requests != 1 {
+		t.Errorf("reconcile requests = %d, want 1 after stream close", requests)
 	}
 }
 

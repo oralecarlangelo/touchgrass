@@ -87,7 +87,13 @@ func fromEventMessage(message dockerevents.Message) (Event, bool) {
 }
 
 func boundedEventAction(action dockerevents.Action) (string, bool) {
-	switch action {
+	bounded := string(action)
+	if prefix, _, ok := strings.Cut(bounded, ":"); ok && strings.HasPrefix(prefix, "exec_") {
+		bounded = strings.TrimSpace(prefix)
+	}
+	switch dockerevents.Action(bounded) {
+	case dockerevents.ActionCreate:
+		return "create", true
 	case dockerevents.ActionStart:
 		return "start", true
 	case dockerevents.ActionStop:
@@ -96,6 +102,26 @@ func boundedEventAction(action dockerevents.Action) (string, bool) {
 		return "die", true
 	case dockerevents.ActionRestart:
 		return "restart", true
+	case dockerevents.ActionPause:
+		return "pause", true
+	case dockerevents.ActionUnPause:
+		return "unpause", true
+	case dockerevents.ActionKill:
+		return "kill", true
+	case dockerevents.ActionRename:
+		return "rename", true
+	case dockerevents.ActionDestroy:
+		return "destroy", true
+	case dockerevents.ActionRemove:
+		return "remove", true
+	case dockerevents.ActionExecCreate:
+		return "exec_create", true
+	case dockerevents.ActionExecStart:
+		return "exec_start", true
+	case dockerevents.ActionExecDie:
+		return "exec_die", true
+	case dockerevents.ActionExecDetach:
+		return "exec_detach", true
 	case dockerevents.ActionOOM:
 		return "oom", true
 	case dockerevents.ActionHealthStatusRunning:

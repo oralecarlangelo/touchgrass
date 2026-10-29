@@ -36,9 +36,11 @@ func TestFromEventMessageAllowsLifecycleAndHealthOnly(t *testing.T) {
 	t.Parallel()
 
 	allowed := []dockerevents.Action{
-		dockerevents.ActionStart, dockerevents.ActionStop, dockerevents.ActionDie,
+		dockerevents.ActionCreate, dockerevents.ActionStart, dockerevents.ActionStop, dockerevents.ActionDie,
 		dockerevents.ActionRestart, dockerevents.ActionOOM, dockerevents.ActionHealthStatusHealthy,
-		dockerevents.ActionHealthStatusUnhealthy,
+		dockerevents.ActionHealthStatusUnhealthy, dockerevents.ActionPause, dockerevents.ActionUnPause,
+		dockerevents.ActionKill, dockerevents.ActionRename, dockerevents.ActionDestroy, dockerevents.ActionRemove,
+		dockerevents.ActionExecCreate, dockerevents.ActionExecStart, dockerevents.ActionExecDie,
 	}
 	for _, action := range allowed {
 		message := dockerevents.Message{Type: dockerevents.ContainerEventType, Action: action, Actor: dockerevents.Actor{ID: "id"}, Time: 10}
@@ -46,8 +48,10 @@ func TestFromEventMessageAllowsLifecycleAndHealthOnly(t *testing.T) {
 			t.Errorf("action %q rejected", action)
 		}
 	}
-	message := dockerevents.Message{Type: dockerevents.ContainerEventType, Action: dockerevents.ActionExecCreate, Actor: dockerevents.Actor{ID: "id"}}
-	if _, ok := fromEventMessage(message); ok {
-		t.Fatal("exec event should not be collected")
+	message := dockerevents.Message{Type: dockerevents.ContainerEventType,
+		Action: dockerevents.Action("exec_create: /bin/sh -c 'password=secret'"), Actor: dockerevents.Actor{ID: "id"}}
+	event, ok := fromEventMessage(message)
+	if !ok || event.Action != "exec_create" || strings.Contains(event.Action, "password") {
+		t.Fatalf("bounded exec event = (%+v, %v), want action without command", event, ok)
 	}
 }

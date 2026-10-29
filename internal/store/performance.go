@@ -404,10 +404,10 @@ func (s *PerformanceStore) UpsertContainerEvent(ctx context.Context, event model
 		return errors.New("upserting container event: invalid bounded fields")
 	}
 	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO container_events
-		(source_event_id, occurred_at, service_id, environment, event_type, container_name,
-		compose_service, expected, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(source_event_id, occurred_at, container_id, service_id, environment, event_type, container_name,
+		compose_service, expected, created_at) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_event_id) DO NOTHING`, event.SourceEventID, formatFixedTime(event.OccurredAt.UTC()),
-		event.ServiceID, event.Environment, event.EventType, event.ContainerName, event.ComposeService,
+		event.ContainerID, event.ServiceID, event.Environment, event.EventType, event.ContainerName, event.ComposeService,
 		boolInteger(event.Expected), formatTime(time.Now().UTC()))
 	if err != nil {
 		return fmt.Errorf("upserting container event: %w", err)
@@ -417,7 +417,7 @@ func (s *PerformanceStore) UpsertContainerEvent(ctx context.Context, event model
 
 // ListContainerEvents returns bounded lifecycle events ordered chronologically.
 func (s *PerformanceStore) ListContainerEvents(ctx context.Context, query model.PerformanceRange) ([]model.ContainerEvent, error) {
-	statement := `SELECT source_event_id, occurred_at, service_id, environment, event_type,
+	statement := `SELECT source_event_id, occurred_at, COALESCE(container_id, ''), service_id, environment, event_type,
 		container_name, compose_service, expected FROM container_events
 		WHERE occurred_at >= ? AND occurred_at < ?`
 	args := []any{formatFixedTime(query.Start.UTC()), formatFixedTime(query.End.UTC())}
@@ -437,7 +437,7 @@ func (s *PerformanceStore) ListContainerEvents(ctx context.Context, query model.
 		var event model.ContainerEvent
 		var occurred string
 		var expected int
-		if err := rows.Scan(&event.SourceEventID, &occurred, &event.ServiceID, &event.Environment,
+		if err := rows.Scan(&event.SourceEventID, &occurred, &event.ContainerID, &event.ServiceID, &event.Environment,
 			&event.EventType, &event.ContainerName, &event.ComposeService, &expected); err != nil {
 			return nil, fmt.Errorf("scanning container event: %w", err)
 		}

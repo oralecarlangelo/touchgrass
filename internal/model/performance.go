@@ -183,6 +183,7 @@ type LogVolumeBucket struct {
 type ContainerEvent struct {
 	SourceEventID  string    `json:"source_event_id"`
 	OccurredAt     time.Time `json:"occurred_at"`
+	ContainerID    string    `json:"container_id"`
 	ServiceID      string    `json:"service_id"`
 	Environment    string    `json:"environment"`
 	EventType      string    `json:"event_type"`

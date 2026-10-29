@@ -4,10 +4,12 @@ import "time"
 
 // Security enums use an empty zero value so missing data cannot silently mean
 // a valid severity, confidence, category, or workflow status.
-type SecuritySeverity string
-type SecurityConfidence string
-type SecurityCategory string
-type SecurityFindingStatus string
+type (
+	SecuritySeverity      string
+	SecurityConfidence    string
+	SecurityCategory      string
+	SecurityFindingStatus string
+)
 
 const (
 	SecuritySeverityUnknown  SecuritySeverity = ""

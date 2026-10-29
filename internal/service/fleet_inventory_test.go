@@ -113,8 +113,10 @@ func TestFleetInventoryReconcileSkipsVanishedContainer(t *testing.T) {
 		inspections: map[string]docker.Inspection{},
 		inspectErrs: map[string]error{"vanished": errdefs.NotFound(errors.New("gone"))},
 	}
-	inventory := NewFleetInventory(FleetInventoryConfig{Services: store.NewServiceStore(db),
-		Containers: store.NewContainerStore(db), Docker: dockerClient, Interval: time.Minute, InspectLimit: 2})
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services:   store.NewServiceStore(db),
+		Containers: store.NewContainerStore(db), Docker: dockerClient, Interval: time.Minute, InspectLimit: 2,
+	})
 
 	if _, err := inventory.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile() error = %v, want nil for inspect/list race", err)
@@ -133,8 +135,10 @@ func TestFleetInventoryReconcileNameReuse(t *testing.T) {
 
 	db := openInventoryDB(t)
 	dockerClient := &fakeInventoryDocker{inspections: map[string]docker.Inspection{}}
-	inventory := NewFleetInventory(FleetInventoryConfig{Services: store.NewServiceStore(db),
-		Containers: store.NewContainerStore(db), Docker: dockerClient, Interval: time.Minute, InspectLimit: 1})
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services:   store.NewServiceStore(db),
+		Containers: store.NewContainerStore(db), Docker: dockerClient, Interval: time.Minute, InspectLimit: 1,
+	})
 
 	dockerClient.containers = []docker.Container{{ID: "old", Name: "api-1", State: "exited"}}
 	if _, err := inventory.Reconcile(context.Background()); err != nil {
@@ -165,9 +169,11 @@ func TestFleetInventoryMarksIncompleteOnListFailure(t *testing.T) {
 	t.Parallel()
 
 	db := openInventoryDB(t)
-	inventory := NewFleetInventory(FleetInventoryConfig{Services: store.NewServiceStore(db),
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services:   store.NewServiceStore(db),
 		Containers: store.NewContainerStore(db), Docker: &fakeInventoryDocker{listErr: errors.New("daemon down")},
-		Interval: time.Minute, InspectLimit: 1})
+		Interval: time.Minute, InspectLimit: 1,
+	})
 
 	if _, err := inventory.Reconcile(context.Background()); err == nil {
 		t.Fatal("Reconcile() error = nil, want daemon error")
@@ -190,8 +196,10 @@ func TestFleetInventoryBoundsInspectConcurrency(t *testing.T) {
 		containers[index] = docker.Container{ID: string(rune('a' + index)), Name: "worker-" + string(rune('a'+index))}
 	}
 	dockerClient := &fakeInventoryDocker{containers: containers, inspections: map[string]docker.Inspection{}, delay: 10 * time.Millisecond}
-	inventory := NewFleetInventory(FleetInventoryConfig{Services: store.NewServiceStore(db),
-		Containers: store.NewContainerStore(db), Docker: dockerClient, Interval: time.Minute, InspectLimit: 3})
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services:   store.NewServiceStore(db),
+		Containers: store.NewContainerStore(db), Docker: dockerClient, Interval: time.Minute, InspectLimit: 3,
+	})
 
 	if _, err := inventory.Reconcile(context.Background()); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
@@ -203,9 +211,11 @@ func TestFleetInventoryBoundsInspectConcurrency(t *testing.T) {
 
 func TestFleetInventoryStopsOnCancellation(t *testing.T) {
 	db := openInventoryDB(t)
-	inventory := NewFleetInventory(FleetInventoryConfig{Services: store.NewServiceStore(db),
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services:   store.NewServiceStore(db),
 		Containers: store.NewContainerStore(db), Docker: &fakeInventoryDocker{inspections: map[string]docker.Inspection{}},
-		Interval: time.Hour, InspectLimit: 1})
+		Interval: time.Hour, InspectLimit: 1,
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

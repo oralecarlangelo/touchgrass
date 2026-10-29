@@ -30,6 +30,7 @@ enforce retention.
                          │   ├─ fleet/system (sampling) │
                          │   ├─ database (pg/redis)     │
                          │   ├─ performance (correlate) │
+                         │   ├─ security (episodes)    │
                          │   ├─ onboarding (promote)    │
                          │   ├─ notify (webhook/email)  │
                          │   └─ audit (append-only)     │
@@ -143,6 +144,8 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 | performance buckets | one-minute HTTP, PostgreSQL, Redis, and log-volume aggregates plus bounded hourly rollups |
 | collector_cursors | persisted source identity/offset, freshness, safe errors, and dropped-record counters |
 | container_events | bounded Docker lifecycle, OOM, restart, and health-transition history |
+| container_instances | all-state Docker identity, ownership, classification, safe posture, and presence history |
+| security observations/findings | bounded scan metadata plus durable episodes, policies, baselines, and ignores |
 | db_jobs | backup/restore job rows (dumps live on disk, not in SQLite) |
 | audit | append-only action log (cutover, rollback, deploy, login, db_*, service_*, user_*) |
 | users | managed login accounts: username, bcrypt hash, role, disabled flag |
@@ -155,6 +158,34 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
   rollups and runtime events default to 30 days. Deletion is batched and the
   total SQLite budget plus per-class byte ceilings are enforced. Mandatory
   (BRD NFR-2), tested with a volume soak and online backup/recovery checks.
+
+## All-state inventory and container security
+
+The authoritative inventory lists every Docker lifecycle state and stores
+identity by container ID. Complete reconciliations infer absence; partial
+reconciliations never do. Docker events reduce update latency but do not
+replace polling. Live metrics remain a separate running-container stream, so
+stopped rows correctly carry null metrics.
+
+Security monitoring is opt-in and read-only. Admin review activates posture,
+process, and writable-layer collectors. Each collector normalizes data before
+the service layer: inspect excludes environment/arbitrary labels/host sources,
+top keeps only executable identity, and diff keeps path operations without
+contents. The security service fingerprints `(container, rule, baseline)` into
+durable episodes, records bounded evidence, and emits notifications only on
+open/recovery transitions. Partial coverage cannot resolve prior evidence.
+
+Collectors expose last success, coverage, safe error category, effective
+interval, and staleness through the shared collector-status projection. Raw
+observations (168h) and container events (720h) trim before resolved findings
+(2160h); unresolved findings remain durable within the global SQLite budget.
+No detector path calls Docker mutation APIs or automatic containment.
+
+Release gates are the generic compromise replay/privacy test, the 100-container
+soak (`make test-security-soak`), full unit/race/integration/web validation,
+and a pre-0019 online-backup migration rehearsal. Rollback restores the
+untouched backup and previous binary; forward migrations are never reversed in
+place.
 
 ## Agentless Performance diagnostics
 

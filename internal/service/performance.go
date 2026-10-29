@@ -176,8 +176,10 @@ func (p *Performance) Routes(ctx context.Context, query model.PerformanceQuery) 
 	rows := make([]PerformanceRoute, 0, len(currentRoutes))
 	for key, aggregate := range currentRoutes {
 		parts := strings.SplitN(key, "\x1f", 2)
-		rows = append(rows, PerformanceRoute{Method: parts[0], RouteFamily: parts[1],
-			PerformanceSnapshot: summarizeHTTP(aggregate), Previous: summarizeHTTP(previousRoutes[key])})
+		rows = append(rows, PerformanceRoute{
+			Method: parts[0], RouteFamily: parts[1],
+			PerformanceSnapshot: summarizeHTTP(aggregate), Previous: summarizeHTTP(previousRoutes[key]),
+		})
 	}
 	sortRoutes(rows, query.Sort)
 	if len(rows) > query.Limit {
@@ -335,8 +337,10 @@ func (p *Performance) Timeline(ctx context.Context, query model.PerformanceQuery
 	if deployments == nil {
 		deployments = []model.Deploy{}
 	}
-	return PerformanceTimeline{Start: query.Start, End: query.End, Resolution: query.Resolution,
-		Points: result, Events: events, Deployments: deployments}, nil
+	return PerformanceTimeline{
+		Start: query.Start, End: query.End, Resolution: query.Resolution,
+		Points: result, Events: events, Deployments: deployments,
+	}, nil
 }
 
 // CollectorStatus returns known source states, including never-run sources.
@@ -352,9 +356,11 @@ func (p *Performance) CollectorStatus(ctx context.Context) ([]model.CollectorSta
 		if err != nil {
 			return nil, fmt.Errorf("loading collector status: %w", err)
 		}
-		status := model.CollectorStatus{Source: source, LastSuccessAt: cursor.LastSuccessAt,
+		status := model.CollectorStatus{
+			Source: source, LastSuccessAt: cursor.LastSuccessAt,
 			LastRecordedAt: cursor.LastRecordedAt, LastError: cursor.LastError, DroppedRecords: cursor.DroppedRecords,
-			CoverageComplete: cursor.CoverageComplete, EffectiveIntervalSecs: cursor.EffectiveIntervalSecs}
+			CoverageComplete: cursor.CoverageComplete, EffectiveIntervalSecs: cursor.EffectiveIntervalSecs,
+		}
 		status.Stale = status.LastSuccessAt.IsZero() || now.Sub(status.LastSuccessAt) > collectorStaleAfter
 		if source == dockerEventCursorSource && status.LastError == "" && !status.LastSuccessAt.IsZero() {
 			status.Stale = false
@@ -497,12 +503,16 @@ func rankAnomalies(current, previous PerformanceSnapshot) []PerformanceAnomaly {
 	result := []PerformanceAnomaly{}
 	if previous.P95MS > 0 && current.P95MS > previous.P95MS {
 		score := (current.P95MS - previous.P95MS) / previous.P95MS * 100
-		result = append(result, PerformanceAnomaly{Kind: "latency", Score: score,
-			Summary: "Higher p95 latency correlates with the selected window."})
+		result = append(result, PerformanceAnomaly{
+			Kind: "latency", Score: score,
+			Summary: "Higher p95 latency correlates with the selected window.",
+		})
 	}
 	if current.ErrorRate > previous.ErrorRate && current.ErrorRate > 0 {
-		result = append(result, PerformanceAnomaly{Kind: "errors", Score: current.ErrorRate - previous.ErrorRate,
-			Summary: "Elevated HTTP errors correlate with the selected window."})
+		result = append(result, PerformanceAnomaly{
+			Kind: "errors", Score: current.ErrorRate - previous.ErrorRate,
+			Summary: "Elevated HTTP errors correlate with the selected window.",
+		})
 	}
 	sort.SliceStable(result, func(i, j int) bool { return result[i].Score > result[j].Score })
 	return result

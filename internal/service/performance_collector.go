@@ -161,8 +161,10 @@ func (c *PerformanceCollector) collectPostgres(ctx context.Context, minute time.
 	}
 	for metric, sample := range snapshot.Metrics {
 		delta, reset := metricDelta(c.postgresBaseline, metric, sample)
-		bucket := model.PostgresMetricBucket{BucketStart: minute, ServiceID: c.serviceID,
-			Environment: c.environment, Metric: metric, Value: sample.Value, Delta: delta, Reset: reset}
+		bucket := model.PostgresMetricBucket{
+			BucketStart: minute, ServiceID: c.serviceID,
+			Environment: c.environment, Metric: metric, Value: sample.Value, Delta: delta, Reset: reset,
+		}
 		if err := c.writer.UpsertPostgres(ctx, bucket); err != nil {
 			c.recordFailure(ctx, "postgres", "postgres_write_failed")
 			return
@@ -192,8 +194,10 @@ func (c *PerformanceCollector) collectRedis(ctx context.Context, minute time.Tim
 	}
 	for metric, sample := range snapshot.Metrics {
 		delta, reset := metricDelta(c.redisBaseline, metric, sample)
-		bucket := model.RedisMetricBucket{BucketStart: minute, ServiceID: c.serviceID,
-			Environment: c.environment, Metric: metric, Value: sample.Value, Delta: delta, Reset: reset}
+		bucket := model.RedisMetricBucket{
+			BucketStart: minute, ServiceID: c.serviceID,
+			Environment: c.environment, Metric: metric, Value: sample.Value, Delta: delta, Reset: reset,
+		}
 		if err := c.writer.UpsertRedis(ctx, bucket); err != nil {
 			c.recordFailure(ctx, "redis", "redis_write_failed")
 			return
@@ -206,8 +210,10 @@ func (c *PerformanceCollector) collectRedis(ctx context.Context, minute time.Tim
 		for metric, value := range map[string]float64{"command_calls": command.Calls, "command_usec": command.Microseconds} {
 			key := metric + ":" + family
 			delta, reset := metricDelta(c.redisBaseline, key, model.NumericSample{Value: value, Cumulative: true})
-			bucket := model.RedisMetricBucket{BucketStart: minute, ServiceID: c.serviceID, Environment: c.environment,
-				Metric: metric, CommandFamily: family, Value: value, Delta: delta, Reset: reset}
+			bucket := model.RedisMetricBucket{
+				BucketStart: minute, ServiceID: c.serviceID, Environment: c.environment,
+				Metric: metric, CommandFamily: family, Value: value, Delta: delta, Reset: reset,
+			}
 			if err := c.writer.UpsertRedis(ctx, bucket); err != nil {
 				c.recordFailure(ctx, "redis", "redis_write_failed")
 				return

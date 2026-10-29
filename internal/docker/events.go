@@ -91,7 +91,7 @@ func boundedEventAction(action dockerevents.Action) (string, bool) {
 	if prefix, _, ok := strings.Cut(bounded, ":"); ok && strings.HasPrefix(prefix, "exec_") {
 		bounded = strings.TrimSpace(prefix)
 	}
-	switch dockerevents.Action(bounded) {
+	switch dockerevents.Action(bounded) { //nolint:exhaustive // Docker adds actions; the default intentionally rejects everything outside the allowlist.
 	case dockerevents.ActionCreate:
 		return "create", true
 	case dockerevents.ActionStart:

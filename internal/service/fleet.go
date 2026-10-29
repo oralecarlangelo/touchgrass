@@ -65,8 +65,10 @@ func NewContainerEventCollector(cfg ContainerEventCollectorConfig) *ContainerEve
 	if requestReconcile == nil {
 		requestReconcile = func() {}
 	}
-	return &ContainerEventCollector{services: cfg.Services, docker: cfg.Docker, writer: cfg.Writer,
-		environment: cfg.Environment, expected: expected, logger: logger, requestReconcile: requestReconcile}
+	return &ContainerEventCollector{
+		services: cfg.Services, docker: cfg.Docker, writer: cfg.Writer,
+		environment: cfg.Environment, expected: expected, logger: logger, requestReconcile: requestReconcile,
+	}
 }
 
 // Run reconnects after bounded stream failures until cancellation.
@@ -141,10 +143,12 @@ func (c *ContainerEventCollector) runStream(ctx context.Context) error {
 
 func (c *ContainerEventCollector) persistEvent(ctx context.Context, definitions []model.Service, event docker.Event, cursor *model.CollectorCursor) error {
 	serviceID := ownerForDockerEvent(definitions, event)
-	bounded := model.ContainerEvent{SourceEventID: event.SourceEventID, OccurredAt: event.OccurredAt,
+	bounded := model.ContainerEvent{
+		SourceEventID: event.SourceEventID, OccurredAt: event.OccurredAt,
 		ContainerID: event.ContainerID, ServiceID: serviceID, Environment: c.environment, EventType: event.Action,
 		ContainerName: event.ContainerName, ComposeService: event.ComposeService,
-		Expected: serviceID != "" && c.expected(serviceID)}
+		Expected: serviceID != "" && c.expected(serviceID),
+	}
 	if err := c.writer.UpsertContainerEvent(ctx, bounded); err != nil {
 		return fmt.Errorf("persisting docker event: %w", err)
 	}

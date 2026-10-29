@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	nethttp "net/http"
-	"net/http/httptest"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -19,11 +19,13 @@ func TestHandleContainersIncludesStoppedAndNullMetrics(t *testing.T) {
 	t.Parallel()
 
 	server, db := fullTestServer(t)
-	seedContainerInventory(t, db, model.InventoryBatch{ObservedAt: time.Now().UTC(), Complete: true,
+	seedContainerInventory(t, db, model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true,
 		Instances: []model.ContainerInstance{
 			{ID: "running-id", Name: "api-1", State: "running", Classification: model.ContainerClassificationManaged},
 			{ID: "stopped-id", Name: "worker-1", State: "exited", Classification: model.ContainerClassificationUnknown},
-		}})
+		},
+	})
 
 	status, body := doRequest(t, server, nethttp.MethodGet, "/api/system/containers", "")
 	if status != nethttp.StatusOK {
@@ -50,14 +52,16 @@ func TestHandleContainerDetailExcludesSensitiveInspection(t *testing.T) {
 	t.Parallel()
 
 	server, db := fullTestServer(t)
-	seedContainerInventory(t, db, model.InventoryBatch{ObservedAt: time.Now().UTC(), Complete: true,
+	seedContainerInventory(t, db, model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true,
 		Instances: []model.ContainerInstance{{
 			ID: "detail-id", Name: "api-1", State: "running",
 			Inspection: model.SafeInspection{
 				User: "10001", CommandHash: "safe-command-hash",
 				Mounts: []model.SafeMount{{Type: "bind", Destination: "/data", Writable: true}},
 			},
-		}}})
+		}},
+	})
 
 	status, body := doRequest(t, server, nethttp.MethodGet, "/api/system/containers/detail-id", "")
 	if status != nethttp.StatusOK {
@@ -122,11 +126,13 @@ func TestApproveContainerViewerForbiddenAndAdminAudited(t *testing.T) {
 	t.Parallel()
 
 	server, db := fullTestServer(t)
-	seedContainerInventory(t, db, model.InventoryBatch{ObservedAt: time.Now().UTC(), Complete: true,
+	seedContainerInventory(t, db, model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true,
 		Instances: []model.ContainerInstance{{
 			ID: "approve-http", Name: "helper-1", ImageID: "sha256:image", State: "running",
 			Inspection: model.SafeInspection{User: "10001", CapAdd: []string{}, Mounts: []model.SafeMount{}},
-		}}})
+		}},
+	})
 
 	status, _ := requestWithCookie(t, server, viewerCookie(t, server), nethttp.MethodPost,
 		"/api/system/containers/approve-http/approve", "")
@@ -157,8 +163,10 @@ func TestIgnoreContainerRequiresReasonHandler(t *testing.T) {
 	t.Parallel()
 
 	server, db := fullTestServer(t)
-	seedContainerInventory(t, db, model.InventoryBatch{ObservedAt: time.Now().UTC(), Complete: true,
-		Instances: []model.ContainerInstance{{ID: "ignore-http", Name: "helper-1"}}})
+	seedContainerInventory(t, db, model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true,
+		Instances: []model.ContainerInstance{{ID: "ignore-http", Name: "helper-1"}},
+	})
 	status, _ := doRequest(t, server, nethttp.MethodPost, "/api/system/containers/ignore-http/ignore",
 		`{"non_expiring":true}`)
 	if status != nethttp.StatusBadRequest {

@@ -230,10 +230,14 @@ func TestPerformanceStoreLogVolumeAndEventsAreIdempotent(t *testing.T) {
 	performance := NewPerformanceStore(db)
 	ctx := context.Background()
 	minute := time.Date(2026, 10, 16, 4, 5, 0, 0, time.UTC)
-	volume := model.LogVolumeBucket{BucketStart: minute, ServiceID: "tn-api", Environment: "prod",
-		Severity: "error", LineCount: 2, IngestKey: "batch-1"}
-	event := model.ContainerEvent{SourceEventID: "event-1", OccurredAt: minute,
-		ServiceID: "tn-api", Environment: "prod", EventType: "oom", ContainerName: "api-1"}
+	volume := model.LogVolumeBucket{
+		BucketStart: minute, ServiceID: "tn-api", Environment: "prod",
+		Severity: "error", LineCount: 2, IngestKey: "batch-1",
+	}
+	event := model.ContainerEvent{
+		SourceEventID: "event-1", OccurredAt: minute,
+		ServiceID: "tn-api", Environment: "prod", EventType: "oom", ContainerName: "api-1",
+	}
 	for range 2 {
 		if err := performance.UpsertLogVolume(ctx, volume); err != nil {
 			t.Fatal(err)

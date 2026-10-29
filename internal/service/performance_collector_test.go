@@ -120,6 +120,7 @@ func (f *fakePerformanceWriter) UpsertRedis(_ context.Context, bucket model.Redi
 func (f *fakePerformanceWriter) UpsertLogVolume(context.Context, model.LogVolumeBucket) error {
 	return nil
 }
+
 func (f *fakePerformanceWriter) Get(_ context.Context, source string) (model.CollectorCursor, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

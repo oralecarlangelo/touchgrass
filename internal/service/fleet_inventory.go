@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/errdefs"
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -182,7 +182,7 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 func (f *FleetInventory) summaryWithError(ctx context.Context, reconcileErr error) (model.InventorySummary, error) {
 	summary, err := f.containers.Summary(ctx)
 	if err != nil {
-		return model.InventorySummary{}, fmt.Errorf("%v; reading inventory summary: %w", reconcileErr, err)
+		return model.InventorySummary{}, errors.Join(reconcileErr, fmt.Errorf("reading inventory summary: %w", err))
 	}
 	return summary, reconcileErr
 }
@@ -231,7 +231,7 @@ func (f *FleetInventory) inspectAll(
 	vanished := make(map[int]bool)
 	for result := range results {
 		if result.err != nil {
-			if errdefs.IsNotFound(result.err) {
+			if cerrdefs.IsNotFound(result.err) {
 				vanished[result.index] = true
 				continue
 			}
@@ -359,8 +359,10 @@ func (f *FleetInventory) ApproveContainer(ctx context.Context, id, actor string)
 	if err != nil {
 		return model.ContainerBaseline{}, err
 	}
-	_, err = f.audit.Record(ctx, model.AuditRecord{Actor: actor, Action: model.AuditContainerApprove,
-		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s image_fingerprint=%s", id, instance.ImageID)})
+	_, err = f.audit.Record(ctx, model.AuditRecord{
+		Actor: actor, Action: model.AuditContainerApprove,
+		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s image_fingerprint=%s", id, instance.ImageID),
+	})
 	if err != nil {
 		return model.ContainerBaseline{}, fmt.Errorf("auditing container approval: %w", err)
 	}
@@ -377,8 +379,10 @@ func (f *FleetInventory) IgnoreContainer(ctx context.Context, ignore model.Conta
 	if err != nil {
 		return model.ContainerIgnore{}, err
 	}
-	_, err = f.audit.Record(ctx, model.AuditRecord{Actor: ignore.Actor, Action: model.AuditContainerIgnore,
-		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s ignore=recorded", ignore.ContainerID)})
+	_, err = f.audit.Record(ctx, model.AuditRecord{
+		Actor: ignore.Actor, Action: model.AuditContainerIgnore,
+		Result: model.AuditSuccess, Detail: fmt.Sprintf("container_id=%s ignore=recorded", ignore.ContainerID),
+	})
 	if err != nil {
 		return model.ContainerIgnore{}, fmt.Errorf("auditing container ignore: %w", err)
 	}

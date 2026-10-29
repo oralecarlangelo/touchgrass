@@ -78,13 +78,50 @@ forward-only — already-stored payloads need retention to age out
 
 ## A container is missing from the fleet table
 
-Sampling runs every 30 seconds, so containers living under one
-interval may never appear. Anything running longer than a minute
-shows up — if it doesn't, check the sampler errors in the server
-log (`metric collection failed` lines name the cause).
+Inventory reconciles all Docker lifecycle states every 30 seconds and after
+best-effort event wakeups. Check **Fleet → freshness** first. A partial
+reconciliation never marks old rows absent; `docker_inventory_unavailable`
+means the last complete snapshot is being preserved. Verify the Docker socket
+mount and permissions, then compare `docker ps -a` with
+`GET /api/system/containers`. A container created and removed entirely
+between polling and event coverage can still be missed.
 
 ## The console shows stale data
 
 Metrics sample every 30s, logs tail every 5s. If the gap is longer
 than that, check the server log: Docker socket errors and SQLite
 locks announce themselves loudly.
+
+## Security shows partial coverage or stale collectors
+
+Open **Performance → Collector status** and identify the source:
+
+- `security_posture`: Docker list/inspect failed for at least one container.
+- `security_process`: `docker top` was unavailable or an evaluation failed.
+- `security_diff`: writable-layer metadata was unavailable or evaluation failed.
+
+Partial coverage deliberately cannot resolve earlier findings. Fix Docker
+access, wait for one complete pass, and verify last success advances. Safe
+error categories are shown instead of raw daemon payloads. If the effective
+interval increased, storage or scan-cost backoff is active; do not interpret
+the last sample as current until freshness recovers.
+
+## A suspicious binary finding remains after cleanup
+
+Findings are durable episodes. Removing a file does not delete history. A
+complete later scan resolves the active episode; an incomplete scan preserves
+it. Open the finding for its last-seen time and contributing rules, then check
+the container's current process and diff snapshots. A later recurrence opens
+a new episode rather than rewriting the original evidence.
+
+Touch Grass does not contain the workload automatically. If compromise is
+plausible, isolate traffic and rotate credentials through the service's
+incident procedure, preserve host evidence, and rebuild from a trusted image.
+Do not rely on `docker diff` as a complete forensic record.
+
+## Security activation or policy controls are unavailable
+
+Only admins can activate monitoring, approve/ignore containers, mutate
+policies, or change finding workflow state. Viewers can inspect everything but
+remain read-only. Before activation, review every unknown and missing-expected
+row; activation itself does not approve or modify containers.

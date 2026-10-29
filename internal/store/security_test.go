@@ -133,8 +133,10 @@ func TestClassificationPrecedence(t *testing.T) {
 
 func seedSecurityContainer(t *testing.T, containers *ContainerStore, id string, classification model.ContainerClassification) {
 	t.Helper()
-	if err := containers.Reconcile(context.Background(), model.InventoryBatch{ObservedAt: time.Now().UTC(), Complete: true,
-		Instances: []model.ContainerInstance{{ID: id, Name: id, Classification: classification}}}); err != nil {
+	if err := containers.Reconcile(context.Background(), model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true,
+		Instances: []model.ContainerInstance{{ID: id, Name: id, Classification: classification}},
+	}); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
 }

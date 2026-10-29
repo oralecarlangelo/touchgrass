@@ -168,8 +168,10 @@ func TestCollectRestoresDurableCursorAfterRestart(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
-	lister := &fakeLogLister{containers: []docker.Container{testLogContainer()},
-		lines: map[string][]docker.LogLine{testBlueContainerID: scriptLines(base, 3)}, inclusive: true}
+	lister := &fakeLogLister{
+		containers: []docker.Container{testLogContainer()},
+		lines:      map[string][]docker.LogLine{testBlueContainerID: scriptLines(base, 3)}, inclusive: true,
+	}
 	collector, db := testLogCollector(t, lister, 1000)
 	if err := collector.collect(context.Background()); err != nil {
 		t.Fatal(err)
@@ -207,11 +209,13 @@ func TestCollectRestoresInclusiveTimestampMultiplicity(t *testing.T) {
 	t.Parallel()
 
 	base := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
-	lister := &fakeLogLister{containers: []docker.Container{testLogContainer()}, inclusive: true,
+	lister := &fakeLogLister{
+		containers: []docker.Container{testLogContainer()}, inclusive: true,
 		lines: map[string][]docker.LogLine{testBlueContainerID: {
 			{Timestamp: base, Stream: model.LogStdout, Message: "first"},
 			{Timestamp: base, Stream: model.LogStderr, Message: "second"},
-		}}}
+		}},
+	}
 	collector, db := testLogCollector(t, lister, 1000)
 	if err := collector.collect(context.Background()); err != nil {
 		t.Fatal(err)

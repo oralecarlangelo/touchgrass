@@ -6,7 +6,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: all build build-web build-docs test test-race test-int lint lint-fix fmt vet audit run dev migrate clean help
+.PHONY: all build build-web build-docs test test-race test-int test-security-soak lint lint-fix fmt vet audit run dev migrate clean help
 
 ## all: Vet, lint, test, and build
 all: vet lint test build
@@ -34,6 +34,10 @@ test-race:
 ## test-int: Run integration tests (DB/Docker via build tag)
 test-int:
 	$(GO) test -tags=integration $(GO_PACKAGES)
+
+## test-security-soak: Validate 100-container security overhead and latency gates
+test-security-soak:
+	./scripts/container-security-soak.sh
 
 ## lint: Run golangci-lint
 lint:

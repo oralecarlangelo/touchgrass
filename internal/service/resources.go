@@ -226,7 +226,6 @@ func (s *Sampler) collectContainerStats(ctx context.Context, containers []docker
 
 // recordMetric records one already-collected managed container sample.
 func (s *Sampler) recordMetric(ctx context.Context, serviceID string, c docker.Container, disk int64, stats docker.Stats) {
-
 	var uptime int64
 
 	if !stats.StartedAt.IsZero() {

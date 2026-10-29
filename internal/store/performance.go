@@ -602,8 +602,10 @@ func validateHTTPBucket(bucket model.HTTPMetricBucket) error {
 }
 
 func httpBucketKey(bucket model.HTTPMetricBucket) string {
-	parts := []string{formatFixedTime(bucket.BucketStart.UTC().Truncate(time.Minute)), bucket.ServiceID,
-		bucket.Environment, bucket.Method, bucket.RouteFamily, bucket.Upstream, fmt.Sprint(bucket.StatusClass)}
+	parts := []string{
+		formatFixedTime(bucket.BucketStart.UTC().Truncate(time.Minute)), bucket.ServiceID,
+		bucket.Environment, bucket.Method, bucket.RouteFamily, bucket.Upstream, fmt.Sprint(bucket.StatusClass),
+	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
 	return hex.EncodeToString(sum[:])
 }

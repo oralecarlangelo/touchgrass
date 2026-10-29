@@ -48,8 +48,10 @@ func TestFromEventMessageAllowsLifecycleAndHealthOnly(t *testing.T) {
 			t.Errorf("action %q rejected", action)
 		}
 	}
-	message := dockerevents.Message{Type: dockerevents.ContainerEventType,
-		Action: dockerevents.Action("exec_create: /bin/sh -c 'password=secret'"), Actor: dockerevents.Actor{ID: "id"}}
+	message := dockerevents.Message{
+		Type:   dockerevents.ContainerEventType,
+		Action: dockerevents.Action("exec_create: /bin/sh -c 'password=secret'"), Actor: dockerevents.Actor{ID: "id"},
+	}
 	event, ok := fromEventMessage(message)
 	if !ok || event.Action != "exec_create" || strings.Contains(event.Action, "password") {
 		t.Fatalf("bounded exec event = (%+v, %v), want action without command", event, ok)

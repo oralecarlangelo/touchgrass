@@ -189,7 +189,8 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 			{table: "log_lines", timestamp: "ts"}, {table: "sdk_logs", timestamp: "ts"},
 		}},
 		{name: "performance", limit: policy.PerformanceMaxBytes, targets: []retentionTarget{
-			{table: "metrics", timestamp: "sampled_at"}, {table: "host_samples", timestamp: "sampled_at"},
+			{table: "metrics", timestamp: "sampled_at"},
+			{table: "host_samples", timestamp: "sampled_at"},
 			{table: "container_samples", timestamp: "sampled_at"},
 			{table: "http_metric_buckets", timestamp: "bucket_start"},
 			{table: "postgres_metric_buckets", timestamp: "bucket_start"},
@@ -204,8 +205,10 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 			{table: "occurrences", timestamp: "created_at"}, {table: "issues", timestamp: "last_seen"},
 		}},
 		{name: "administrative", limit: policy.AdministrativeMaxBytes, targets: []retentionTarget{
-			{table: "notifications", timestamp: "created_at"}, {table: "deploy_probes", timestamp: "sampled_at"},
-			{table: "deploys", timestamp: "created_at"}, {table: "db_jobs", timestamp: "created_at"},
+			{table: "notifications", timestamp: "created_at"},
+			{table: "deploy_probes", timestamp: "sampled_at"},
+			{table: "deploys", timestamp: "created_at"},
+			{table: "db_jobs", timestamp: "created_at"},
 		}},
 		{name: "security", limit: model.DefaultSecurityClassMaxBytes, targets: []retentionTarget{
 			{table: "security_observations", timestamp: "observed_at"},

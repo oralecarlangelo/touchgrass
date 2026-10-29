@@ -216,8 +216,10 @@ func (c *LogCollector) persistLoss(ctx context.Context, kind, serviceID string, 
 		return
 	}
 	now := time.Now().UTC()
-	cursor := model.CollectorCursor{Source: logLossSource(kind, serviceID), Identity: serviceID,
-		Offset: value, LastRecordedAt: now, LastSuccessAt: now, UpdatedAt: now}
+	cursor := model.CollectorCursor{
+		Source: logLossSource(kind, serviceID), Identity: serviceID,
+		Offset: value, LastRecordedAt: now, LastSuccessAt: now, UpdatedAt: now,
+	}
 	if err := c.cursorsStore.Upsert(ctx, cursor); err != nil {
 		c.logger.Warn("persisting log loss counter", "service", serviceID, "error_category", "cursor_write_failed")
 	}
@@ -600,8 +602,10 @@ func (c *LogCollector) loadLogCursor(ctx context.Context, containerID string) lo
 		}
 		return logCursor{}
 	}
-	return logCursor{since: persisted.LastRecordedAt.UTC().Format(time.RFC3339Nano),
-		maxTs: persisted.LastRecordedAt, boundary: persisted.Offset}
+	return logCursor{
+		since: persisted.LastRecordedAt.UTC().Format(time.RFC3339Nano),
+		maxTs: persisted.LastRecordedAt, boundary: persisted.Offset,
+	}
 }
 
 func (c *LogCollector) persistLogCursor(ctx context.Context, containerID string, cursor logCursor) {
@@ -609,8 +613,10 @@ func (c *LogCollector) persistLogCursor(ctx context.Context, containerID string,
 		return
 	}
 	now := time.Now().UTC()
-	persisted := model.CollectorCursor{Source: logCursorSource(containerID), Identity: containerID,
-		Offset: cursor.boundary, LastRecordedAt: cursor.maxTs, LastSuccessAt: now, UpdatedAt: now}
+	persisted := model.CollectorCursor{
+		Source: logCursorSource(containerID), Identity: containerID,
+		Offset: cursor.boundary, LastRecordedAt: cursor.maxTs, LastSuccessAt: now, UpdatedAt: now,
+	}
 	if err := c.cursorsStore.Upsert(ctx, persisted); err != nil {
 		c.logger.Warn("persisting docker log cursor", "container", containerID, "error_category", "cursor_write_failed")
 	}

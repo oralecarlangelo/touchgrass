@@ -1,8 +1,9 @@
 # touchgrass
 
 Self-hosted server-management platform: blue-green deploys, bounded
-agentless performance diagnostics, container metrics + alerts (view-only),
-and Sentry-style error tracking unified with log search. One Go binary
+agentless performance diagnostics, all-state container inventory and
+read-only security findings, container metrics + alerts, and Sentry-style
+error tracking unified with log search. One Go binary
 (UI embedded) + one SQLite file.
 
 Touch Grass is project-agnostic. Services and providers are configured as
@@ -74,6 +75,11 @@ Environment only (no config file):
 | `TOUCHGRASS_ADMIN_PASSWORD`          | required           | Seeds the `admin` user on first boot; rotate in the Users screen after |
 | `TOUCHGRASS_COOKIE_SECURE`           | `false`            | Set `true` when serving behind TLS                     |
 | `TOUCHGRASS_METRICS_INTERVAL`        | `30s`              | Metric sample cadence                                  |
+| `TOUCHGRASS_INVENTORY_INTERVAL`      | `30s`              | All-state Docker reconciliation cadence                |
+| `TOUCHGRASS_INVENTORY_WORKERS`       | `4`                | Maximum concurrent safe container inspections          |
+| `TOUCHGRASS_SECURITY_PROCESS_INTERVAL` | `30s`            | Running-container process scan cadence                 |
+| `TOUCHGRASS_SECURITY_DIFF_INTERVAL`  | `10m`              | Writable-layer metadata scan cadence                   |
+| `TOUCHGRASS_SECURITY_WORKERS`        | `4`                | Maximum concurrent process/diff scans                  |
 | `TOUCHGRASS_RETENTION_METRICS`       | `168h`             | Metric max age                                         |
 | `TOUCHGRASS_RETENTION_NOTIFICATIONS` | `720h`             | Notification max age                                   |
 | `TOUCHGRASS_RETENTION_DEPLOYS`       | `8760h`            | Deploy history max age                                 |
@@ -92,6 +98,9 @@ Environment only (no config file):
 | `TOUCHGRASS_SQLITE_BACKUP_KEEP`      | `14`                | Newest online SQLite snapshots retained                |
 | `TOUCHGRASS_RETENTION_PERFORMANCE`   | `168h`             | Minute performance aggregate max age                   |
 | `TOUCHGRASS_RETENTION_PERFORMANCE_HOURLY` | `720h`        | Hourly performance aggregate max age                   |
+| `TOUCHGRASS_RETENTION_SECURITY_OBSERVATIONS` | `168h`    | Raw normalized security observation max age            |
+| `TOUCHGRASS_RETENTION_CONTAINER_EVENTS` | `720h`          | Docker lifecycle event max age                         |
+| `TOUCHGRASS_RETENTION_SECURITY_FINDINGS` | `2160h`        | Resolved finding max age; unresolved preserved         |
 | `TOUCHGRASS_PERFORMANCE_SERVICE_ID`  | empty              | Existing service that owns enabled native-source data  |
 | `TOUCHGRASS_NGINX_TIMING_LOG`        | empty              | Absolute dedicated JSONL path; empty disables this source |
 | `TOUCHGRASS_PERFORMANCE_INTERVAL`    | `30s`              | Native-source collection cadence                       |
@@ -110,6 +119,7 @@ make build-web  # SPA only (npm ci + vite build)
 make test       # unit tests
 make test-race  # tests with the race detector
 make test-int   # integration tests (Docker; build tag)
+make test-security-soak # 100-container latency/resource/storage gate
 make lint       # golangci-lint (config: .golangci.yml)
 make lint-fix   # lint with auto-fix
 make fmt        # format via golangci-lint
@@ -129,6 +139,22 @@ distributed trace and does not prove causation. Read
 [`docs/performance-operations.md`](docs/performance-operations.md) before
 enabling a source. The Nginx fixtures in `deploy/nginx/` exclude raw paths,
 queries, headers, cookies, and client identity.
+
+The **Fleet** workspace inventories running and stopped containers and exposes
+unknown, approved-observed, ignored, and missing-expected states. Security is
+disabled until an admin reviews inventory and activates it. Once active,
+posture, process, and writable-layer collectors create durable finding
+episodes with bounded secret-safe evidence. Collector failures stay visible as
+partial/stale coverage and cannot silently resolve earlier findings.
+
+Touch Grass is monitoring, not containment: it never stops a container, kills
+a process, removes a file, blocks traffic, or rotates credentials in response
+to a finding. Docker polling/top/diff can miss short-lived or evasive activity,
+and the socket remains root-equivalent even when mounted `:ro`. Read
+[`docs-site/fleet.md`](docs-site/fleet.md) and
+[`docs/threat-model.md`](docs/threat-model.md) before activation. Release
+validation includes the generic replay/privacy gate, migration rehearsal, and
+`make test-security-soak`.
 
 Binary subcommands: `touchgrass serve` (default), `touchgrass migrate`,
 `touchgrass version`.

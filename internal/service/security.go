@@ -136,8 +136,9 @@ func (s *Security) Evaluate(ctx context.Context, evaluation model.SecurityEvalua
 }
 
 func (s *Security) notifyOpened(ctx context.Context, serviceID string, finding model.SecurityFinding) {
-	if s.notifications == nil || (finding.Severity != model.SecuritySeverityCritical &&
-		!(s.notifyHigh && finding.Severity == model.SecuritySeverityHigh)) {
+	shouldNotify := finding.Severity == model.SecuritySeverityCritical ||
+		(s.notifyHigh && finding.Severity == model.SecuritySeverityHigh)
+	if s.notifications == nil || !shouldNotify {
 		return
 	}
 	_, err := s.notifications.Insert(ctx, serviceID, model.NotificationSecurity,

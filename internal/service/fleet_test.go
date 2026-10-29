@@ -169,8 +169,10 @@ func TestContainerEventCollectorRequestsCoalescedReconcile(t *testing.T) {
 	t.Parallel()
 
 	db := openInventoryDB(t)
-	fleet := NewFleetInventory(FleetInventoryConfig{Services: store.NewServiceStore(db),
-		Containers: store.NewContainerStore(db), Docker: &fakeInventoryDocker{}, Interval: time.Hour})
+	fleet := NewFleetInventory(FleetInventoryConfig{
+		Services:   store.NewServiceStore(db),
+		Containers: store.NewContainerStore(db), Docker: &fakeInventoryDocker{}, Interval: time.Hour,
+	})
 	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
 		Services: store.NewServiceStore(db), Writer: store.NewPerformanceStore(db), Environment: "prod",
 		RequestReconcile: fleet.RequestReconcile, Logger: slog.New(slog.DiscardHandler),

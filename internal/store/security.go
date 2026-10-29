@@ -547,7 +547,7 @@ func (s *SecurityStore) setFindingStatus(ctx context.Context, id int64, status m
 	case model.SecurityFindingStatusResolved:
 		statement = `UPDATE security_findings SET status = 'resolved', resolved_at = ?, resolved_by = ?
 			WHERE id = ? AND status IN ('open','acknowledged','suppressed')`
-	default:
+	case model.SecurityFindingStatusUnknown, model.SecurityFindingStatusOpen, model.SecurityFindingStatusSuppressed:
 		return model.SecurityFinding{}, errors.New("updating finding: invalid status")
 	}
 	if _, err := s.db.sql.ExecContext(ctx, statement, formatTime(now), actor, id); err != nil {
@@ -599,7 +599,8 @@ func findOpenFinding(ctx context.Context, tx *sql.Tx, fingerprint string) (model
 }
 
 func insertFinding(ctx context.Context, tx *sql.Tx, fingerprint string, episode int,
-	observation model.SecurityObservation, evidence string) (model.SecurityFinding, error) {
+	observation model.SecurityObservation, evidence string,
+) (model.SecurityFinding, error) {
 	result, err := tx.ExecContext(ctx, `INSERT INTO security_findings
 		(fingerprint, episode, container_id, rule_id, category, severity, confidence, status,
 		occurrence_count, evidence_json, opened_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 1, ?, ?, ?)`,
@@ -613,11 +614,13 @@ func insertFinding(ctx context.Context, tx *sql.Tx, fingerprint string, episode 
 	if err != nil {
 		return model.SecurityFinding{}, err
 	}
-	return model.SecurityFinding{ID: id, Fingerprint: fingerprint, Episode: episode,
+	return model.SecurityFinding{
+		ID: id, Fingerprint: fingerprint, Episode: episode,
 		ContainerID: observation.ContainerID, RuleID: observation.RuleID, Category: observation.Category,
 		Severity: observation.Severity, Confidence: observation.Confidence,
 		Status: model.SecurityFindingStatusOpen, OccurrenceCount: 1,
-		Evidence: cloneEvidence(observation.Evidence), OpenedAt: observation.ObservedAt, LastSeenAt: observation.ObservedAt}, nil
+		Evidence: cloneEvidence(observation.Evidence), OpenedAt: observation.ObservedAt, LastSeenAt: observation.ObservedAt,
+	}, nil
 }
 
 type securityFindingScanner interface{ Scan(...any) error }

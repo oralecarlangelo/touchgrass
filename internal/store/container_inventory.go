@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -167,7 +168,7 @@ func (s *ContainerStore) List(ctx context.Context, query model.ContainerQuery) (
 	if err != nil {
 		return nil, err
 	}
-	statement += " ORDER BY " + order + " LIMIT ? OFFSET ?"
+	statement += " ORDER BY " + order + " LIMIT ? OFFSET ?" //nolint:gosec // order is selected from containerOrder's fixed allowlist.
 	args = append(args, containerLimit(query.Limit), max(query.Offset, 0))
 
 	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
@@ -260,12 +261,12 @@ func scanContainer(scanner containerScanner) (model.ContainerInstance, error) {
 	if cpuPercent.Valid {
 		instance.CPUPercent = &cpuPercent.Float64
 	}
-	if memBytes.Valid {
-		value := uint64(memBytes.Int64)
+	if memBytes.Valid && memBytes.Int64 >= 0 {
+		value := uint64(memBytes.Int64) //nolint:gosec // non-negative SQL value is checked immediately above.
 		instance.MemBytes = &value
 	}
-	if memLimit.Valid {
-		value := uint64(memLimit.Int64)
+	if memLimit.Valid && memLimit.Int64 >= 0 {
+		value := uint64(memLimit.Int64) //nolint:gosec // non-negative SQL value is checked immediately above.
 		instance.MemLimit = &value
 	}
 	if restarts.Valid {
@@ -326,7 +327,10 @@ func nullUint(value *uint64) any {
 	if value == nil {
 		return nil
 	}
-	return int64(*value)
+	if *value > math.MaxInt64 {
+		return int64(math.MaxInt64)
+	}
+	return int64(*value) //nolint:gosec // the MaxInt64 bound is checked immediately above.
 }
 
 func nullInteger(value *int) any {

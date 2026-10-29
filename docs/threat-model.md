@@ -2,8 +2,8 @@
 
 What touchgrass trusts, what it doesn't, and where the sharp edges
 are. v1 scope: single-host, managed users (admin/viewer),
-in-app notifications only. Covers everything through S28 (fleet,
-SDK logs/OTel, databases, onboarding, service delete, RBAC).
+in-app notifications only, all-state container inventory, and read-only
+container security monitoring.
 
 ## Trust boundaries
 
@@ -75,6 +75,40 @@ can call it can start a privileged container. Consequences:
 - If the box is shared, prefer running touchgrass on a dedicated
   host that only the operator reaches (SSH + loopback).
 
+Touch Grass currently needs list, inspect, stats, logs, events, top, and diff
+operations. The application does not call create, start, stop, kill, exec,
+copy, update, or remove APIs for monitored containers. This is an application
+boundary, not a daemon-enforced permission boundary: Docker's Unix socket has
+no read-only API role.
+
+## Container security evidence and limits
+
+- The inventory covers all lifecycle states and uses immutable container IDs.
+  Names and Compose labels are descriptive only. Absence is inferred only
+  from a complete reconciliation; partial scans preserve the last known state.
+- Inspect normalization excludes environment values, arbitrary labels, raw
+  entrypoint/command arguments, and host mount sources. Entrypoint/command
+  values are hashed; mounts retain destination/type/writability only.
+- Process normalization retains PID, parent PID, user, and the executable
+  token only. Arguments are discarded. Writable-layer scans retain bounded
+  operation/path metadata and never read file contents.
+- Evidence values are allowlisted, bounded per key, and capped at 32 KiB per
+  finding episode. Raw observations and lifecycle events expire before durable
+  findings. Resolved findings expire on their configured window; unresolved
+  episodes are not age-trimmed.
+- Collector failures open deduplicated incidents and mark coverage partial.
+  A failed or incomplete scan cannot close an earlier finding. Freshness,
+  safe error category, and effective interval remain visible.
+- Polling and Docker snapshots can miss short-lived, in-memory-only, kernel,
+  or deliberately evasive activity. A finding is a triage signal, not proof
+  of attribution. Touch Grass is not an EDR, IDS, sandbox, or forensic image.
+
+There is no automatic containment. Touch Grass never stops containers,
+kills processes, deletes binaries, blocks traffic, rolls credentials, or
+changes firewall rules in response to findings. This avoids turning a
+monitoring false positive or a compromised dashboard into a host-wide outage.
+Operators contain through an independently reviewed incident runbook.
+
 ## Data at rest
 
 - Single SQLite file (`TOUCHGRASS_DB`). It holds occurrences (may
@@ -91,6 +125,8 @@ can call it can start a privileged container. Consequences:
   API can't walk the backup dir.
 - Logs and occurrences are retention-trimmed (`TOUCHGRASS_RETENTION_*`)
   and per-service capped; trims are logged, FTS indexes follow deletes.
+- Security observations default to 168h, container events to 720h, and
+  resolved findings to 2160h. All remain inside the global SQLite byte budget.
 
 ## Operator-powered destruction (all admin-gated + audited)
 
@@ -132,6 +168,8 @@ session plus confirm-gating in the UI, with an audit entry per run:
 - No webhook/email egress — alerts stay in-app, so a compromised box
   can't spam from here.
 - No secrets manager — env vars only, documented in README/CONTRIBUTING.
+- No automatic containment, kernel telemetry, eBPF, host file scanning, or
+  binary-content collection.
 
 Out of scope for this doc: host hardening (SSH, firewall, updates)
 and the security of the watched services themselves.

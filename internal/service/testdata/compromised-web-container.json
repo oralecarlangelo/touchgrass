@@ -1,0 +1,44 @@
+{
+  "container": {
+    "id": "generic-web-container",
+    "name": "generic-web-1",
+    "image": "generic-web:stable",
+    "image_id": "sha256:generic-web-image",
+    "state": "running",
+    "status": "Up 10 minutes",
+    "classification": "unknown",
+    "current": true,
+    "present": true,
+    "image_fingerprint": "sha256:generic-web-image",
+    "configuration_fingerprint": "generic-approved-configuration",
+    "inspection": {
+      "user": "app",
+      "privileged": false,
+      "readonly_root_fs": true,
+      "cap_add": [],
+      "network_mode": "bridge",
+      "restart_policy": "unless-stopped",
+      "memory_bytes": 268435456,
+      "nano_cpus": 1000000000,
+      "pids_limit": 128,
+      "mounts": [],
+      "published_ports": [],
+      "has_docker_socket": false
+    }
+  },
+  "processes": [
+    { "pid": 1, "parent_pid": 0, "user": "app", "command": "/usr/bin/node" },
+    { "pid": 21, "parent_pid": 1, "user": "app", "command": "/home/app/.local/bin/worker" },
+    { "pid": 22, "parent_pid": 21, "user": "root", "command": "[kworker/0:1]" }
+  ],
+  "changes": [
+    { "kind": "added", "path": "/home/app/.local/bin/worker" },
+    { "kind": "modified", "path": "/app/runtime.js" }
+  ],
+  "sensitive_inputs": {
+    "environment": ["APP_MODE=production"],
+    "labels": { "example.intent": "generic-replay" },
+    "mount_source": "/srv/generic-data",
+    "process_arguments": ["--mode=worker"]
+  }
+}

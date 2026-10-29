@@ -200,7 +200,7 @@ func parseContainerQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.Request
 		case model.ContainerClassificationManaged, model.ContainerClassificationApprovedObserved,
 			model.ContainerClassificationUnknown, model.ContainerClassificationIgnored,
 			model.ContainerClassificationMissingExpected:
-		default:
+		case model.ContainerClassificationUnspecified:
 			writeError(w, s.logger, errors.New("invalid classification"), "invalid classification", "invalid_request", nethttp.StatusBadRequest)
 			return model.ContainerQuery{}, false
 		}
@@ -267,10 +267,12 @@ func legacyListItem(item model.FleetContainer) containerListItem {
 		classification = model.ContainerClassificationManaged
 	}
 	cpu, memory, limit, restarts, sampled := item.CPUPercent, item.MemBytes, item.MemLimit, item.Restarts, item.SampledAt
-	return containerListItem{ID: item.ID, Name: item.Name, Project: item.Project, Managed: item.Managed,
+	return containerListItem{
+		ID: item.ID, Name: item.Name, Project: item.Project, Managed: item.Managed,
 		ServiceID: item.ServiceID, State: item.State, Classification: classification,
 		Current: true, Present: true, Health: "unknown", CPUPercent: &cpu, MemBytes: &memory,
-		MemLimit: &limit, Restarts: &restarts, SampledAt: &sampled}
+		MemLimit: &limit, Restarts: &restarts, SampledAt: &sampled,
+	}
 }
 
 func containerHealth(instance model.ContainerInstance) string {

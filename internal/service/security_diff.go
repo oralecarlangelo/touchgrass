@@ -253,7 +253,8 @@ func evidenceForRule(values []model.SecurityObservation, rule, key string) (stri
 }
 
 func diffObservation(containerID, rule string, severity model.SecuritySeverity, detected, coverage bool,
-	evidence map[string]string) model.SecurityObservation {
+	evidence map[string]string,
+) model.SecurityObservation {
 	return model.SecurityObservation{
 		ContainerID: containerID, RuleID: rule, Category: model.SecurityCategoryDrift,
 		Severity: severity, Confidence: model.SecurityConfidenceHigh,

@@ -193,7 +193,7 @@ func parseSecurityFindingQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.R
 		switch query.Status {
 		case model.SecurityFindingStatusOpen, model.SecurityFindingStatusAcknowledged,
 			model.SecurityFindingStatusResolved, model.SecurityFindingStatusSuppressed:
-		default:
+		case model.SecurityFindingStatusUnknown:
 			writeError(w, s.logger, errors.New("invalid status"), "invalid status", "invalid_request", nethttp.StatusBadRequest)
 			return model.SecurityFindingQuery{}, false
 		}
@@ -202,7 +202,7 @@ func parseSecurityFindingQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.R
 		query.Severity = model.SecuritySeverity(raw)
 		switch query.Severity {
 		case model.SecuritySeverityLow, model.SecuritySeverityMedium, model.SecuritySeverityHigh, model.SecuritySeverityCritical:
-		default:
+		case model.SecuritySeverityUnknown:
 			writeError(w, s.logger, errors.New("invalid severity"), "invalid severity", "invalid_request", nethttp.StatusBadRequest)
 			return model.SecurityFindingQuery{}, false
 		}

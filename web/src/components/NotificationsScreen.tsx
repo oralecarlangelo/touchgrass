@@ -24,6 +24,7 @@ import {
   type ServiceView,
 } from '@/lib/api.ts';
 import { formatTime, timeAgo } from '@/lib/format.ts';
+import { notificationFindingID } from '@/lib/security.ts';
 
 const pageSize = 20;
 
@@ -31,10 +32,12 @@ export default function NotificationsScreen({
   services,
   onUnauthorized,
   isAdmin,
+  onSelectSecurityFinding,
 }: {
   services: ServiceView[];
   onUnauthorized: () => void;
   isAdmin: boolean;
+  onSelectSecurityFinding: (id: number) => void;
 }) {
   const [notes, setNotes] = useState<Notification[] | null>(null);
   const [unread, setUnread] = useState(0);
@@ -221,6 +224,15 @@ export default function NotificationsScreen({
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium">{item.title}</p>
+                      {item.kind === 'security' && notificationFindingID(item.body) !== null && (
+                        <button
+                          type="button"
+                          className="text-primary text-xs underline underline-offset-4"
+                          onClick={() => onSelectSecurityFinding(notificationFindingID(item.body) as number)}
+                        >
+                          Open finding #{notificationFindingID(item.body)}
+                        </button>
+                      )}
                       {item.body !== '' && (
                         <p className="text-muted-foreground mt-0.5 text-sm break-words">
                           {item.body}

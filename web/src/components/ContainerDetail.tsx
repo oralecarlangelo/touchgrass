@@ -7,8 +7,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import ErrorState from './ErrorState.tsx';
 import {
   fetchContainer,
+  fetchSecurityFindings,
   isUnauthorized,
   type ContainerDetailResponse,
+  type SecurityFinding,
 } from '@/lib/api.ts';
 
 function DetailRow({ label, value }: { label: string; value: string }) {
@@ -20,7 +22,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function ContainerDetailView({ detail }: { detail: ContainerDetailResponse }) {
+export function ContainerDetailView({ detail, findings = [], onSelectFinding }: { detail: ContainerDetailResponse; findings?: SecurityFinding[]; onSelectFinding?: (id: number) => void }) {
   const { container, inspection } = detail;
 
   return (
@@ -76,6 +78,17 @@ export function ContainerDetailView({ detail }: { detail: ContainerDetailRespons
           </div>
         </CardContent>
       </Card>
+
+      <Card className="lg:col-span-2">
+        <CardHeader><CardTitle className="text-base">Security findings</CardTitle></CardHeader>
+        <CardContent>
+          {findings.length === 0 ? <p className="text-muted-foreground text-sm">No finding episodes are linked to this container.</p> : (
+            <ul className="divide-y">
+              {findings.map((finding) => <li key={finding.id} className="flex flex-wrap items-center gap-2 py-2"><Badge variant={finding.severity === 'critical' ? 'destructive' : 'secondary'}>{finding.severity}</Badge><button type="button" className="text-primary font-mono text-xs underline underline-offset-4" onClick={() => onSelectFinding?.(finding.id)}>{finding.rule_id}</button><span className="text-muted-foreground ml-auto text-xs">{finding.status}</span></li>)}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -84,18 +97,25 @@ export default function ContainerDetail({
   id,
   onBack,
   onUnauthorized,
+  onSelectSecurityFinding,
 }: {
   id: string;
   onBack: () => void;
   onUnauthorized: () => void;
+  onSelectSecurityFinding?: (id: number) => void;
 }) {
   const [detail, setDetail] = useState<ContainerDetailResponse | null>(null);
+  const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
-      setDetail(await fetchContainer(id));
+      const [nextDetail, nextFindings] = await Promise.all([
+        fetchContainer(id), fetchSecurityFindings({ containerId: id, limit: 100, sort: 'severity' }),
+      ]);
+      setDetail(nextDetail);
+      setFindings(nextFindings);
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -126,7 +146,7 @@ export default function ContainerDetail({
           <Skeleton className="h-72 w-full" />
         </div>
       ) : (
-        <ContainerDetailView detail={detail} />
+        <ContainerDetailView detail={detail} findings={findings} onSelectFinding={onSelectSecurityFinding} />
       )}
     </div>
   );

@@ -474,6 +474,140 @@ export interface Notification {
   read_at: string | null;
 }
 
+export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical';
+export type SecurityConfidence = 'low' | 'medium' | 'high';
+export type SecurityCategory = 'posture' | 'process' | 'drift';
+export type SecurityFindingStatus = 'open' | 'acknowledged' | 'resolved' | 'suppressed';
+
+export interface SecuritySummary {
+  open: number;
+  critical: number;
+  high: number;
+  suppressed: number;
+  coverage_complete: boolean;
+  last_observed_at?: string | null;
+}
+
+export interface SecurityFinding {
+  id: number;
+  fingerprint: string;
+  episode: number;
+  container_id: string;
+  rule_id: string;
+  category: SecurityCategory;
+  severity: SecuritySeverity;
+  confidence: SecurityConfidence;
+  status: SecurityFindingStatus;
+  occurrence_count: number;
+  evidence: Record<string, string>;
+  opened_at: string;
+  last_seen_at: string;
+  acknowledged_at?: string | null;
+  acknowledged_by?: string;
+  resolved_at?: string | null;
+  resolved_by?: string;
+  suppressed_until?: string | null;
+  suppression_reason?: string;
+  suppression_actor?: string;
+  notification_status?: '' | 'delivered' | 'degraded';
+}
+
+export interface SecurityFindingFilters {
+  status?: SecurityFindingStatus;
+  severity?: SecuritySeverity;
+  containerId?: string;
+  sort?: 'last_seen' | 'opened' | 'severity';
+  limit?: number;
+  offset?: number;
+}
+
+export interface SecurityPolicyBody {
+  allow_privileged?: boolean;
+  allow_host_pid?: boolean;
+  allow_host_network?: boolean;
+  allow_docker_socket?: boolean;
+  allow_root?: boolean;
+  allow_writable_root_fs?: boolean;
+  allowed_capabilities?: string[];
+  allowed_published_ports?: string[];
+  allowed_executable_paths?: string[];
+  allowed_writable_paths?: string[];
+}
+
+export interface SecurityPolicy extends SecurityPolicyBody {
+  id: number;
+  scope: 'global' | 'service' | 'container';
+  scope_id: string;
+  updated_by: string;
+  updated_at: string;
+}
+
+export async function fetchSecuritySummary(): Promise<SecuritySummary> {
+  return request<SecuritySummary>('/api/security/summary');
+}
+
+export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}): Promise<SecurityFinding[]> {
+  const params = new URLSearchParams();
+  if (filters.status !== undefined) params.set('status', filters.status);
+  if (filters.severity !== undefined) params.set('severity', filters.severity);
+  if (filters.containerId !== undefined && filters.containerId !== '') params.set('container_id', filters.containerId);
+  if (filters.sort !== undefined) params.set('sort', filters.sort);
+  if (filters.limit !== undefined) params.set('limit', String(filters.limit));
+  if (filters.offset !== undefined) params.set('offset', String(filters.offset));
+  const query = params.toString();
+  const body = await request<{ findings?: SecurityFinding[] }>(`/api/security/findings${query === '' ? '' : `?${query}`}`);
+  return (body.findings ?? []).map(normalizeSecurityFinding);
+}
+
+export async function fetchSecurityFinding(id: number): Promise<SecurityFinding> {
+  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}`));
+}
+
+export async function acknowledgeSecurityFinding(id: number): Promise<SecurityFinding> {
+  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}/acknowledge`, { method: 'POST' }));
+}
+
+export async function resolveSecurityFinding(id: number): Promise<SecurityFinding> {
+  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}/resolve`, { method: 'POST' }));
+}
+
+export async function suppressSecurityFinding(id: number, reason: string, until: string | null): Promise<SecurityFinding> {
+  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}/suppress`, jsonBody({ reason, until })));
+}
+
+export async function fetchSecurityPolicies(): Promise<SecurityPolicy[]> {
+  const body = await request<{ policies?: SecurityPolicy[] }>('/api/security/policies');
+  return (body.policies ?? []).map(normalizeSecurityPolicy);
+}
+
+export async function createSecurityPolicy(scope: SecurityPolicy['scope'], scopeId: string, policy: SecurityPolicyBody): Promise<SecurityPolicy> {
+  return normalizeSecurityPolicy(await request<SecurityPolicy>('/api/security/policies', jsonBody({ scope, scope_id: scopeId, policy })));
+}
+
+export async function updateSecurityPolicy(id: number, policy: SecurityPolicyBody): Promise<SecurityPolicy> {
+  return normalizeSecurityPolicy(await request<SecurityPolicy>(`/api/security/policies/${id}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policy }),
+  }));
+}
+
+export async function deleteSecurityPolicy(id: number): Promise<void> {
+  await request<undefined>(`/api/security/policies/${id}`, { method: 'DELETE' });
+}
+
+function normalizeSecurityFinding(finding: SecurityFinding): SecurityFinding {
+  return { ...finding, evidence: finding.evidence ?? {} };
+}
+
+function normalizeSecurityPolicy(policy: SecurityPolicy): SecurityPolicy {
+  return {
+    ...policy,
+    allowed_capabilities: policy.allowed_capabilities ?? [],
+    allowed_published_ports: policy.allowed_published_ports ?? [],
+    allowed_executable_paths: policy.allowed_executable_paths ?? [],
+    allowed_writable_paths: policy.allowed_writable_paths ?? [],
+  };
+}
+
 interface NotificationsResponse {
   notifications: Notification[];
   unread: number;

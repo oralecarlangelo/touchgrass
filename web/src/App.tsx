@@ -14,6 +14,7 @@ import LogsScreen from './components/LogsScreen.tsx';
 import NotificationsScreen from './components/NotificationsScreen.tsx';
 import PerformanceScreen from './components/PerformanceScreen.tsx';
 import RulesScreen from './components/RulesScreen.tsx';
+import SecurityScreen from './components/SecurityScreen.tsx';
 import ServicesList from './components/ServicesList.tsx';
 import ServiceWorkspace from './components/service/ServiceWorkspace.tsx';
 import FleetScreen from './components/FleetScreen.tsx';
@@ -48,6 +49,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<ServiceView | null>(null);
   const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
+  const [selectedSecurityFindingId, setSelectedSecurityFindingId] = useState<number | null>(null);
   const [view, setView] = useState<ViewId>(() => parseHash(window.location.hash).view);
 
   // Deep-link: the hash mirrors the view + selected service both ways.
@@ -77,6 +79,7 @@ export default function App() {
     setServices(null);
     setSelected(null);
     setSelectedContainerId(null);
+    setSelectedSecurityFindingId(null);
     setView('dashboard');
     setLoginError('Session expired. Log in again to continue.');
   }, []);
@@ -167,6 +170,7 @@ export default function App() {
     setServices(null);
     setSelected(null);
     setSelectedContainerId(null);
+    setSelectedSecurityFindingId(null);
     setView('dashboard');
     setPassword('');
     sessionStorage.removeItem('tg-landed');
@@ -178,6 +182,7 @@ export default function App() {
     }
 
     setSelectedContainerId(null);
+    if (next !== 'security') setSelectedSecurityFindingId(null);
 
     setView(next);
   }, []);
@@ -275,6 +280,11 @@ export default function App() {
             id={selectedContainerId}
             onBack={() => setSelectedContainerId(null)}
             onUnauthorized={handleUnauthorized}
+            onSelectSecurityFinding={(id) => {
+              setSelectedContainerId(null);
+              setSelectedSecurityFindingId(id);
+              setView('security');
+            }}
           />
         ) : selected !== null ? (
           <ServiceWorkspace
@@ -298,6 +308,17 @@ export default function App() {
             services={services ?? []}
             onUnauthorized={handleUnauthorized}
             isAdmin={isAdmin}
+            onSelectSecurityFinding={(id) => {
+              setSelectedSecurityFindingId(id);
+              setView('security');
+            }}
+          />
+        ) : view === 'security' ? (
+          <SecurityScreen
+            isAdmin={isAdmin}
+            onUnauthorized={handleUnauthorized}
+            onSelectContainer={setSelectedContainerId}
+            initialFindingId={selectedSecurityFindingId}
           />
         ) : view === 'performance' ? (
           <PerformanceScreen services={services ?? []} onUnauthorized={handleUnauthorized} />

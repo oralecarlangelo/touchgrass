@@ -5,6 +5,7 @@ export type ViewId =
   | 'issues'
   | 'logs'
   | 'notifications'
+  | 'security'
   | 'images'
   | 'fleet'
   | 'audit'
@@ -46,6 +47,7 @@ export const navGroups: NavGroup[] = [
       { id: 'issues', label: 'Issues' },
       { id: 'logs', label: 'Logs' },
       { id: 'notifications', label: 'Notifications' },
+      { id: 'security', label: 'Security' },
     ],
   },
   {

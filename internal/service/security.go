@@ -180,5 +180,5 @@ func (s *Security) recordAudit(ctx context.Context, actor, action string, findin
 }
 
 func securityEventMessage(finding model.SecurityFinding) string {
-	return fmt.Sprintf("%s finding %s for container %.12s", finding.Severity, finding.RuleID, finding.ContainerID)
+	return fmt.Sprintf("Finding #%d · %s · %s · container %.12s", finding.ID, finding.Severity, finding.RuleID, finding.ContainerID)
 }

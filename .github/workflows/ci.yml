@@ -76,6 +76,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -99,11 +101,21 @@ jobs:
       - name: Run go vet
         run: make vet
 
-      - name: golangci-lint
+      - name: golangci-lint (correctness and security)
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
-          args: --timeout 5m ./cmd/... ./internal/... ./migrations/... ./web ./docs-site
+          version: v2.15.0
+          args: >-
+            --enable-only=govet,staticcheck,unused,errcheck,errorlint,nilerr,forcetypeassert,copyloopvar,durationcheck,reassign,gosec,bidichk,bodyclose,noctx,containedctx,fatcontext,sqlclosecheck,rowserrcheck
+            --timeout 5m ./cmd/... ./internal/... ./migrations/... ./web ./docs-site
+
+      - name: golangci-lint (new issues)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          args: >-
+            --new-from-rev=HEAD~
+            --timeout 5m ./cmd/... ./internal/... ./migrations/... ./web ./docs-site
 
       - name: Verify web UI and docs site
         run: |

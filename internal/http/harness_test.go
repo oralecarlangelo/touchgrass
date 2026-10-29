@@ -198,10 +198,16 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 	deploys := service.NewDeploys(services, store.NewDeployStore(db))
 	audit := service.NewAudit(services, store.NewAuditStore(db))
 	managedUsers := service.NewUsers(store.NewUserStore(db), audit)
+	hub := NewHub(logger)
+	securityStore := store.NewSecurityStore(db)
+	securityService := service.NewSecurity(service.SecurityConfig{
+		Store: securityStore, Notifications: store.NewNotificationStore(db), Audit: audit,
+		Emit: hub.Broadcast, Logger: logger,
+	})
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: services, Containers: store.NewContainerStore(db), Docker: stubStatsLister{},
 		Interval: time.Minute, InspectLimit: 2, Logger: logger,
-		Security: store.NewSecurityStore(db), Audit: audit,
+		Security: securityStore, Audit: audit,
 	})
 
 	server := New(Config{
@@ -224,10 +230,11 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 			ProbeInterval: time.Millisecond,
 			Logger:        logger,
 		}),
-		Audit:  audit,
-		Auth:   testAuthenticator(t, managedUsers),
-		Users:  managedUsers,
-		Events: NewHub(logger),
+		Audit:    audit,
+		Auth:     testAuthenticator(t, managedUsers),
+		Users:    managedUsers,
+		Events:   hub,
+		Security: securityService,
 		Ingestor: service.NewIngestor(service.IngestorConfig{
 			Services:       services,
 			Keys:           store.NewKeyStore(db),

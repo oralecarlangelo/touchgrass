@@ -13,6 +13,8 @@ const (
 	EventRollbackStarted  = "rollback_started"
 	EventRollbackProgress = "rollback_progress"
 	EventRollbackFinished = "rollback_finished"
+	EventSecurityFinding  = "security_finding"
+	EventSecurityRecovery = "security_recovery"
 )
 
 // Event is one server-sent event.

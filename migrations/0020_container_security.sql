@@ -72,6 +72,23 @@ CREATE INDEX idx_security_findings_status_severity ON security_findings(status, 
 CREATE UNIQUE INDEX idx_security_findings_open_episode ON security_findings(fingerprint)
   WHERE status IN ('open', 'acknowledged', 'suppressed');
 
+-- Security findings may be global or tied to an unmanaged container, so
+-- notifications now permit a null service while preserving existing rows.
+CREATE TABLE notifications_security_new (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service_id TEXT REFERENCES services(id),
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  read_at TEXT
+);
+INSERT INTO notifications_security_new (id, service_id, kind, title, body, created_at, read_at)
+  SELECT id, service_id, kind, title, body, created_at, read_at FROM notifications;
+DROP TABLE notifications;
+ALTER TABLE notifications_security_new RENAME TO notifications;
+CREATE INDEX idx_notifications_created ON notifications (created_at);
+
 -- Extend the append-only audit allowlist for container security mutations.
 CREATE TABLE audit_security_new (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

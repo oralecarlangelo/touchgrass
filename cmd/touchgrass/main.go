@@ -173,6 +173,7 @@ type serveServices struct {
 	onboarding  *service.Onboarding
 	performance *service.Performance
 	fleet       *service.FleetInventory
+	security    *service.Security
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -217,6 +218,7 @@ func newServeServer(
 		Onboarding:     services.onboarding,
 		Performance:    services.performance,
 		FleetInventory: services.fleet,
+		Security:       services.security,
 		Dist:           dist,
 		Docs:           docs,
 		DevProxy:       devProxy,
@@ -304,6 +306,11 @@ func runServe(args []string) error {
 
 	auth := http.NewAuthenticator(managedUsers, cfg.CookieSecure)
 	hub := http.NewHub(logger)
+	securityStore := store.NewSecurityStore(db)
+	securityService := service.NewSecurity(service.SecurityConfig{
+		Store: securityStore, Notifications: notificationStore, Audit: audit,
+		Emit: hub.Broadcast, Logger: logger,
+	})
 	cutover := service.NewCutover(service.CutoverConfig{
 		Services:      serviceStore,
 		Docker:        dockerClient,
@@ -320,7 +327,7 @@ func runServe(args []string) error {
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: serviceStore, Containers: store.NewContainerStore(db), Docker: dockerClient,
 		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
-		Security: store.NewSecurityStore(db), Audit: audit,
+		Security: securityStore, Audit: audit,
 	})
 	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
 		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),
@@ -352,7 +359,8 @@ func runServe(args []string) error {
 		cutover: cutover, audit: audit, auth: auth, users: managedUsers, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
 		database: databases, onboarding: onboarding, performance: performance,
-		fleet: fleetInventory,
+		fleet:    fleetInventory,
+		security: securityService,
 	}, version)
 	if err != nil {
 		return err

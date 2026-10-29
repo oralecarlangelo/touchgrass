@@ -223,3 +223,314 @@ func (s *SecurityStore) Classify(ctx context.Context, instance model.ContainerIn
 	}
 	return model.ContainerClassificationUnknown, nil
 }
+
+type SecurityEvaluationResult struct {
+	Finding   model.SecurityFinding
+	Opened    bool
+	Recovered bool
+}
+
+// Evaluate stores one observation and updates its durable finding episode in
+// the same transaction.
+func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityEvaluation) (SecurityEvaluationResult, error) {
+	observation := evaluation.Observation
+	if err := validateObservation(observation); err != nil {
+		return SecurityEvaluationResult{}, err
+	}
+	if observation.ObservedAt.IsZero() {
+		observation.ObservedAt = time.Now().UTC()
+	}
+	fingerprint := findingFingerprint(observation.ContainerID, observation.RuleID, evaluation.BaselineFingerprint)
+	evidence, err := json.Marshal(observation.Evidence)
+	if err != nil {
+		return SecurityEvaluationResult{}, fmt.Errorf("encoding security evidence: %w", err)
+	}
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return SecurityEvaluationResult{}, fmt.Errorf("beginning security evaluation: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `INSERT INTO security_observations
+		(container_id, rule_id, category, severity, confidence, detected,
+		coverage_complete, evidence_json, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		observation.ContainerID, observation.RuleID, observation.Category, observation.Severity,
+		observation.Confidence, boolInteger(observation.Detected), boolInteger(observation.CoverageComplete),
+		string(evidence), formatTime(observation.ObservedAt))
+	if err != nil {
+		return SecurityEvaluationResult{}, fmt.Errorf("inserting security observation: %w", err)
+	}
+
+	open, found, err := findOpenFinding(ctx, tx, fingerprint)
+	if err != nil {
+		return SecurityEvaluationResult{}, err
+	}
+	result := SecurityEvaluationResult{}
+	if observation.Detected {
+		if found {
+			_, err = tx.ExecContext(ctx, `UPDATE security_findings SET occurrence_count = occurrence_count + 1,
+				last_seen_at = ?, severity = ?, confidence = ?, evidence_json = ? WHERE id = ?`,
+				formatTime(observation.ObservedAt), observation.Severity, observation.Confidence, string(evidence), open.ID)
+			if err != nil {
+				return SecurityEvaluationResult{}, fmt.Errorf("updating security episode: %w", err)
+			}
+			open.OccurrenceCount++
+			open.LastSeenAt = observation.ObservedAt
+			open.Severity = observation.Severity
+			open.Confidence = observation.Confidence
+			open.Evidence = cloneEvidence(observation.Evidence)
+			result.Finding = open
+		} else {
+			var episode int
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(episode), 0) + 1
+				FROM security_findings WHERE fingerprint = ?`, fingerprint).Scan(&episode); err != nil {
+				return SecurityEvaluationResult{}, fmt.Errorf("selecting finding episode: %w", err)
+			}
+			created, createErr := insertFinding(ctx, tx, fingerprint, episode, observation, string(evidence))
+			if createErr != nil {
+				return SecurityEvaluationResult{}, createErr
+			}
+			result.Finding, result.Opened = created, true
+		}
+	} else if found && observation.CoverageComplete {
+		_, err = tx.ExecContext(ctx, `UPDATE security_findings SET status = 'resolved',
+			resolved_at = ?, resolved_by = 'collector', last_seen_at = ? WHERE id = ?`,
+			formatTime(observation.ObservedAt), formatTime(observation.ObservedAt), open.ID)
+		if err != nil {
+			return SecurityEvaluationResult{}, fmt.Errorf("resolving recovered finding: %w", err)
+		}
+		open.Status = model.SecurityFindingStatusResolved
+		resolvedAt := observation.ObservedAt
+		open.ResolvedAt = &resolvedAt
+		open.ResolvedBy = "collector"
+		open.LastSeenAt = observation.ObservedAt
+		result.Finding, result.Recovered = open, true
+	}
+	if err := tx.Commit(); err != nil {
+		return SecurityEvaluationResult{}, fmt.Errorf("committing security evaluation: %w", err)
+	}
+	return result, nil
+}
+
+func (s *SecurityStore) Findings(ctx context.Context, query model.SecurityFindingQuery) ([]model.SecurityFinding, error) {
+	statement := `SELECT id, fingerprint, episode, container_id, rule_id, category, severity,
+		confidence, status, occurrence_count, evidence_json, opened_at, last_seen_at,
+		acknowledged_at, acknowledged_by, resolved_at, resolved_by, suppressed_until,
+		suppression_reason, suppression_actor, notification_status
+		FROM security_findings WHERE 1 = 1`
+	args := []any{}
+	if query.Status != model.SecurityFindingStatusUnknown {
+		statement += " AND status = ?"
+		args = append(args, query.Status)
+	}
+	if query.Severity != model.SecuritySeverityUnknown {
+		statement += " AND severity = ?"
+		args = append(args, query.Severity)
+	}
+	if query.ContainerID != "" {
+		statement += " AND container_id = ?"
+		args = append(args, query.ContainerID)
+	}
+	statement += " ORDER BY last_seen_at DESC, id DESC LIMIT ?"
+	args = append(args, securityLimit(query.Limit))
+	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("listing security findings: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	findings := []model.SecurityFinding{}
+	for rows.Next() {
+		finding, err := scanSecurityFinding(rows)
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, finding)
+	}
+	return findings, rows.Err()
+}
+
+func (s *SecurityStore) Summary(ctx context.Context) (model.SecuritySummary, error) {
+	var summary model.SecuritySummary
+	err := s.db.sql.QueryRowContext(ctx, `SELECT
+		COALESCE(SUM(CASE WHEN status IN ('open','acknowledged') THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN status IN ('open','acknowledged') AND severity = 'critical' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN status IN ('open','acknowledged') AND severity = 'high' THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN status = 'suppressed' THEN 1 ELSE 0 END), 0)
+		FROM security_findings`).Scan(&summary.Open, &summary.Critical, &summary.High, &summary.Suppressed)
+	if err != nil {
+		return model.SecuritySummary{}, fmt.Errorf("summarizing security findings: %w", err)
+	}
+	return summary, nil
+}
+
+func (s *SecurityStore) Acknowledge(ctx context.Context, id int64, actor string) (model.SecurityFinding, error) {
+	return s.setFindingStatus(ctx, id, model.SecurityFindingStatusAcknowledged, actor, "")
+}
+
+func (s *SecurityStore) Resolve(ctx context.Context, id int64, actor string) (model.SecurityFinding, error) {
+	return s.setFindingStatus(ctx, id, model.SecurityFindingStatusResolved, actor, "")
+}
+
+func (s *SecurityStore) Suppress(ctx context.Context, id int64, suppression model.FindingSuppression) (model.SecurityFinding, error) {
+	if strings.TrimSpace(suppression.Actor) == "" || strings.TrimSpace(suppression.Reason) == "" {
+		return model.SecurityFinding{}, errors.New("suppressing finding: actor and reason are required")
+	}
+	_, err := s.db.sql.ExecContext(ctx, `UPDATE security_findings SET status = 'suppressed',
+		suppressed_until = ?, suppression_reason = ?, suppression_actor = ?
+		WHERE id = ? AND status IN ('open','acknowledged')`, formatNullTime(suppression.Until),
+		suppression.Reason, suppression.Actor, id)
+	if err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("suppressing finding: %w", err)
+	}
+	return s.findingByID(ctx, id)
+}
+
+func (s *SecurityStore) SetNotificationStatus(ctx context.Context, id int64, status string) error {
+	_, err := s.db.sql.ExecContext(ctx, `UPDATE security_findings SET notification_status = ? WHERE id = ?`, status, id)
+	if err != nil {
+		return fmt.Errorf("updating finding notification status: %w", err)
+	}
+	return nil
+}
+
+func (s *SecurityStore) setFindingStatus(ctx context.Context, id int64, status model.SecurityFindingStatus, actor, _ string) (model.SecurityFinding, error) {
+	if strings.TrimSpace(actor) == "" {
+		return model.SecurityFinding{}, errors.New("updating finding: actor is required")
+	}
+	now := time.Now().UTC()
+	var statement string
+	switch status {
+	case model.SecurityFindingStatusAcknowledged:
+		statement = `UPDATE security_findings SET status = 'acknowledged', acknowledged_at = ?, acknowledged_by = ?
+			WHERE id = ? AND status = 'open'`
+	case model.SecurityFindingStatusResolved:
+		statement = `UPDATE security_findings SET status = 'resolved', resolved_at = ?, resolved_by = ?
+			WHERE id = ? AND status IN ('open','acknowledged','suppressed')`
+	default:
+		return model.SecurityFinding{}, errors.New("updating finding: invalid status")
+	}
+	if _, err := s.db.sql.ExecContext(ctx, statement, formatTime(now), actor, id); err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("updating finding status: %w", err)
+	}
+	return s.findingByID(ctx, id)
+}
+
+func (s *SecurityStore) findingByID(ctx context.Context, id int64) (model.SecurityFinding, error) {
+	row := s.db.sql.QueryRowContext(ctx, `SELECT id, fingerprint, episode, container_id, rule_id, category, severity,
+		confidence, status, occurrence_count, evidence_json, opened_at, last_seen_at,
+		acknowledged_at, acknowledged_by, resolved_at, resolved_by, suppressed_until,
+		suppression_reason, suppression_actor, notification_status FROM security_findings WHERE id = ?`, id)
+	return scanSecurityFinding(row)
+}
+
+func validateObservation(value model.SecurityObservation) error {
+	if value.ContainerID == "" || value.RuleID == "" || value.Category == model.SecurityCategoryUnknown ||
+		value.Severity == model.SecuritySeverityUnknown || value.Confidence == model.SecurityConfidenceUnknown {
+		return errors.New("evaluating security: required bounded fields are missing")
+	}
+	if len(value.ContainerID) > 128 || len(value.RuleID) > 128 || len(value.Evidence) > 32 {
+		return errors.New("evaluating security: bounded fields exceed limits")
+	}
+	for key, item := range value.Evidence {
+		if len(key) > 64 || len(item) > 256 {
+			return errors.New("evaluating security: evidence exceeds limits")
+		}
+	}
+	return nil
+}
+
+func findingFingerprint(containerID, ruleID, baseline string) string {
+	sum := sha256.Sum256([]byte(containerID + "\x00" + ruleID + "\x00" + baseline))
+	return hex.EncodeToString(sum[:])
+}
+
+func findOpenFinding(ctx context.Context, tx *sql.Tx, fingerprint string) (model.SecurityFinding, bool, error) {
+	row := tx.QueryRowContext(ctx, `SELECT id, fingerprint, episode, container_id, rule_id, category, severity,
+		confidence, status, occurrence_count, evidence_json, opened_at, last_seen_at,
+		acknowledged_at, acknowledged_by, resolved_at, resolved_by, suppressed_until,
+		suppression_reason, suppression_actor, notification_status FROM security_findings
+		WHERE fingerprint = ? AND status IN ('open','acknowledged','suppressed') LIMIT 1`, fingerprint)
+	finding, err := scanSecurityFinding(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.SecurityFinding{}, false, nil
+	}
+	return finding, err == nil, err
+}
+
+func insertFinding(ctx context.Context, tx *sql.Tx, fingerprint string, episode int,
+	observation model.SecurityObservation, evidence string) (model.SecurityFinding, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO security_findings
+		(fingerprint, episode, container_id, rule_id, category, severity, confidence, status,
+		occurrence_count, evidence_json, opened_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 1, ?, ?, ?)`,
+		fingerprint, episode, observation.ContainerID, observation.RuleID, observation.Category,
+		observation.Severity, observation.Confidence, evidence,
+		formatTime(observation.ObservedAt), formatTime(observation.ObservedAt))
+	if err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("opening security finding: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return model.SecurityFinding{}, err
+	}
+	return model.SecurityFinding{ID: id, Fingerprint: fingerprint, Episode: episode,
+		ContainerID: observation.ContainerID, RuleID: observation.RuleID, Category: observation.Category,
+		Severity: observation.Severity, Confidence: observation.Confidence,
+		Status: model.SecurityFindingStatusOpen, OccurrenceCount: 1,
+		Evidence: cloneEvidence(observation.Evidence), OpenedAt: observation.ObservedAt, LastSeenAt: observation.ObservedAt}, nil
+}
+
+type securityFindingScanner interface{ Scan(...any) error }
+
+func scanSecurityFinding(scanner securityFindingScanner) (model.SecurityFinding, error) {
+	var finding model.SecurityFinding
+	var category, severity, confidence, status, evidence, openedAt, lastSeenAt string
+	var acknowledgedAt, resolvedAt, suppressedUntil sql.NullString
+	err := scanner.Scan(&finding.ID, &finding.Fingerprint, &finding.Episode, &finding.ContainerID,
+		&finding.RuleID, &category, &severity, &confidence, &status, &finding.OccurrenceCount,
+		&evidence, &openedAt, &lastSeenAt, &acknowledgedAt, &finding.AcknowledgedBy,
+		&resolvedAt, &finding.ResolvedBy, &suppressedUntil, &finding.SuppressionReason,
+		&finding.SuppressionActor, &finding.NotificationStatus)
+	if err != nil {
+		return model.SecurityFinding{}, err
+	}
+	finding.Category, finding.Severity = model.SecurityCategory(category), model.SecuritySeverity(severity)
+	finding.Confidence, finding.Status = model.SecurityConfidence(confidence), model.SecurityFindingStatus(status)
+	if err := json.Unmarshal([]byte(evidence), &finding.Evidence); err != nil {
+		return model.SecurityFinding{}, fmt.Errorf("decoding finding evidence: %w", err)
+	}
+	finding.OpenedAt, err = parseTime(openedAt, "opened_at")
+	if err != nil {
+		return model.SecurityFinding{}, err
+	}
+	finding.LastSeenAt, err = parseTime(lastSeenAt, "last_seen_at")
+	if err != nil {
+		return model.SecurityFinding{}, err
+	}
+	finding.AcknowledgedAt, err = parseNullTime(acknowledgedAt, "acknowledged_at")
+	if err != nil {
+		return model.SecurityFinding{}, err
+	}
+	finding.ResolvedAt, err = parseNullTime(resolvedAt, "resolved_at")
+	if err != nil {
+		return model.SecurityFinding{}, err
+	}
+	finding.SuppressedUntil, err = parseNullTime(suppressedUntil, "suppressed_until")
+	return finding, err
+}
+
+func cloneEvidence(value map[string]string) map[string]string {
+	if value == nil {
+		return map[string]string{}
+	}
+	clone := make(map[string]string, len(value))
+	for key, item := range value {
+		clone[key] = item
+	}
+	return clone
+}
+
+func securityLimit(value int) int {
+	if value <= 0 || value > 1000 {
+		return 100
+	}
+	return value
+}

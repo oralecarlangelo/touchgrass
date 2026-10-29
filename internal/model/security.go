@@ -88,17 +88,52 @@ type SecurityObservation struct {
 	ObservedAt       time.Time
 }
 
+type SecurityEvaluation struct {
+	Observation         SecurityObservation
+	BaselineFingerprint string
+	ServiceID           string
+}
+
 type SecurityFinding struct {
-	ID              int64                 `json:"id"`
-	Fingerprint     string                `json:"fingerprint"`
-	Episode         int                   `json:"episode"`
-	ContainerID     string                `json:"container_id"`
-	RuleID          string                `json:"rule_id"`
-	Category        SecurityCategory      `json:"category"`
-	Severity        SecuritySeverity      `json:"severity"`
-	Confidence      SecurityConfidence    `json:"confidence"`
-	Status          SecurityFindingStatus `json:"status"`
-	OccurrenceCount int                   `json:"occurrence_count"`
-	OpenedAt        time.Time             `json:"opened_at"`
-	LastSeenAt      time.Time             `json:"last_seen_at"`
+	ID                 int64                 `json:"id"`
+	Fingerprint        string                `json:"fingerprint"`
+	Episode            int                   `json:"episode"`
+	ContainerID        string                `json:"container_id"`
+	RuleID             string                `json:"rule_id"`
+	Category           SecurityCategory      `json:"category"`
+	Severity           SecuritySeverity      `json:"severity"`
+	Confidence         SecurityConfidence    `json:"confidence"`
+	Status             SecurityFindingStatus `json:"status"`
+	OccurrenceCount    int                   `json:"occurrence_count"`
+	OpenedAt           time.Time             `json:"opened_at"`
+	LastSeenAt         time.Time             `json:"last_seen_at"`
+	Evidence           map[string]string     `json:"evidence"`
+	AcknowledgedAt     *time.Time            `json:"acknowledged_at,omitempty"`
+	AcknowledgedBy     string                `json:"acknowledged_by,omitempty"`
+	ResolvedAt         *time.Time            `json:"resolved_at,omitempty"`
+	ResolvedBy         string                `json:"resolved_by,omitempty"`
+	SuppressedUntil    *time.Time            `json:"suppressed_until,omitempty"`
+	SuppressionReason  string                `json:"suppression_reason,omitempty"`
+	SuppressionActor   string                `json:"suppression_actor,omitempty"`
+	NotificationStatus string                `json:"notification_status,omitempty"`
+}
+
+type SecurityFindingQuery struct {
+	Status      SecurityFindingStatus
+	Severity    SecuritySeverity
+	ContainerID string
+	Limit       int
+}
+
+type SecuritySummary struct {
+	Open       int `json:"open"`
+	Critical   int `json:"critical"`
+	High       int `json:"high"`
+	Suppressed int `json:"suppressed"`
+}
+
+type FindingSuppression struct {
+	Actor  string
+	Reason string
+	Until  *time.Time
 }

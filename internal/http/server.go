@@ -42,6 +42,7 @@ type Config struct {
 	Onboarding     *service.Onboarding
 	Performance    *service.Performance
 	FleetInventory *service.FleetInventory
+	Security       *service.Security
 	Dist           fs.FS
 	Docs           fs.FS
 	DevProxy       string
@@ -68,6 +69,7 @@ type Server struct {
 	onboarding     *service.Onboarding
 	performance    *service.Performance
 	fleetInventory *service.FleetInventory
+	security       *service.Security
 	handler        nethttp.Handler
 }
 
@@ -94,6 +96,7 @@ func New(cfg Config) *Server {
 		onboarding:     cfg.Onboarding,
 		performance:    cfg.Performance,
 		fleetInventory: cfg.FleetInventory,
+		security:       cfg.Security,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)

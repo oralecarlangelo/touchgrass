@@ -53,6 +53,7 @@ const (
 	NotificationAlertBreach = "alert_breach"
 	NotificationDeploy      = "deploy"
 	NotificationIssue       = "issue"
+	NotificationSecurity    = "security"
 )
 
 // Notification is one in-app notification row.

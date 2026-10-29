@@ -28,7 +28,7 @@ func (s *NotificationStore) Insert(
 
 	res, err := s.db.sql.ExecContext(ctx,
 		"INSERT INTO notifications (service_id, kind, title, body, created_at) VALUES (?, ?, ?, ?, ?)",
-		serviceID, kind, title, body, formatTime(now),
+		nullString(serviceID), kind, title, body, formatTime(now),
 	)
 	if err != nil {
 		return model.Notification{}, fmt.Errorf("inserting notification: %w", err)
@@ -56,7 +56,7 @@ func (s *NotificationStore) List(
 	serviceID string,
 	limit int,
 ) ([]model.Notification, error) {
-	query := `SELECT id, service_id, kind, title, body, created_at, read_at
+	query := `SELECT id, COALESCE(service_id, ''), kind, title, body, created_at, read_at
 	 FROM notifications ORDER BY id DESC LIMIT ?`
 	args := []any{limit}
 
@@ -110,6 +110,13 @@ func (s *NotificationStore) List(
 	}
 
 	return notifications, nil
+}
+
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 // MarkRead stamps one notification read. Unknown ids are a no-op success.

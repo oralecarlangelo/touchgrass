@@ -13,6 +13,7 @@ func defaultTestConfig() Config {
 		Addr: "127.0.0.1:8080", DB: "./touchgrass.db", Env: "prod",
 		HostRoot:        "/",
 		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
+		InventoryInterval: 30 * time.Second, InventoryWorkers: 4,
 		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
 		AdminPassword: testAdminPassword, CookieSecure: false,
 		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
@@ -36,6 +37,8 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.Env = "dev"
 	cfg.HostRoot = "/hostfs"
 	cfg.MetricsInterval = 10 * time.Second
+	cfg.InventoryInterval = 12 * time.Second
+	cfg.InventoryWorkers = 8
 	cfg.CookieSecure = true
 	cfg.WatchInterval = 2 * time.Second
 	cfg.RetentionErrors = 24 * time.Hour
@@ -82,6 +85,7 @@ func TestLoad(t *testing.T) {
 				"TOUCHGRASS_ADDR": ":8080", "TOUCHGRASS_DB": "/data/t.db", "APP_ENV": "dev",
 				hostRootEnvVar:                "/hostfs",
 				"TOUCHGRASS_METRICS_INTERVAL": "10s", adminPasswordEnvVar: testAdminPassword,
+				inventoryIntervalEnvVar: "12s", inventoryWorkersEnvVar: "8",
 				"TOUCHGRASS_COOKIE_SECURE": "true", "TOUCHGRASS_WATCH_INTERVAL": "2s",
 				"TOUCHGRASS_RETENTION_ERRORS": "24h", "TOUCHGRASS_INGEST_MAX_OCCURRENCES": "500",
 				"TOUCHGRASS_RETENTION_LOGS": "48h", "TOUCHGRASS_LOGS_MAX_LINES": "1000",
@@ -123,6 +127,16 @@ func TestLoad(t *testing.T) {
 		{
 			name:        "invalid interval",
 			env:         map[string]string{"TOUCHGRASS_METRICS_INTERVAL": "soon", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "invalid inventory interval",
+			env:         map[string]string{inventoryIntervalEnvVar: "soon", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "inventory workers out of range",
+			env:         map[string]string{inventoryWorkersEnvVar: "33", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 		{

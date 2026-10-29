@@ -54,17 +54,36 @@ func (s *FleetStore) InsertContainer(ctx context.Context, sample model.Container
 		managed = 1
 	}
 
-	_, err := s.db.sql.ExecContext(ctx,
+	tx, err := s.db.sql.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning container sample: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO container_samples (sampled_at, container_id, container_name, project,
 		  managed, service_id, state, cpu_percent, mem_bytes, mem_limit,
 		  restarts)
-		 VALUES (?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		formatTime(sample.SampledAt), sample.ContainerID, sample.ContainerName, sample.Project,
+		 VALUES (?, CASE WHEN EXISTS (SELECT 1 FROM container_instances WHERE container_id = ?)
+		 THEN ? ELSE NULL END, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		formatTime(sample.SampledAt), sample.ContainerID, sample.ContainerID, sample.ContainerName, sample.Project,
 		managed, sample.ServiceID, sample.State, sample.CPUPercent,
 		sample.MemBytes, sample.MemLimit, sample.Restarts,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting container sample: %w", err)
+	}
+	if sample.ContainerID != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE container_instances SET
+			cpu_percent = ?, mem_bytes = ?, mem_limit = ?, restarts = ?, updated_at = ?
+			WHERE container_id = ? AND current = 1 AND state = 'running'`,
+			sample.CPUPercent, sample.MemBytes, sample.MemLimit, sample.Restarts,
+			formatTime(sample.SampledAt), sample.ContainerID); err != nil {
+			return fmt.Errorf("updating live container metrics: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing container sample: %w", err)
 	}
 
 	return nil

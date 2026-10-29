@@ -111,9 +111,16 @@ func upsertContainer(ctx context.Context, tx *sql.Tx, instance model.ContainerIn
 		current = 1, present = 1, last_seen_at = excluded.last_seen_at, absent_at = NULL,
 		image_fingerprint = excluded.image_fingerprint,
 		configuration_fingerprint = excluded.configuration_fingerprint,
-		inspection_json = excluded.inspection_json, cpu_percent = excluded.cpu_percent,
-		mem_bytes = excluded.mem_bytes, mem_limit = excluded.mem_limit,
-		restarts = excluded.restarts, updated_at = excluded.updated_at`,
+		inspection_json = excluded.inspection_json,
+		cpu_percent = CASE WHEN excluded.state = 'running' THEN
+			COALESCE(excluded.cpu_percent, container_instances.cpu_percent) ELSE NULL END,
+		mem_bytes = CASE WHEN excluded.state = 'running' THEN
+			COALESCE(excluded.mem_bytes, container_instances.mem_bytes) ELSE NULL END,
+		mem_limit = CASE WHEN excluded.state = 'running' THEN
+			COALESCE(excluded.mem_limit, container_instances.mem_limit) ELSE NULL END,
+		restarts = CASE WHEN excluded.state = 'running' THEN
+			COALESCE(excluded.restarts, container_instances.restarts) ELSE NULL END,
+		updated_at = excluded.updated_at`,
 		instance.ID, instance.Name, instance.Image, instance.ImageID, instance.State,
 		instance.Status, instance.ComposeProject, instance.ComposeService,
 		instance.ServiceID, classification, formatTime(observedAt), formatTime(observedAt),

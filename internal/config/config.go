@@ -16,6 +16,8 @@ const (
 	defaultDB                        = "./touchgrass.db"
 	defaultEnv                       = "prod"
 	defaultMetricsInterval           = "30s"
+	defaultInventoryInterval         = "30s"
+	defaultInventoryWorkers          = "4"
 	defaultRetentionMetrics          = "168h"
 	defaultRetentionNotifications    = "720h"
 	defaultRetentionDeploys          = "8760h"
@@ -46,6 +48,8 @@ const (
 	envEnvVar                        = "APP_ENV"
 	hostRootEnvVar                   = "TOUCHGRASS_HOST_ROOT"
 	metricsIntervalEnvVar            = "TOUCHGRASS_METRICS_INTERVAL"
+	inventoryIntervalEnvVar          = "TOUCHGRASS_INVENTORY_INTERVAL"
+	inventoryWorkersEnvVar           = "TOUCHGRASS_INVENTORY_WORKERS"
 	retentionMetricsEnvVar           = "TOUCHGRASS_RETENTION_METRICS"
 	retentionNotificationsEnvVar     = "TOUCHGRASS_RETENTION_NOTIFICATIONS"
 	retentionDeploysEnvVar           = "TOUCHGRASS_RETENTION_DEPLOYS"
@@ -92,6 +96,10 @@ type Config struct {
 	HostRoot string
 	// MetricsInterval paces metric sampling.
 	MetricsInterval time.Duration
+	// InventoryInterval paces authoritative all-state reconciliation.
+	InventoryInterval time.Duration
+	// InventoryWorkers bounds concurrent Docker inspections.
+	InventoryWorkers int
 	// Retention bounds per-area max age.
 	RetentionMetrics       time.Duration
 	RetentionNotifications time.Duration
@@ -171,6 +179,8 @@ type listenConfig struct {
 // scheduleConfig groups validated durations.
 type scheduleConfig struct {
 	metrics                time.Duration
+	inventory              time.Duration
+	inventoryWorkers       int
 	retentionMetrics       time.Duration
 	retentionNotifications time.Duration
 	retentionDeploys       time.Duration
@@ -264,6 +274,8 @@ func load(getenv func(string) string) (Config, error) {
 		Env:                        listen.env,
 		HostRoot:                   listen.hostRoot,
 		MetricsInterval:            schedule.metrics,
+		InventoryInterval:          schedule.inventory,
+		InventoryWorkers:           schedule.inventoryWorkers,
 		RetentionMetrics:           schedule.retentionMetrics,
 		RetentionNotifications:     schedule.retentionNotifications,
 		RetentionDeploys:           schedule.retentionDeploys,
@@ -400,6 +412,23 @@ func loadSchedule(getenv func(string) string) (scheduleConfig, error) {
 		return scheduleConfig{}, err
 	}
 
+	inventory, err := parseDuration(getenv, inventoryIntervalEnvVar, defaultInventoryInterval)
+	if err != nil {
+		return scheduleConfig{}, err
+	}
+
+	inventoryWorkers, err := parsePositiveInt(getenv, inventoryWorkersEnvVar, defaultInventoryWorkers)
+	if err != nil {
+		return scheduleConfig{}, err
+	}
+	if inventoryWorkers > 32 {
+		raw := getenv(inventoryWorkersEnvVar)
+		if raw == "" {
+			raw = defaultInventoryWorkers
+		}
+		return scheduleConfig{}, fmt.Errorf("invalid %s %q: want integer from 1 to 32", inventoryWorkersEnvVar, raw)
+	}
+
 	retentionMetrics, err := parseDuration(getenv, retentionMetricsEnvVar, defaultRetentionMetrics)
 	if err != nil {
 		return scheduleConfig{}, err
@@ -447,6 +476,8 @@ func loadSchedule(getenv func(string) string) (scheduleConfig, error) {
 
 	return scheduleConfig{
 		metrics:                metrics,
+		inventory:              inventory,
+		inventoryWorkers:       inventoryWorkers,
 		retentionMetrics:       retentionMetrics,
 		retentionNotifications: retentionNotifications,
 		retentionDeploys:       retentionDeploys,

@@ -85,6 +85,7 @@ type backgroundLoops struct {
 	maintenanceInterval time.Duration
 	performance         *service.PerformanceCollector
 	runtimeEvents       *service.ContainerEventCollector
+	fleetInventory      *service.FleetInventory
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -95,7 +96,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(7)
+	group.Add(8)
 
 	go func() {
 		defer group.Done()
@@ -139,6 +140,12 @@ func startBackground(
 		loops.runtimeEvents.Run(ctx)
 	}()
 
+	go func() {
+		defer group.Done()
+
+		loops.fleetInventory.Run(ctx)
+	}()
+
 	logger.Info("starting background loops",
 		"metrics_interval", loops.metrics.String(),
 		"watch_interval", loops.interval.String(),
@@ -165,6 +172,7 @@ type serveServices struct {
 	database    *service.Database
 	onboarding  *service.Onboarding
 	performance *service.Performance
+	fleet       *service.FleetInventory
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -312,6 +320,10 @@ func runServe(args []string) error {
 		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),
 		Environment: cfg.Env, Expected: cutover.Active, Logger: logger,
 	})
+	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
+		Services: serviceStore, Containers: store.NewContainerStore(db), Docker: dockerClient,
+		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
+	})
 
 	var group sync.WaitGroup
 
@@ -329,6 +341,7 @@ func runServe(args []string) error {
 		maintenanceInterval: cfg.MaintenanceInterval,
 		performance:         performanceCollector,
 		runtimeEvents:       runtimeEvents,
+		fleetInventory:      fleetInventory,
 	}, &group, logger)
 
 	server, err := newServeServer(cfg, logger, serveServices{
@@ -336,6 +349,7 @@ func runServe(args []string) error {
 		cutover: cutover, audit: audit, auth: auth, users: managedUsers, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
 		database: databases, onboarding: onboarding, performance: performance,
+		fleet: fleetInventory,
 	}, version)
 	if err != nil {
 		return err

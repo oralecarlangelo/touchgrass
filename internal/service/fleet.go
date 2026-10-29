@@ -241,6 +241,7 @@ func (s *Sampler) recordFleetSample(
 ) {
 	sample := model.ContainerSample{
 		SampledAt:     now,
+		ContainerID:   c.ID,
 		ContainerName: c.Name,
 		Project:       c.Labels[docker.LabelComposeProject],
 		Managed:       serviceID != "",

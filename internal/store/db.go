@@ -20,7 +20,9 @@ import (
 var memDBCounter atomic.Int64
 
 const (
-	maxOpenConns = 1
+	// WAL permits concurrent readers while maintenance or backup work owns a
+	// connection. Keep the pool small so SQLite still has bounded contention.
+	maxOpenConns = 4
 	pingTimeout  = 5 * time.Second
 )
 

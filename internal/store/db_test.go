@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 )
 
 // testServiceAPI is the seeded blue-green service id.
@@ -73,6 +75,35 @@ func TestOpen(t *testing.T) {
 				t.Errorf("Close() error = %v, want nil", err)
 			}
 		})
+	}
+}
+
+func TestOpenKeepsReadsAvailableWhileOneConnectionIsBusy(t *testing.T) {
+	t.Parallel()
+
+	db, err := Open(filepath.Join(t.TempDir(), "touchgrass.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = db.Close() })
+
+	held, err := db.sql.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = held.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+
+	var value int
+	if err := db.sql.QueryRowContext(ctx, "SELECT 1").Scan(&value); err != nil {
+		t.Fatalf("read while maintenance connection is busy: %v", err)
+	}
+
+	if value != 1 {
+		t.Fatalf("SELECT 1 = %d, want 1", value)
 	}
 }
 

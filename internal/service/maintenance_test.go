@@ -210,3 +210,33 @@ func TestMaintenancePrunesOldSQLiteBackups(t *testing.T) {
 		t.Fatalf("unrelated file was changed: %v", err)
 	}
 }
+
+func TestMaintenanceReusesRecentSQLiteBackupAfterRestart(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	now := time.Date(2026, 11, 2, 6, 30, 0, 0, time.UTC)
+	recent := now.Add(-time.Hour)
+	name := "touchgrass-" + recent.Format("20060102T150405Z") + ".db"
+
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	backupper := &backupStub{}
+	maintenance := NewMaintenance(MaintenanceConfig{
+		Store: &maintenanceStoreStub{}, Backupper: backupper,
+		Clock:    &maintenanceClockStub{now: now, ticks: make(chan time.Time, 1)},
+		Interval: time.Minute, BackupInterval: 24 * time.Hour, BackupDir: dir,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+
+	maintenance.runOnce(context.Background())
+
+	backupper.mu.Lock()
+	defer backupper.mu.Unlock()
+
+	if len(backupper.destinations) != 0 {
+		t.Fatalf("backup destinations = %v, want recent snapshot reused", backupper.destinations)
+	}
+}

@@ -18,6 +18,7 @@ import (
 const (
 	defaultSQLiteBackupInterval = 24 * time.Hour
 	defaultSQLiteBackupKeep     = 14
+	sqliteBackupTimeLayout      = "20060102T150405Z"
 )
 
 // MaintenanceRunner is the bounded store surface used by the scheduler.
@@ -101,7 +102,37 @@ func NewMaintenance(cfg MaintenanceConfig) *Maintenance {
 		store: cfg.Store, backupper: cfg.Backupper, policy: cfg.Policy,
 		interval: interval, backupInterval: backupInterval,
 		backupDir: cfg.BackupDir, backupKeep: backupKeep, clock: clock, logger: logger,
+		lastBackupAt: latestSQLiteBackupAt(cfg.BackupDir),
 	}
+}
+
+func latestSQLiteBackupAt(dir string) time.Time {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}
+	}
+
+	var latest time.Time
+
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+
+		name := entry.Name()
+		stamp := strings.TrimSuffix(strings.TrimPrefix(name, "touchgrass-"), ".db")
+
+		if !strings.HasPrefix(name, "touchgrass-") || !strings.HasSuffix(name, ".db") {
+			continue
+		}
+
+		createdAt, err := time.Parse(sqliteBackupTimeLayout, stamp)
+		if err == nil && createdAt.After(latest) {
+			latest = createdAt
+		}
+	}
+
+	return latest
 }
 
 // Run performs an immediate pass and repeats until cancellation. A failed pass
@@ -146,7 +177,7 @@ func (m *Maintenance) runOnce(ctx context.Context) {
 	m.mu.Unlock()
 
 	if backupDue {
-		destination := filepath.Join(m.backupDir, "touchgrass-"+now.Format("20060102T150405Z")+".db")
+		destination := filepath.Join(m.backupDir, "touchgrass-"+now.Format(sqliteBackupTimeLayout)+".db")
 		if err := m.Backup(ctx, destination); err != nil {
 			m.mu.Lock()
 			m.status.LastError = err.Error()
@@ -187,7 +218,7 @@ func (m *Maintenance) pruneBackups() error {
 
 		stamp := strings.TrimSuffix(strings.TrimPrefix(name, "touchgrass-"), ".db")
 		if entry.Type().IsRegular() && strings.HasPrefix(name, "touchgrass-") && strings.HasSuffix(name, ".db") {
-			if _, err := time.Parse("20060102T150405Z", stamp); err == nil {
+			if _, err := time.Parse(sqliteBackupTimeLayout, stamp); err == nil {
 				names = append(names, name)
 			}
 		}

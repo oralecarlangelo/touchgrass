@@ -168,7 +168,9 @@ func TestMaintenanceRetainsPerformanceInBoundedBatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.DeletedRows != 1 || result.DeletedByTable["http_metric_buckets"] != 1 {
+
+	if result.DeletedRows != 2 || result.DeletedByTable["http_metric_buckets"] != 1 ||
+		result.DeletedByTable["performance_ingest_batches"] != 1 {
 		t.Fatalf("maintenance result = %+v", result)
 	}
 }

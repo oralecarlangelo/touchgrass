@@ -20,19 +20,19 @@ func defaultTestConfig() Config {
 		AdminPassword: testAdminPassword, CookieSecure: false,
 		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
 		RetentionErrors: 720 * time.Hour, MaxOccurrences: 10000,
-		RetentionLogs: 168 * time.Hour, MaxLogLines: 50000, LogPollInterval: 5 * time.Second,
-		RetentionSDKLogs:  7 * 24 * time.Hour,
+		RetentionLogs: 720 * time.Hour, MaxLogLines: 3000000, LogPollInterval: 5 * time.Second,
+		RetentionSDKLogs:  30 * 24 * time.Hour,
 		PostgresContainer: "", PostgresUser: defaultPostgresUser, PostgresDB: defaultPostgresDB,
 		BackupDir: defaultBackupDir, BackupKeep: 14, BackupInterval: 24 * time.Hour,
 		RedisContainer: "", ScriptsDir: defaultScriptsDir,
-		MaintenanceInterval: 5 * time.Minute, SQLiteMaxBytes: 1 << 30,
+		MaintenanceInterval: 5 * time.Minute, SQLiteMaxBytes: 4 << 30,
 		SQLiteBackupDir: defaultSQLiteBackupDir, SQLiteBackupKeep: 14,
 		RetentionPerformance: 168 * time.Hour, RetentionPerformanceHourly: 720 * time.Hour,
 		NginxTimingLog: "", PerformanceServiceID: "", PerformanceInterval: 30 * time.Second,
 		SecurityEventLog: "", SecurityEventServiceID: "", SecurityEventInterval: 5 * time.Second,
-		RetentionSecurityObservations: 168 * time.Hour,
-		RetentionContainerEvents:      720 * time.Hour,
-		RetentionSecurityFindings:     2160 * time.Hour,
+		RetentionSecurityObservations: 24 * time.Hour,
+		RetentionContainerEvents:      2160 * time.Hour,
+		RetentionSecurityFindings:     8760 * time.Hour,
 	}
 }
 
@@ -366,7 +366,8 @@ func TestLoadMaintenance(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load() error = %v", err)
 		}
-		if cfg.MaintenanceInterval != 5*time.Minute || cfg.SQLiteMaxBytes != 1<<30 {
+
+		if cfg.MaintenanceInterval != 5*time.Minute || cfg.SQLiteMaxBytes != 4<<30 {
 			t.Fatalf("maintenance defaults = (%v, %d)", cfg.MaintenanceInterval, cfg.SQLiteMaxBytes)
 		}
 

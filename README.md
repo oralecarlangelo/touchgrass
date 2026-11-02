@@ -87,20 +87,20 @@ Environment only (no config file):
 | `TOUCHGRASS_CUTOVER_TIMEOUT`         | `10m`              | Maximum duration for one cutover/rollback run          |
 | `TOUCHGRASS_RETENTION_ERRORS`        | `720h`             | Occurrence/issue max age                               |
 | `TOUCHGRASS_INGEST_MAX_OCCURRENCES`  | `10000`            | Stored occurrences per service (newest kept)           |
-| `TOUCHGRASS_RETENTION_LOGS`          | `168h`             | Log line max age                                       |
-| `TOUCHGRASS_LOGS_MAX_LINES`          | `50000`            | Stored log lines per service (newest kept)             |
-| `TOUCHGRASS_RETENTION_SDK_LOGS`      | `7`                | SDK log max age, in whole days                         |
+| `TOUCHGRASS_RETENTION_LOGS`          | `720h`             | Generic log max age (30 days)                          |
+| `TOUCHGRASS_LOGS_MAX_LINES`          | `3000000`          | Stored log lines per service (newest kept)             |
+| `TOUCHGRASS_RETENTION_SDK_LOGS`      | `30`               | SDK log max age, in whole days                         |
 | `TOUCHGRASS_LOG_POLL_INTERVAL`       | `5s`               | Container log poll cadence                             |
 | `TOUCHGRASS_HOST_ROOT`               | `/`                | Host filesystem root (`/hostfs` in Compose)            |
 | `TOUCHGRASS_MAINTENANCE_INTERVAL`    | `5m`               | Bounded SQLite retention/checkpoint cadence            |
-| `TOUCHGRASS_SQLITE_MAX_BYTES`        | `1073741824`       | SQLite storage budget                                  |
+| `TOUCHGRASS_SQLITE_MAX_BYTES`        | `4294967296`       | SQLite storage budget                                  |
 | `TOUCHGRASS_SQLITE_BACKUP_DIR`       | `./backups/sqlite` | Online SQLite snapshot directory                       |
 | `TOUCHGRASS_SQLITE_BACKUP_KEEP`      | `14`                | Newest online SQLite snapshots retained                |
 | `TOUCHGRASS_RETENTION_PERFORMANCE`   | `168h`             | Minute performance aggregate max age                   |
 | `TOUCHGRASS_RETENTION_PERFORMANCE_HOURLY` | `720h`        | Hourly performance aggregate max age                   |
-| `TOUCHGRASS_RETENTION_SECURITY_OBSERVATIONS` | `168h`    | Raw normalized security observation max age            |
-| `TOUCHGRASS_RETENTION_CONTAINER_EVENTS` | `720h`          | Docker lifecycle event max age                         |
-| `TOUCHGRASS_RETENTION_SECURITY_FINDINGS` | `2160h`        | Resolved finding max age; unresolved preserved         |
+| `TOUCHGRASS_RETENTION_SECURITY_OBSERVATIONS` | `24h`     | Raw security transition max age                        |
+| `TOUCHGRASS_RETENTION_CONTAINER_EVENTS` | `2160h`         | Topology event max age; routine exec events use 24h    |
+| `TOUCHGRASS_RETENTION_SECURITY_FINDINGS` | `8760h`        | Resolved finding max age; unresolved preserved         |
 | `TOUCHGRASS_PERFORMANCE_SERVICE_ID`  | empty              | Existing service that owns enabled native-source data  |
 | `TOUCHGRASS_NGINX_TIMING_LOG`        | empty              | Absolute dedicated JSONL path; empty disables this source |
 | `TOUCHGRASS_SECURITY_EVENT_LOG`      | empty              | Absolute privacy-safe JSONL security stream; empty disables it |

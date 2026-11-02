@@ -163,8 +163,21 @@ func (c *ContainerEventCollector) persistEvent(ctx context.Context, definitions 
 	if err := c.writer.Upsert(ctx, *cursor); err != nil {
 		return fmt.Errorf("persisting docker event cursor: %w", err)
 	}
-	c.requestReconcile()
+
+	if eventRequiresReconcile(event.Action) {
+		c.requestReconcile()
+	}
 	return nil
+}
+
+func eventRequiresReconcile(action string) bool {
+	switch action {
+	case "create", "start", "stop", "die", "restart", "pause", "unpause",
+		"kill", "rename", "update", "destroy", "remove", "oom":
+		return true
+	default:
+		return false
+	}
 }
 
 func ownerForDockerEvent(definitions []model.Service, event docker.Event) string {

@@ -38,6 +38,49 @@ func TestPartialPositiveEvidenceOpensFinding(t *testing.T) {
 	}
 }
 
+func TestSecurityStorePersistsOnlyObservationTransitions(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	security := NewSecurityStore(db)
+	ctx := context.Background()
+	evaluate := func(detected bool, marker string) SecurityEvaluationResult {
+		t.Helper()
+
+		result, err := security.Evaluate(ctx, model.SecurityEvaluation{Observation: model.SecurityObservation{
+			ContainerID: "transition", RuleID: "posture.root_user", Category: model.SecurityCategoryPosture,
+			Severity: model.SecuritySeverityHigh, Confidence: model.SecurityConfidenceHigh,
+			Detected: detected, CoverageComplete: true, Evidence: map[string]string{"marker": marker},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return result
+	}
+
+	evaluate(false, "healthy-1")
+	evaluate(false, "healthy-2")
+	opened := evaluate(true, "detected-1")
+	repeated := evaluate(true, "detected-2")
+	recovered := evaluate(false, "recovered")
+	evaluate(false, "healthy-3")
+
+	if !opened.Opened || repeated.Finding.OccurrenceCount != 2 || !recovered.Recovered {
+		t.Fatalf("transitions = opened:%+v repeated:%+v recovered:%+v", opened, repeated, recovered)
+	}
+
+	var observations int
+
+	if err := db.sql.QueryRowContext(ctx, "SELECT COUNT(*) FROM security_observations").Scan(&observations); err != nil {
+		t.Fatal(err)
+	}
+
+	if observations != 2 {
+		t.Fatalf("security observations = %d, want only open and recovery transitions", observations)
+	}
+}
+
 func TestExpiredSuppressionReopensOnDetection(t *testing.T) {
 	t.Parallel()
 	security := NewSecurityStore(openTestDB(t))

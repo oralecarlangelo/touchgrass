@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -188,6 +189,44 @@ func TestContainerEventCollectorRequestsCoalescedReconcile(t *testing.T) {
 	}
 	if got := len(fleet.requests); got != 1 {
 		t.Errorf("coalesced reconcile queue = %d, want 1", got)
+	}
+}
+
+func TestContainerEventCollectorIgnoresRoutineEventsForReconciliation(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	requests := 0
+	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
+		Services: store.NewServiceStore(db), Writer: store.NewPerformanceStore(db), Environment: "prod",
+		RequestReconcile: func() { requests++ }, Logger: slog.New(slog.DiscardHandler),
+	})
+	cursor := model.CollectorCursor{}
+
+	for index, action := range []string{"exec_create", "exec_start", "exec_die", "health_healthy"} {
+		event := docker.Event{
+			SourceEventID: fmt.Sprintf("routine-%d", index), OccurredAt: time.Now().UTC(),
+			Action: action, ContainerID: "id", ContainerName: "api-1",
+		}
+		if err := collector.persistEvent(context.Background(), nil, event, &cursor); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if requests != 0 {
+		t.Fatalf("routine event reconcile requests = %d, want 0", requests)
+	}
+
+	topology := docker.Event{
+		SourceEventID: "topology", OccurredAt: time.Now().UTC(), Action: "start",
+		ContainerID: "id", ContainerName: "api-1",
+	}
+	if err := collector.persistEvent(context.Background(), nil, topology, &cursor); err != nil {
+		t.Fatal(err)
+	}
+
+	if requests != 1 {
+		t.Fatalf("topology event reconcile requests = %d, want 1", requests)
 	}
 }
 

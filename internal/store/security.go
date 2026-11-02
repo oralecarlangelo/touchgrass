@@ -263,15 +263,6 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 		return SecurityEvaluationResult{}, fmt.Errorf("beginning security evaluation: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx, `INSERT INTO security_observations
-		(container_id, rule_id, category, severity, confidence, detected,
-		coverage_complete, evidence_json, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		observation.ContainerID, observation.RuleID, observation.Category, observation.Severity,
-		observation.Confidence, boolInteger(observation.Detected), boolInteger(observation.CoverageComplete),
-		string(evidence), formatTime(observation.ObservedAt))
-	if err != nil {
-		return SecurityEvaluationResult{}, fmt.Errorf("inserting security observation: %w", err)
-	}
 
 	open, found, err := findOpenFinding(ctx, tx, fingerprint)
 	if err != nil {
@@ -328,6 +319,18 @@ func (s *SecurityStore) Evaluate(ctx context.Context, evaluation model.SecurityE
 		open.ResolvedBy = "collector"
 		open.LastSeenAt = observation.ObservedAt
 		result.Finding, result.Recovered = open, true
+	}
+
+	if result.Opened || result.Recovered {
+		_, err = tx.ExecContext(ctx, `INSERT INTO security_observations
+			(container_id, rule_id, category, severity, confidence, detected,
+			coverage_complete, evidence_json, observed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			observation.ContainerID, observation.RuleID, observation.Category, observation.Severity,
+			observation.Confidence, boolInteger(observation.Detected), boolInteger(observation.CoverageComplete),
+			string(evidence), formatTime(observation.ObservedAt))
+		if err != nil {
+			return SecurityEvaluationResult{}, fmt.Errorf("inserting security observation transition: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return SecurityEvaluationResult{}, fmt.Errorf("committing security evaluation: %w", err)

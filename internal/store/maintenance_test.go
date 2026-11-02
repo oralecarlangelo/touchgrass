@@ -56,6 +56,7 @@ func TestMaintenanceDeletesInBatches(t *testing.T) {
 
 	db := openTestDB(t)
 	ctx := context.Background()
+
 	stale := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 7; i++ {
 		if _, err := db.sql.ExecContext(ctx, `INSERT INTO log_lines(service_id, container, stream, line, ts, created_at)
@@ -81,6 +82,39 @@ func TestMaintenanceDeletesInBatches(t *testing.T) {
 	}
 	if remaining != 4 {
 		t.Fatalf("remaining logs = %d, want 4", remaining)
+	}
+}
+
+func TestMaintenanceGivesEachRetentionTargetItsOwnBatch(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	stale := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	for index := range 3 {
+		if _, err := db.sql.ExecContext(ctx, `INSERT INTO log_lines(service_id, container, stream, line, ts, created_at)
+			VALUES (?, 'api', 'stdout', 'stale', ?, ?)`, testServiceAPI, formatFixedTime(stale), formatFixedTime(stale)); err != nil {
+			t.Fatalf("seeding log %d: %v", index, err)
+		}
+
+		if _, err := db.sql.ExecContext(ctx, `INSERT INTO metrics
+			(service_id, container_name, sampled_at, cpu_percent, mem_bytes, mem_limit, disk_bytes, restarts, uptime_secs)
+			VALUES (?, 'api', ?, 0, 0, 0, 0, 0, 0)`, testServiceAPI, formatFixedTime(stale)); err != nil {
+			t.Fatalf("seeding metric %d: %v", index, err)
+		}
+	}
+
+	result, err := NewMaintenanceStore(db).Run(ctx, model.MaintenancePolicy{
+		Now: stale.Add(48 * time.Hour), RetentionLogs: time.Hour, RetentionMetrics: time.Hour,
+		BatchSize: 2, MaxBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.DeletedByTable["log_lines"] != 2 || result.DeletedByTable["metrics"] != 2 {
+		t.Fatalf("deleted by table = %v, want two rows from each target", result.DeletedByTable)
 	}
 }
 
@@ -213,6 +247,50 @@ func TestSecurityRetentionTrimsRawBeforeResolvedAndPreservesUnresolved(t *testin
 	var referenced int
 	if err := db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM container_instances WHERE container_id = 'referenced'`).Scan(&referenced); err != nil || referenced != 1 {
 		t.Fatalf("referenced container rows=%d err=%v, want unresolved evidence retained", referenced, err)
+	}
+}
+
+func TestMaintenanceExpiresRoutineExecEventsBeforeTopologyHistory(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+
+	old := formatFixedTime(now.Add(-48 * time.Hour))
+	for _, event := range []struct {
+		id, eventType string
+	}{
+		{id: "routine", eventType: "exec_start"},
+		{id: "topology", eventType: "start"},
+	} {
+		if _, err := db.sql.ExecContext(ctx, `INSERT INTO container_events
+			(source_event_id, occurred_at, service_id, environment, event_type, container_name, compose_service, expected, created_at)
+			VALUES (?, ?, '', 'prod', ?, 'c', '', 0, ?)`, event.id, old, event.eventType, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := NewMaintenanceStore(db).Run(ctx, model.MaintenancePolicy{
+		Now: now, BatchSize: 10, MaxBytes: 1 << 30,
+		RetentionContainerEvents: 90 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.DeletedByTable["container_events"] != 1 {
+		t.Fatalf("deleted container events = %d, want only routine exec event", result.DeletedByTable["container_events"])
+	}
+
+	var eventType string
+
+	if err := db.sql.QueryRowContext(ctx, "SELECT event_type FROM container_events").Scan(&eventType); err != nil {
+		t.Fatal(err)
+	}
+
+	if eventType != "start" {
+		t.Fatalf("retained event = %q, want topology start", eventType)
 	}
 }
 

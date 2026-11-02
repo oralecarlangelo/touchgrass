@@ -131,8 +131,21 @@ type storageClass struct {
 	targets []retentionTarget
 }
 
-// Run enforces age limits in one bounded batch, checks budgets, and attempts a
-// passive WAL checkpoint. Audit rows are deliberately excluded.
+type budgetRetentionPass struct {
+	classes    []storageClass
+	classBytes map[string]int64
+	batchSize  int
+}
+
+const (
+	containerEventsTable          = "container_events"
+	containerEventsTimestamp      = "occurred_at"
+	routineContainerExecRetention = 24 * time.Hour
+)
+
+// Run enforces age limits in one bounded batch per retention target, checks
+// budgets, and attempts a passive WAL checkpoint. Audit rows are deliberately
+// excluded.
 func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePolicy) (model.MaintenanceResult, error) {
 	policy = normalizeMaintenancePolicy(policy)
 	result := model.MaintenanceResult{
@@ -159,27 +172,18 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		{table: "log_volume_buckets", timestamp: "bucket_start", retention: policy.RetentionPerformance},
 		{table: "performance_hourly_rollups", timestamp: "bucket_start", retention: policy.RetentionPerformanceHourly},
 		{table: "security_observations", timestamp: "observed_at", retention: policy.RetentionSecurityObservations},
-		{table: "container_events", timestamp: "occurred_at", retention: policy.RetentionContainerEvents},
+		{
+			table: containerEventsTable, timestamp: containerEventsTimestamp, retention: routineContainerExecRetention,
+			predicate: "event_type IN ('exec_create', 'exec_start', 'exec_die', 'exec_detach')",
+		},
+		{table: containerEventsTable, timestamp: containerEventsTimestamp, retention: policy.RetentionContainerEvents},
 		{table: "security_findings", timestamp: "resolved_at", retention: policy.RetentionSecurityFindings, predicate: "status = 'resolved'"},
 		{table: "container_instances", key: "rowid", timestamp: "last_seen_at", retention: policy.RetentionSecurityFindings, predicate: "current = 0 AND present = 0 AND NOT EXISTS (SELECT 1 FROM security_findings sf WHERE sf.container_id = container_instances.container_id AND sf.status IN ('open','acknowledged','suppressed'))"},
 		{table: "performance_ingest_batches", timestamp: "bucket_start", retention: policy.RetentionPerformance},
 	}
 
-	remaining := policy.BatchSize
-	for _, target := range targets {
-		if remaining == 0 || target.retention <= 0 {
-			continue
-		}
-
-		deleted, err := s.deleteBefore(ctx, target, policy.Now.Add(-target.retention), remaining)
-		if err != nil {
-			return result, err
-		}
-		if deleted > 0 {
-			result.DeletedByTable[target.table] = deleted
-			result.DeletedRows += deleted
-			remaining -= int(deleted)
-		}
+	if err := s.applyAgeRetention(ctx, targets, policy, &result); err != nil {
+		return result, err
 	}
 
 	classBytes, err := s.classBytes(ctx)
@@ -200,7 +204,7 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 			{table: "redis_metric_buckets", timestamp: "bucket_start"},
 			{table: "log_volume_buckets", timestamp: "bucket_start"},
 			{table: "performance_hourly_rollups", timestamp: "bucket_start"},
-			{table: "container_events", timestamp: "occurred_at"},
+			{table: containerEventsTable, timestamp: containerEventsTimestamp},
 			{table: "performance_ingest_batches", timestamp: "bucket_start"},
 		}},
 		{name: "issues", limit: policy.IssueMaxBytes, targets: []retentionTarget{
@@ -214,29 +218,15 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		}},
 		{name: "security", limit: model.DefaultSecurityClassMaxBytes, targets: []retentionTarget{
 			{table: "security_observations", timestamp: "observed_at"},
-			{table: "container_events", timestamp: "occurred_at"},
+			{table: containerEventsTable, timestamp: containerEventsTimestamp},
 			{table: "security_findings", timestamp: "resolved_at", predicate: "status = 'resolved'"},
 			{table: "container_instances", key: "rowid", timestamp: "last_seen_at", predicate: "current = 0 AND present = 0 AND NOT EXISTS (SELECT 1 FROM security_findings sf WHERE sf.container_id = container_instances.container_id AND sf.status IN ('open','acknowledged','suppressed'))"},
 		}},
 	}
-	for _, class := range classes {
-		if classBytes[class.name] <= class.limit || remaining == 0 {
-			continue
-		}
-		for _, target := range class.targets {
-			if remaining == 0 {
-				break
-			}
-			deleted, err := s.deleteOldest(ctx, target, remaining)
-			if err != nil {
-				return result, err
-			}
-			if deleted > 0 {
-				result.DeletedByTable[target.table] += deleted
-				result.DeletedRows += deleted
-				remaining -= int(deleted)
-			}
-		}
+
+	pass := budgetRetentionPass{classes: classes, classBytes: classBytes, batchSize: policy.BatchSize}
+	if err := s.applyBudgetRetention(ctx, pass, &result); err != nil {
+		return result, err
 	}
 	if result.DeletedRows > 0 {
 		classBytes, err = s.classBytes(ctx)
@@ -266,6 +256,57 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 	result.OverBudget = result.DatabaseBytes > policy.MaxBytes || len(result.OverBudgetClasses) > 0
 
 	return result, nil
+}
+
+func (s *MaintenanceStore) applyAgeRetention(
+	ctx context.Context,
+	targets []retentionTarget,
+	policy model.MaintenancePolicy,
+	result *model.MaintenanceResult,
+) error {
+	for _, target := range targets {
+		if target.retention <= 0 {
+			continue
+		}
+
+		deleted, err := s.deleteBefore(ctx, target, policy.Now.Add(-target.retention), policy.BatchSize)
+		if err != nil {
+			return err
+		}
+
+		if deleted > 0 {
+			result.DeletedByTable[target.table] += deleted
+			result.DeletedRows += deleted
+		}
+	}
+
+	return nil
+}
+
+func (s *MaintenanceStore) applyBudgetRetention(
+	ctx context.Context,
+	pass budgetRetentionPass,
+	result *model.MaintenanceResult,
+) error {
+	for _, class := range pass.classes {
+		if pass.classBytes[class.name] <= class.limit {
+			continue
+		}
+
+		for _, target := range class.targets {
+			deleted, err := s.deleteOldest(ctx, target, pass.batchSize)
+			if err != nil {
+				return err
+			}
+
+			if deleted > 0 {
+				result.DeletedByTable[target.table] += deleted
+				result.DeletedRows += deleted
+			}
+		}
+	}
+
+	return nil
 }
 
 func normalizeMaintenancePolicy(policy model.MaintenancePolicy) model.MaintenancePolicy {

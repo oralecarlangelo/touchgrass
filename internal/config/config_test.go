@@ -29,6 +29,7 @@ func defaultTestConfig() Config {
 		SQLiteBackupDir: defaultSQLiteBackupDir, SQLiteBackupKeep: 14,
 		RetentionPerformance: 168 * time.Hour, RetentionPerformanceHourly: 720 * time.Hour,
 		NginxTimingLog: "", PerformanceServiceID: "", PerformanceInterval: 30 * time.Second,
+		SecurityEventLog: "", SecurityEventServiceID: "", SecurityEventInterval: 5 * time.Second,
 		RetentionSecurityObservations: 168 * time.Hour,
 		RetentionContainerEvents:      720 * time.Hour,
 		RetentionSecurityFindings:     2160 * time.Hour,
@@ -72,6 +73,9 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.NginxTimingLog = "/var/log/nginx/ticketnation-performance/requests.jsonl"
 	cfg.PerformanceServiceID = "tn-api"
 	cfg.PerformanceInterval = 15 * time.Second
+	cfg.SecurityEventLog = "/var/log/nginx/ticketnation-security/events.jsonl"
+	cfg.SecurityEventServiceID = "tn-fe"
+	cfg.SecurityEventInterval = 7 * time.Second
 	cfg.RetentionSecurityObservations = 24 * time.Hour
 	cfg.RetentionContainerEvents = 48 * time.Hour
 	cfg.RetentionSecurityFindings = 720 * time.Hour
@@ -114,6 +118,8 @@ func TestLoad(t *testing.T) {
 				retentionPerformanceEnvVar: "24h", retentionPerformanceHourlyEnvVar: "240h",
 				nginxTimingLogEnvVar:       "/var/log/nginx/ticketnation-performance/requests.jsonl",
 				performanceServiceIDEnvVar: "tn-api", performanceIntervalEnvVar: "15s",
+				securityEventLogEnvVar:       "/var/log/nginx/ticketnation-security/events.jsonl",
+				securityEventServiceIDEnvVar: "tn-fe", securityEventIntervalEnvVar: "7s",
 				retentionSecurityObservationsEnvVar: "24h",
 				retentionContainerEventsEnvVar:      "48h",
 				retentionSecurityFindingsEnvVar:     "720h",
@@ -372,6 +378,23 @@ func TestLoadMaintenance(t *testing.T) {
 		}
 	})
 
+	t.Run("enabled security event source", func(t *testing.T) {
+		t.Parallel()
+		env := map[string]string{
+			adminPasswordEnvVar:          testAdminPassword,
+			securityEventLogEnvVar:       "/var/log/nginx/security/events.jsonl",
+			securityEventServiceIDEnvVar: "web",
+			securityEventIntervalEnvVar:  "7s",
+		}
+		cfg, err := load(func(key string) string { return env[key] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.SecurityEventLog != env[securityEventLogEnvVar] || cfg.SecurityEventServiceID != "web" || cfg.SecurityEventInterval != 7*time.Second {
+			t.Fatalf("security event config = %+v", cfg)
+		}
+	})
+
 	t.Run("custom", func(t *testing.T) {
 		t.Parallel()
 		env := map[string]string{
@@ -459,6 +482,10 @@ func TestLoadPerformanceCollector(t *testing.T) {
 		{name: "missing service for nginx", env: map[string]string{nginxTimingLogEnvVar: "/var/log/nginx/timing.jsonl"}},
 		{name: "missing service for postgres", env: map[string]string{postgresContainerEnvVar: "postgres"}},
 		{name: "missing service for redis", env: map[string]string{redisContainerEnvVar: "redis"}},
+		{name: "relative security event path", env: map[string]string{securityEventLogEnvVar: "logs/security.jsonl", securityEventServiceIDEnvVar: "web"}},
+		{name: "missing service for security events", env: map[string]string{securityEventLogEnvVar: "/var/log/nginx/security.jsonl"}},
+		{name: "security service without source", env: map[string]string{securityEventServiceIDEnvVar: "web"}},
+		{name: "invalid security interval", env: map[string]string{securityEventIntervalEnvVar: "often"}},
 		{name: "invalid interval", env: map[string]string{performanceIntervalEnvVar: "often"}},
 		{name: "non-positive interval", env: map[string]string{performanceIntervalEnvVar: "0s"}},
 	} {

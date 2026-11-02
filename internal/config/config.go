@@ -45,6 +45,7 @@ const (
 	defaultRetentionPerformance          = "168h"
 	defaultRetentionPerfHourly           = "720h"
 	defaultPerformanceInterval           = "30s"
+	defaultSecurityEventInterval         = "5s"
 	defaultRetentionSecurityObservations = "168h"
 	defaultRetentionContainerEvents      = "720h"
 	defaultRetentionSecurityFindings     = "2160h"
@@ -89,6 +90,9 @@ const (
 	nginxTimingLogEnvVar                 = "TOUCHGRASS_NGINX_TIMING_LOG"
 	performanceServiceIDEnvVar           = "TOUCHGRASS_PERFORMANCE_SERVICE_ID"
 	performanceIntervalEnvVar            = "TOUCHGRASS_PERFORMANCE_INTERVAL"
+	securityEventLogEnvVar               = "TOUCHGRASS_SECURITY_EVENT_LOG"
+	securityEventServiceIDEnvVar         = "TOUCHGRASS_SECURITY_EVENT_SERVICE_ID"
+	securityEventIntervalEnvVar          = "TOUCHGRASS_SECURITY_EVENT_INTERVAL"
 	retentionSecurityObservationsEnvVar  = "TOUCHGRASS_RETENTION_SECURITY_OBSERVATIONS"
 	retentionContainerEventsEnvVar       = "TOUCHGRASS_RETENTION_CONTAINER_EVENTS"
 	retentionSecurityFindingsEnvVar      = "TOUCHGRASS_RETENTION_SECURITY_FINDINGS"
@@ -177,7 +181,12 @@ type Config struct {
 	// service. Runtime wiring verifies that the service exists.
 	PerformanceServiceID string
 	// PerformanceInterval paces native source sampling.
-	PerformanceInterval           time.Duration
+	PerformanceInterval time.Duration
+	// SecurityEventLog is an absolute path to a dedicated privacy-safe JSONL
+	// stream. Empty disables host security-event collection.
+	SecurityEventLog              string
+	SecurityEventServiceID        string
+	SecurityEventInterval         time.Duration
 	RetentionSecurityObservations time.Duration
 	RetentionContainerEvents      time.Duration
 	RetentionSecurityFindings     time.Duration
@@ -258,6 +267,12 @@ type performanceConfig struct {
 	interval       time.Duration
 }
 
+type securityEventConfig struct {
+	path      string
+	serviceID string
+	interval  time.Duration
+}
+
 // load resolves configuration using getenv so tests can stub the environment.
 func load(getenv func(string) string) (Config, error) {
 	listen, err := loadListen(getenv)
@@ -291,6 +306,10 @@ func load(getenv func(string) string) (Config, error) {
 	}
 
 	performance, err := loadPerformance(getenv, database)
+	if err != nil {
+		return Config{}, err
+	}
+	securityEvents, err := loadSecurityEvents(getenv)
 	if err != nil {
 		return Config{}, err
 	}
@@ -336,10 +355,29 @@ func load(getenv func(string) string) (Config, error) {
 		NginxTimingLog:                performance.nginxTimingLog,
 		PerformanceServiceID:          performance.serviceID,
 		PerformanceInterval:           performance.interval,
+		SecurityEventLog:              securityEvents.path,
+		SecurityEventServiceID:        securityEvents.serviceID,
+		SecurityEventInterval:         securityEvents.interval,
 		RetentionSecurityObservations: storage.retentionSecurityObservations,
 		RetentionContainerEvents:      storage.retentionContainerEvents,
 		RetentionSecurityFindings:     storage.retentionSecurityFindings,
 	}, nil
+}
+
+func loadSecurityEvents(getenv func(string) string) (securityEventConfig, error) {
+	interval, err := parseDuration(getenv, securityEventIntervalEnvVar, defaultSecurityEventInterval)
+	if err != nil {
+		return securityEventConfig{}, err
+	}
+	path := strings.TrimSpace(getenv(securityEventLogEnvVar))
+	serviceID := strings.TrimSpace(getenv(securityEventServiceIDEnvVar))
+	if path != "" && !filepath.IsAbs(path) {
+		return securityEventConfig{}, fmt.Errorf("invalid %s %q: want absolute path", securityEventLogEnvVar, path)
+	}
+	if (path == "") != (serviceID == "") {
+		return securityEventConfig{}, fmt.Errorf("%s and %s must be configured together", securityEventLogEnvVar, securityEventServiceIDEnvVar)
+	}
+	return securityEventConfig{path: path, serviceID: serviceID, interval: interval}, nil
 }
 
 func loadPerformance(getenv func(string) string, database databaseConfig) (performanceConfig, error) {

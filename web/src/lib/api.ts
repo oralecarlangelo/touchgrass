@@ -478,7 +478,7 @@ export interface Notification {
 
 export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical';
 export type SecurityConfidence = 'low' | 'medium' | 'high';
-export type SecurityCategory = 'posture' | 'process' | 'drift';
+export type SecurityCategory = 'posture' | 'process' | 'drift' | 'traffic';
 export type SecurityFindingStatus = 'open' | 'acknowledged' | 'resolved' | 'suppressed';
 
 export interface SecuritySummary {

@@ -24,6 +24,7 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/nginxlog"
 	"github.com/oralecarlangelo/touchgrass/internal/probe"
+	"github.com/oralecarlangelo/touchgrass/internal/securitylog"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 	"github.com/oralecarlangelo/touchgrass/web"
@@ -88,6 +89,7 @@ type backgroundLoops struct {
 	fleetInventory      *service.FleetInventory
 	processSecurity     *service.ProcessScanner
 	diffSecurity        *service.DiffScanner
+	securityEvents      *service.SecurityEventCollector
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -98,7 +100,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(10)
+	group.Add(11)
 
 	go func() {
 		defer group.Done()
@@ -158,6 +160,12 @@ func startBackground(
 		defer group.Done()
 
 		loops.diffSecurity.Run(ctx)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.securityEvents.Run(ctx)
 	}()
 
 	logger.Info("starting background loops",
@@ -328,6 +336,10 @@ func runServe(args []string) error {
 		Store: securityStore, Notifications: notificationStore, Audit: audit,
 		Cursors: store.NewCursorStore(db), Emit: hub.Broadcast, Logger: logger,
 	})
+	securityEvents, err := newSecurityEventCollector(ctx, wiring, securityService)
+	if err != nil {
+		return err
+	}
 	cutover := service.NewCutover(service.CutoverConfig{
 		Services:      serviceStore,
 		Docker:        dockerClient,
@@ -381,6 +393,7 @@ func runServe(args []string) error {
 		fleetInventory:      fleetInventory,
 		processSecurity:     processSecurity,
 		diffSecurity:        diffSecurity,
+		securityEvents:      securityEvents,
 	}, &group, logger)
 	group.Go(func() { securityService.RunSuppressionExpiry(ctx, time.Minute) })
 
@@ -579,6 +592,34 @@ func newPerformanceCollector(ctx context.Context, wiring serveWiring) (*service.
 		config.HTTP = nginxlog.NewTailer(wiring.cfg.NginxTimingLog, nginxlog.Parser{}, "nginx", cursor)
 	}
 	return service.NewPerformanceCollector(config), nil
+}
+
+// newSecurityEventCollector validates ownership and wires the optional,
+// privacy-safe host security-event stream.
+func newSecurityEventCollector(
+	ctx context.Context,
+	wiring serveWiring,
+	security *service.Security,
+) (*service.SecurityEventCollector, error) {
+	config := service.SecurityEventCollectorConfig{
+		ServiceID: wiring.cfg.SecurityEventServiceID, Security: security,
+		Cursors: store.NewCursorStore(wiring.db), Interval: wiring.cfg.SecurityEventInterval,
+		Logger: wiring.logger,
+	}
+	if wiring.cfg.SecurityEventLog == "" {
+		return service.NewSecurityEventCollector(config), nil
+	}
+	if _, err := wiring.services.Get(ctx, wiring.cfg.SecurityEventServiceID); err != nil {
+		return nil, fmt.Errorf("validating security event service %q: %w", wiring.cfg.SecurityEventServiceID, err)
+	}
+	cursor, err := config.Cursors.Get(ctx, "security_events")
+	if err != nil && !errors.Is(err, store.ErrCollectorCursorNotFound) {
+		return nil, fmt.Errorf("loading security event cursor: %w", err)
+	}
+	config.Source = securitylog.NewTailer(
+		wiring.cfg.SecurityEventLog, securitylog.Parser{}, "security_events", cursor,
+	)
+	return service.NewSecurityEventCollector(config), nil
 }
 
 // reconcileDatabases fails jobs orphaned by a restart. Best effort: a

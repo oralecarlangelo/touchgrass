@@ -15,6 +15,11 @@ services:
       # existing Touch Grass service before enabling any source.
       TOUCHGRASS_PERFORMANCE_SERVICE_ID: "${TOUCHGRASS_PERFORMANCE_SERVICE_ID:-}"
       TOUCHGRASS_NGINX_TIMING_LOG: "${TOUCHGRASS_NGINX_TIMING_LOG:-}"
+      # Optional privacy-safe host security events. Both path and owner service
+      # must be set together.
+      TOUCHGRASS_SECURITY_EVENT_LOG: "${TOUCHGRASS_SECURITY_EVENT_LOG:-}"
+      TOUCHGRASS_SECURITY_EVENT_SERVICE_ID: "${TOUCHGRASS_SECURITY_EVENT_SERVICE_ID:-}"
+      TOUCHGRASS_SECURITY_EVENT_INTERVAL: "${TOUCHGRASS_SECURITY_EVENT_INTERVAL:-5s}"
       TOUCHGRASS_PERFORMANCE_INTERVAL: "${TOUCHGRASS_PERFORMANCE_INTERVAL:-30s}"
       TOUCHGRASS_POSTGRES_CONTAINER: "${TOUCHGRASS_POSTGRES_CONTAINER:-}"
       TOUCHGRASS_POSTGRES_USER: "${TOUCHGRASS_POSTGRES_USER:-postgres}"
@@ -29,6 +34,7 @@ services:
       # the host paths for non-Linux Docker installations.
       - ${TOUCHGRASS_HOST_ROOT_PATH:-/}:/hostfs:ro
       - ${TOUCHGRASS_NGINX_TIMING_DIR:-./runtime/nginx-performance}:/var/log/nginx/ticketnation-performance:ro
+      - ${TOUCHGRASS_SECURITY_EVENT_DIR:-./runtime/security-events}:/var/log/touchgrass/security-events:ro
       # Mounted only as a reviewable copy of the active allowlist. Install the
       # file into Nginx separately; Touch Grass never edits it.
       - ./deploy/nginx/route-families.map:/etc/touchgrass/nginx/route-families.map:ro

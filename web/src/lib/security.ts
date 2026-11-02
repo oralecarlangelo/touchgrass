@@ -47,6 +47,9 @@ export function recommendedResponse(finding: SecurityFinding): string {
   if (finding.category === 'drift') {
     return 'Compare the changed path or fingerprint with the approved release and redeploy from a trusted image if unexpected.';
   }
+  if (finding.category === 'traffic') {
+    return 'Confirm the edge control blocked the request, review its occurrence trend, and escalate only if the traffic bypassed the control or affected availability.';
+  }
   return 'Review the container configuration against policy, then approve only after confirming the exception is intentional.';
 }
 

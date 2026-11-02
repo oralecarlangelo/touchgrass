@@ -1772,7 +1772,7 @@ components:
         episode: { type: integer, minimum: 1 }
         container_id: { type: string }
         rule_id: { type: string }
-        category: { type: string, enum: [posture, process, drift] }
+        category: { type: string, enum: [posture, process, drift, traffic] }
         severity: { type: string, enum: [low, medium, high, critical] }
         confidence: { type: string, enum: [low, medium, high] }
         status: { type: string, enum: [open, acknowledged, resolved, suppressed] }

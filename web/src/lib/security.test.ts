@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { countUrgentFindings, filterSecurityFindings, severityRank } from './security.ts';
+import { countUrgentFindings, filterSecurityFindings, recommendedResponse, severityRank } from './security.ts';
 import type { SecurityFinding } from './api.ts';
 
 function finding(id: number, severity: SecurityFinding['severity'], status: SecurityFinding['status'] = 'open'): SecurityFinding {
@@ -26,5 +26,12 @@ describe('security presentation helpers', () => {
 
   it('counts active critical and high findings', () => {
     expect(countUrgentFindings([finding(1, 'critical'), finding(2, 'high'), finding(3, 'high', 'resolved')])).toEqual({ critical: 1, high: 1 });
+  });
+
+  it('gives traffic findings an edge-control response', () => {
+    const item = finding(9, 'medium');
+    item.category = 'traffic';
+    item.rule_id = 'edge.malformed_server_action';
+    expect(recommendedResponse(item)).toContain('edge control');
   });
 });

@@ -103,6 +103,9 @@ Environment only (no config file):
 | `TOUCHGRASS_RETENTION_SECURITY_FINDINGS` | `2160h`        | Resolved finding max age; unresolved preserved         |
 | `TOUCHGRASS_PERFORMANCE_SERVICE_ID`  | empty              | Existing service that owns enabled native-source data  |
 | `TOUCHGRASS_NGINX_TIMING_LOG`        | empty              | Absolute dedicated JSONL path; empty disables this source |
+| `TOUCHGRASS_SECURITY_EVENT_LOG`      | empty              | Absolute privacy-safe JSONL security stream; empty disables it |
+| `TOUCHGRASS_SECURITY_EVENT_SERVICE_ID` | empty            | Existing service that owns security events; required with the stream |
+| `TOUCHGRASS_SECURITY_EVENT_INTERVAL` | `5s`               | Security-event polling interval                          |
 | `TOUCHGRASS_PERFORMANCE_INTERVAL`    | `30s`              | Native-source collection cadence                       |
 | `TOUCHGRASS_POSTGRES_CONTAINER`      | empty              | PostgreSQL container; empty disables its health/collector |
 | `TOUCHGRASS_POSTGRES_USER`           | `postgres`         | Local-trust role used through `docker exec`            |

@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Security enums use an empty zero value so missing data cannot silently mean
 // a valid severity, confidence, category, or workflow status.
@@ -27,6 +30,7 @@ const (
 	SecurityCategoryPosture SecurityCategory = "posture"
 	SecurityCategoryProcess SecurityCategory = "process"
 	SecurityCategoryDrift   SecurityCategory = "drift"
+	SecurityCategoryTraffic SecurityCategory = "traffic"
 
 	SecurityFindingStatusUnknown      SecurityFindingStatus = ""
 	SecurityFindingStatusOpen         SecurityFindingStatus = "open"
@@ -34,6 +38,28 @@ const (
 	SecurityFindingStatusResolved     SecurityFindingStatus = "resolved"
 	SecurityFindingStatusSuppressed   SecurityFindingStatus = "suppressed"
 )
+
+// SecurityEvent is one bounded, privacy-safe event produced by an edge or
+// infrastructure security control. It deliberately excludes raw paths,
+// addresses, headers, and user agents.
+type SecurityEvent struct {
+	Timestamp  time.Time
+	EventType  string
+	RuleID     string
+	Category   SecurityCategory
+	Severity   SecuritySeverity
+	Confidence SecurityConfidence
+	Source     string
+	Action     string
+	Method     string
+	Status     int
+}
+
+// String renders only bounded fields approved for durable evidence.
+func (e SecurityEvent) String() string {
+	return fmt.Sprintf("event=%s rule=%s category=%s severity=%s confidence=%s source=%s action=%s method=%s status=%d",
+		e.EventType, e.RuleID, e.Category, e.Severity, e.Confidence, e.Source, e.Action, e.Method, e.Status)
+}
 
 type SecurityActivation struct {
 	ActivatedAt *time.Time `json:"activated_at"`

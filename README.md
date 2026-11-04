@@ -78,7 +78,7 @@ Environment only (no config file):
 | `TOUCHGRASS_INVENTORY_INTERVAL`      | `2m`               | All-state Docker reconciliation cadence                |
 | `TOUCHGRASS_INVENTORY_WORKERS`       | `2`                | Maximum concurrent safe container inspections          |
 | `TOUCHGRASS_SECURITY_PROCESS_INTERVAL` | `2m`             | Running-container process scan cadence                 |
-| `TOUCHGRASS_SECURITY_DIFF_INTERVAL`  | `30m`              | Writable-layer metadata scan cadence                   |
+| `TOUCHGRASS_SECURITY_DIFF_INTERVAL`  | `0`                | Writable-layer metadata scan cadence; `0` disables this expensive opt-in scan |
 | `TOUCHGRASS_SECURITY_WORKERS`        | `2`                | Maximum concurrent process/diff scans                  |
 | `TOUCHGRASS_RETENTION_METRICS`       | `168h`             | Metric max age                                         |
 | `TOUCHGRASS_RETENTION_NOTIFICATIONS` | `720h`             | Notification max age                                   |

@@ -363,11 +363,17 @@ func runServe(args []string) error {
 		Policies: securityStore, Interval: cfg.SecurityProcessInterval,
 		Workers: cfg.SecurityWorkers, Logger: logger,
 	})
-	diffSecurity := service.NewDiffScanner(service.DiffScannerConfig{
-		Inventory: fleetInventory, Docker: dockerClient, Security: securityService,
-		Policies: securityStore, Interval: cfg.SecurityDiffInterval,
-		Workers: cfg.SecurityWorkers, Logger: logger,
-	})
+
+	var diffSecurity *service.DiffScanner
+	if cfg.SecurityDiffInterval > 0 {
+		diffSecurity = service.NewDiffScanner(service.DiffScannerConfig{
+			Inventory: fleetInventory, Docker: dockerClient, Security: securityService,
+			Policies: securityStore, Interval: cfg.SecurityDiffInterval,
+			Workers: cfg.SecurityWorkers, Logger: logger,
+		})
+	} else {
+		logger.Info("writable-layer security scan disabled", "config", "TOUCHGRASS_SECURITY_DIFF_INTERVAL")
+	}
 	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
 		Services: serviceStore, Docker: dockerClient, Writer: store.NewPerformanceStore(db),
 		Environment: cfg.Env, Expected: cutover.Active, Logger: logger,

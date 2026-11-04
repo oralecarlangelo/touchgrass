@@ -20,7 +20,7 @@ const (
 	defaultInventoryWorkers              = "2"
 	defaultSecurityProcessInterval       = "2m"
 	defaultSecurityWorkers               = "2"
-	defaultSecurityDiffInterval          = "30m"
+	defaultSecurityDiffInterval          = "0"
 	defaultRetentionMetrics              = "168h"
 	defaultRetentionNotifications        = "720h"
 	defaultRetentionDeploys              = "8760h"
@@ -530,11 +530,13 @@ func loadSchedule(getenv func(string) string) (scheduleConfig, error) {
 		}
 		return scheduleConfig{}, fmt.Errorf("invalid %s %q: want integer from 1 to 32", securityWorkersEnvVar, raw)
 	}
-	securityDiff, err := parseDuration(getenv, securityDiffIntervalEnvVar, defaultSecurityDiffInterval)
+
+	securityDiff, err := parseOptionalDuration(getenv, securityDiffIntervalEnvVar, defaultSecurityDiffInterval)
 	if err != nil {
 		return scheduleConfig{}, err
 	}
-	if securityDiff < time.Minute || securityDiff > 24*time.Hour {
+
+	if securityDiff != 0 && (securityDiff < time.Minute || securityDiff > 24*time.Hour) {
 		raw := getenv(securityDiffIntervalEnvVar)
 		if raw == "" {
 			raw = defaultSecurityDiffInterval
@@ -756,6 +758,26 @@ func parseRetentionDays(getenv func(string) string, name, def string) (time.Dura
 
 	if duration <= 0 {
 		return 0, fmt.Errorf("invalid %s %q: must be positive", name, raw)
+	}
+
+	return duration, nil
+}
+
+// parseOptionalDuration reads a Go duration where zero explicitly disables
+// the scheduled operation and negative values remain invalid.
+func parseOptionalDuration(getenv func(string) string, name, def string) (time.Duration, error) {
+	raw := getenv(name)
+	if raw == "" {
+		raw = def
+	}
+
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: want Go duration", name, raw)
+	}
+
+	if duration < 0 {
+		return 0, fmt.Errorf("invalid %s %q: must not be negative", name, raw)
 	}
 
 	return duration, nil

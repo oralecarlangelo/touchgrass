@@ -15,7 +15,7 @@ func defaultTestConfig() Config {
 		MetricsInterval: 30 * time.Second, RetentionMetrics: 168 * time.Hour,
 		InventoryInterval: 2 * time.Minute, InventoryWorkers: 2,
 		SecurityProcessInterval: 2 * time.Minute, SecurityWorkers: 2,
-		SecurityDiffInterval:   30 * time.Minute,
+		SecurityDiffInterval:   0,
 		RetentionNotifications: 720 * time.Hour, RetentionDeploys: 8760 * time.Hour,
 		AdminPassword: testAdminPassword, CookieSecure: false,
 		WatchInterval: 5 * time.Second, CutoverTimeout: 10 * time.Minute,
@@ -127,6 +127,12 @@ func TestLoad(t *testing.T) {
 			mutate: mutateCustomTestConfig,
 		},
 		{
+			name: "zero security diff interval disables deep scans",
+			env: map[string]string{
+				securityDiffIntervalEnvVar: "0s", adminPasswordEnvVar: testAdminPassword,
+			},
+		},
+		{
 			name:        "missing password",
 			env:         map[string]string{},
 			expectedErr: true,
@@ -174,6 +180,11 @@ func TestLoad(t *testing.T) {
 		{
 			name:        "security diff interval too short",
 			env:         map[string]string{securityDiffIntervalEnvVar: "30s", adminPasswordEnvVar: "s"},
+			expectedErr: true,
+		},
+		{
+			name:        "security diff interval negative",
+			env:         map[string]string{securityDiffIntervalEnvVar: "-1m", adminPasswordEnvVar: "s"},
 			expectedErr: true,
 		},
 		{

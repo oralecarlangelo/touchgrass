@@ -42,6 +42,7 @@ func TestProcessScannerRuleMatrix(t *testing.T) {
 
 func TestProcessScannerUsesConservativeDefaults(t *testing.T) {
 	t.Parallel()
+
 	scanner := NewProcessScanner(ProcessScannerConfig{})
 	if scanner.interval != 2*time.Minute || scanner.workers != 2 {
 		t.Fatalf("defaults = interval %s, workers %d; want 2m and 2", scanner.interval, scanner.workers)
@@ -82,11 +83,14 @@ func TestProcessScannerFailurePreservesFinding(t *testing.T) {
 
 func TestProcessScannerPropagatesDockerDaemonBackoff(t *testing.T) {
 	t.Parallel()
+
 	security, db := testSecurity(t)
+
 	securityStore := store.NewSecurityStore(db)
 	if _, err := securityStore.Activate(context.Background(), "admin"); err != nil {
 		t.Fatal(err)
 	}
+
 	scanner := NewProcessScanner(ProcessScannerConfig{
 		Inventory: processInventoryStub{containers: []model.ContainerInstance{{ID: "container", State: "running", Present: true}}},
 		Docker:    processListerStub{err: docker.ErrDaemonBackoff}, Security: security,

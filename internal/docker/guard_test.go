@@ -8,6 +8,8 @@ import (
 )
 
 func TestRequestGuardBoundsConcurrency(t *testing.T) {
+	t.Parallel()
+
 	guard := newRequestGuard(requestGuardConfig{
 		MaxConcurrent: 1,
 		FailureLimit:  3,
@@ -20,6 +22,7 @@ func TestRequestGuardBoundsConcurrency(t *testing.T) {
 	}
 
 	acquired := make(chan func(error), 1)
+
 	go func() {
 		release, acquireErr := guard.acquire(t.Context())
 		if acquireErr == nil {
@@ -44,6 +47,8 @@ func TestRequestGuardBoundsConcurrency(t *testing.T) {
 }
 
 func TestRequestGuardOpensAndRecovers(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, time.November, 5, 0, 0, 0, 0, time.UTC)
 	guard := newRequestGuard(requestGuardConfig{
 		MaxConcurrent: 1,
@@ -57,6 +62,7 @@ func TestRequestGuardOpensAndRecovers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("acquire before threshold: %v", err)
 		}
+
 		done(errors.New("daemon unavailable"))
 	}
 
@@ -65,21 +71,25 @@ func TestRequestGuardOpensAndRecovers(t *testing.T) {
 	}
 
 	now = now.Add(time.Minute)
+
 	done, err := guard.acquire(t.Context())
 	if err != nil {
 		t.Fatalf("half-open acquire: %v", err)
 	}
+
 	done(nil)
 
 	done, err = guard.acquire(t.Context())
 	if err != nil {
 		t.Fatalf("acquire after recovery: %v", err)
 	}
+
 	done(nil)
 }
 
 func TestRequestGuardSuccessDoesNotMaskFailureBurst(t *testing.T) {
 	t.Parallel()
+
 	guard := newRequestGuard(requestGuardConfig{
 		MaxConcurrent: 1,
 		FailureLimit:  3,
@@ -91,7 +101,9 @@ func TestRequestGuardSuccessDoesNotMaskFailureBurst(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failure acquire: %v", err)
 		}
+
 		done(errors.New("daemon unavailable"))
+
 		if attempt == 2 {
 			continue
 		}
@@ -100,6 +112,7 @@ func TestRequestGuardSuccessDoesNotMaskFailureBurst(t *testing.T) {
 		if err != nil {
 			t.Fatalf("success acquire: %v", err)
 		}
+
 		done(nil)
 	}
 
@@ -109,6 +122,8 @@ func TestRequestGuardSuccessDoesNotMaskFailureBurst(t *testing.T) {
 }
 
 func TestRequestGuardHonorsCancellation(t *testing.T) {
+	t.Parallel()
+
 	guard := newRequestGuard(requestGuardConfig{
 		MaxConcurrent: 1,
 		FailureLimit:  3,

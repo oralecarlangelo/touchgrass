@@ -18,6 +18,7 @@ import (
 const (
 	defaultSecurityProcessInterval = 2 * time.Minute
 	defaultSecurityWorkers         = 2
+	dockerDaemonBackoffCategory    = "docker_daemon_backoff"
 )
 
 type processInventory interface {
@@ -92,8 +93,9 @@ func (s *ProcessScanner) scanAndLog(ctx context.Context) {
 	if err := s.Scan(ctx); err != nil && ctx.Err() == nil {
 		category := "security_process_scan"
 		if errors.Is(err, docker.ErrDaemonBackoff) {
-			category = "docker_daemon_backoff"
+			category = dockerDaemonBackoffCategory
 		}
+
 		s.logger.Warn("container process scan degraded", "error_category", category)
 	}
 }
@@ -144,8 +146,9 @@ func (s *ProcessScanner) Scan(ctx context.Context) error {
 		if result.err != nil {
 			category := "evaluation_failed"
 			if errors.Is(result.err, docker.ErrDaemonBackoff) {
-				category = "docker_daemon_backoff"
+				category = dockerDaemonBackoffCategory
 			}
+
 			_ = s.security.RecordCollector(ctx, "security_process", false, category, s.interval)
 			return result.err
 		}
@@ -173,6 +176,7 @@ func (s *ProcessScanner) scanContainer(ctx context.Context, instance model.Conta
 	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	snapshot, scanErr := s.docker.Processes(callCtx, instance.ID)
 	cancel()
+
 	if errors.Is(scanErr, docker.ErrDaemonBackoff) {
 		return false, scanErr
 	}

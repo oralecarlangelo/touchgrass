@@ -26,6 +26,7 @@ type fakeInventoryDocker struct {
 
 func TestFleetInventoryUsesConservativeDefaults(t *testing.T) {
 	t.Parallel()
+
 	inventory := NewFleetInventory(FleetInventoryConfig{})
 	if inventory.interval != 2*time.Minute || inventory.inspectLimit != 2 {
 		t.Fatalf("defaults = interval %s, workers %d; want 2m and 2", inventory.interval, inventory.inspectLimit)

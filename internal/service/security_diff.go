@@ -80,8 +80,9 @@ func (s *DiffScanner) scanAndLog(ctx context.Context) {
 	if err := s.Scan(ctx); err != nil && ctx.Err() == nil {
 		category := "security_diff_scan"
 		if errors.Is(err, docker.ErrDaemonBackoff) {
-			category = "docker_daemon_backoff"
+			category = dockerDaemonBackoffCategory
 		}
+
 		s.logger.Warn("container layer scan degraded", "error_category", category)
 	}
 }
@@ -131,8 +132,9 @@ func (s *DiffScanner) Scan(ctx context.Context) error {
 		if result.err != nil {
 			category := "evaluation_failed"
 			if errors.Is(result.err, docker.ErrDaemonBackoff) {
-				category = "docker_daemon_backoff"
+				category = dockerDaemonBackoffCategory
 			}
+
 			_ = s.security.RecordCollector(ctx, "security_diff", false, category, s.interval)
 			return result.err
 		}
@@ -160,6 +162,7 @@ func (s *DiffScanner) scanContainer(ctx context.Context, instance model.Containe
 	diffCtx, cancelDiff := context.WithTimeout(ctx, 30*time.Second)
 	snapshot, diffErr := s.docker.Diff(diffCtx, instance.ID)
 	cancelDiff()
+
 	if errors.Is(diffErr, docker.ErrDaemonBackoff) {
 		return false, diffErr
 	}
@@ -175,6 +178,7 @@ func (s *DiffScanner) scanContainer(ctx context.Context, instance model.Containe
 		processCtx, cancelProcess := context.WithTimeout(ctx, 10*time.Second)
 		snapshot, processErr := processLister.Processes(processCtx, instance.ID)
 		cancelProcess()
+
 		if errors.Is(processErr, docker.ErrDaemonBackoff) {
 			return false, processErr
 		}

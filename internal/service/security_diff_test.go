@@ -24,6 +24,7 @@ func TestDiffScannerFlagsUserLocalExecutable(t *testing.T) {
 
 func TestDiffScannerUsesConservativeDefaults(t *testing.T) {
 	t.Parallel()
+
 	scanner := NewDiffScanner(DiffScannerConfig{})
 	if scanner.interval != 30*time.Minute || scanner.workers != 2 {
 		t.Fatalf("defaults = interval %s, workers %d; want 30m and 2", scanner.interval, scanner.workers)
@@ -100,11 +101,14 @@ func TestDiffFailurePreservesPriorFinding(t *testing.T) {
 
 func TestDiffScannerPropagatesDockerDaemonBackoff(t *testing.T) {
 	t.Parallel()
+
 	security, db := testSecurity(t)
+
 	securityStore := store.NewSecurityStore(db)
 	if _, err := securityStore.Activate(context.Background(), "admin"); err != nil {
 		t.Fatal(err)
 	}
+
 	scanner := NewDiffScanner(DiffScannerConfig{
 		Inventory: processInventoryStub{containers: []model.ContainerInstance{{ID: "container", State: "running", Present: true}}},
 		Docker:    diffListerStub{err: docker.ErrDaemonBackoff}, Security: security,

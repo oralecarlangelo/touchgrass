@@ -294,6 +294,7 @@ func (f *FleetInventory) inspectAll(
 				vanished[result.index] = true
 				continue
 			}
+
 			if !errors.Is(result.err, docker.ErrDaemonBackoff) {
 				f.logger.Warn("container inspection failed", "container", containers[result.index].Name,
 					"error_category", "docker_inspect_unavailable")

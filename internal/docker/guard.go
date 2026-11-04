@@ -45,12 +45,15 @@ func newRequestGuard(cfg requestGuardConfig) *requestGuard {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = defaultDockerMaxConcurrent
 	}
+
 	if cfg.FailureLimit <= 0 {
 		cfg.FailureLimit = defaultDockerFailureLimit
 	}
+
 	if cfg.Cooldown <= 0 {
 		cfg.Cooldown = defaultDockerCooldown
 	}
+
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -100,8 +103,10 @@ func (g *requestGuard) isOpen() bool {
 			g.failures = 0
 			g.failureWindowStart = time.Time{}
 		}
+
 		return false
 	}
+
 	if now.Before(g.openUntil) {
 		return true
 	}
@@ -120,6 +125,7 @@ func (g *requestGuard) record(ctx context.Context, err error) {
 	if err == nil {
 		return
 	}
+
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return
 	}
@@ -129,6 +135,7 @@ func (g *requestGuard) record(ctx context.Context, err error) {
 		g.failures = 0
 		g.failureWindowStart = now
 	}
+
 	g.failures++
 	if g.failures >= g.failureLimit {
 		g.openUntil = now.Add(g.cooldown)
@@ -149,6 +156,7 @@ func guardedCall[T any](
 	}
 
 	callCtx := ctx
+
 	cancel := func() {}
 	if timeout > 0 {
 		callCtx, cancel = context.WithTimeout(ctx, timeout)

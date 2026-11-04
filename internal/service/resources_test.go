@@ -363,18 +363,30 @@ func TestRunSamplesUntilCancelled(t *testing.T) {
 		sampler.Run(ctx)
 	}()
 
-	time.Sleep(25 * time.Millisecond)
+	metrics := []model.Metric{}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for len(metrics) == 0 && time.Now().Before(deadline) {
+		var err error
+
+		metrics, err = store.NewMetricStore(db).ListByService(
+			context.Background(), testServiceAPI, time.Time{}, 100,
+		)
+		if err != nil {
+			t.Fatalf("ListByService() error = %v, want nil", err)
+		}
+
+		if len(metrics) == 0 {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
 	cancel()
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not stop after cancel")
-	}
-
-	metrics, err := store.NewMetricStore(db).ListByService(context.Background(), testServiceAPI, time.Time{}, 100)
-	if err != nil {
-		t.Fatalf("ListByService() error = %v, want nil", err)
 	}
 
 	if len(metrics) == 0 {

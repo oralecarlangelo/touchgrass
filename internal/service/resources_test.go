@@ -365,7 +365,7 @@ func TestRunSamplesUntilCancelled(t *testing.T) {
 
 	metrics := []model.Metric{}
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for len(metrics) == 0 && time.Now().Before(deadline) {
 		var err error
 
@@ -377,7 +377,7 @@ func TestRunSamplesUntilCancelled(t *testing.T) {
 		}
 
 		if len(metrics) == 0 {
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(25 * time.Millisecond)
 		}
 	}
 

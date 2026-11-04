@@ -46,7 +46,8 @@ type Lister interface {
 
 // Client queries the local Docker daemon.
 type Client struct {
-	cli *client.Client
+	cli   *client.Client
+	guard *requestGuard
 }
 
 // New builds a Client from the standard Docker environment.
@@ -56,7 +57,14 @@ func New() (*Client, error) {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
 
-	return &Client{cli: cli}, nil
+	return &Client{
+		cli: cli,
+		guard: newRequestGuard(requestGuardConfig{
+			MaxConcurrent: defaultDockerMaxConcurrent,
+			FailureLimit:  defaultDockerFailureLimit,
+			Cooldown:      defaultDockerCooldown,
+		}),
+	}, nil
 }
 
 // Close releases daemon resources.
@@ -70,7 +78,10 @@ func (c *Client) Close() error {
 
 // List returns all running containers.
 func (c *Client) List(ctx context.Context) ([]Container, error) {
-	summaries, err := c.cli.ContainerList(ctx, container.ListOptions{All: false})
+	summaries, err := guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) ([]container.Summary, error) {
+			return c.cli.ContainerList(callCtx, container.ListOptions{All: false})
+		})
 	if err != nil {
 		return nil, fmt.Errorf("listing containers: %w", err)
 	}

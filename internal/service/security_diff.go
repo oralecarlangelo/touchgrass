@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -13,7 +14,7 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
-const defaultSecurityDiffInterval = 10 * time.Minute
+const defaultSecurityDiffInterval = 30 * time.Minute
 
 // DiffScannerConfig wires bounded writable-layer monitoring.
 type DiffScannerConfig struct {
@@ -77,7 +78,11 @@ func (s *DiffScanner) Run(ctx context.Context) {
 
 func (s *DiffScanner) scanAndLog(ctx context.Context) {
 	if err := s.Scan(ctx); err != nil && ctx.Err() == nil {
-		s.logger.Warn("container layer scan degraded", "error_category", "security_diff_scan")
+		category := "security_diff_scan"
+		if errors.Is(err, docker.ErrDaemonBackoff) {
+			category = "docker_daemon_backoff"
+		}
+		s.logger.Warn("container layer scan degraded", "error_category", category)
 	}
 }
 
@@ -124,7 +129,11 @@ func (s *DiffScanner) Scan(ctx context.Context) error {
 	for result := range results {
 		complete = complete && result.complete
 		if result.err != nil {
-			_ = s.security.RecordCollector(ctx, "security_diff", false, "evaluation_failed", s.interval)
+			category := "evaluation_failed"
+			if errors.Is(result.err, docker.ErrDaemonBackoff) {
+				category = "docker_daemon_backoff"
+			}
+			_ = s.security.RecordCollector(ctx, "security_diff", false, category, s.interval)
 			return result.err
 		}
 	}
@@ -151,6 +160,9 @@ func (s *DiffScanner) scanContainer(ctx context.Context, instance model.Containe
 	diffCtx, cancelDiff := context.WithTimeout(ctx, 30*time.Second)
 	snapshot, diffErr := s.docker.Diff(diffCtx, instance.ID)
 	cancelDiff()
+	if errors.Is(diffErr, docker.ErrDaemonBackoff) {
+		return false, diffErr
+	}
 	complete := diffErr == nil && snapshot.Complete
 	if diffErr != nil {
 		snapshot = docker.LayerSnapshot{Changes: []docker.LayerChange{}, Complete: false}
@@ -163,6 +175,9 @@ func (s *DiffScanner) scanContainer(ctx context.Context, instance model.Containe
 		processCtx, cancelProcess := context.WithTimeout(ctx, 10*time.Second)
 		snapshot, processErr := processLister.Processes(processCtx, instance.ID)
 		cancelProcess()
+		if errors.Is(processErr, docker.ErrDaemonBackoff) {
+			return false, processErr
+		}
 		if processErr != nil {
 			snapshot = docker.ProcessSnapshot{Processes: []docker.Process{}, Complete: false}
 		}

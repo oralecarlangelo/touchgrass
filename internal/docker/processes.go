@@ -34,7 +34,10 @@ type ProcessLister interface {
 
 // Processes requests only the fields required by the security scanner.
 func (c *Client) Processes(ctx context.Context, id string) (ProcessSnapshot, error) {
-	response, err := c.cli.ContainerTop(ctx, id, []string{"-eo", "pid,ppid,user,args"})
+	response, err := guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) (containertypes.TopResponse, error) {
+			return c.cli.ContainerTop(callCtx, id, []string{"-eo", "pid,ppid,user,args"})
+		})
 	if err != nil {
 		return ProcessSnapshot{Processes: []Process{}, Complete: false}, fmt.Errorf("listing container processes: %w", err)
 	}

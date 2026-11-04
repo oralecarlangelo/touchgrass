@@ -44,7 +44,10 @@ type DiffLister interface {
 
 // Diff reads and normalizes Docker's metadata-only filesystem diff.
 func (c *Client) Diff(ctx context.Context, id string) (LayerSnapshot, error) {
-	changes, err := c.cli.ContainerDiff(ctx, id)
+	changes, err := guardedCall(ctx, c.guard, defaultDockerDiffTimeout,
+		func(callCtx context.Context) ([]containertypes.FilesystemChange, error) {
+			return c.cli.ContainerDiff(callCtx, id)
+		})
 	if err != nil {
 		return LayerSnapshot{Changes: []LayerChange{}, Complete: false}, fmt.Errorf("listing container layer changes: %w", err)
 	}

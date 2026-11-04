@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -212,7 +213,9 @@ func (s *Sampler) collectContainerStats(ctx context.Context, containers []docker
 		group.Go(func() {
 			stats, err := s.docker.Stats(ctx, container.ID)
 			if err != nil {
-				s.logger.Warn("container stats failed", "container", container.Name, "error", err)
+				if !errors.Is(err, docker.ErrDaemonBackoff) {
+					s.logger.Warn("container stats failed", "container", container.Name, "error", err)
+				}
 				return
 			}
 			mutex.Lock()

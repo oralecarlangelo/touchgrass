@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	defaultInventoryInterval = 30 * time.Second
-	defaultInspectLimit      = 4
+	defaultInventoryInterval = 2 * time.Minute
+	defaultInspectLimit      = 2
 )
 
 // FleetInventoryConfig wires the authoritative all-state reconciler.
@@ -294,8 +294,10 @@ func (f *FleetInventory) inspectAll(
 				vanished[result.index] = true
 				continue
 			}
-			f.logger.Warn("container inspection failed", "container", containers[result.index].Name,
-				"error_category", "docker_inspect_unavailable")
+			if !errors.Is(result.err, docker.ErrDaemonBackoff) {
+				f.logger.Warn("container inspection failed", "container", containers[result.index].Name,
+					"error_category", "docker_inspect_unavailable")
+			}
 			if previous, getErr := f.containers.Get(ctx, containers[result.index].ID); getErr == nil {
 				previous.Inspection.CoverageComplete = false
 				priorInspections[result.index] = previous.Inspection

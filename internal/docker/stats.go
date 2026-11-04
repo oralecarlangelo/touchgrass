@@ -21,28 +21,34 @@ type Stats struct {
 
 // Stats collects a one-shot resource snapshot for id.
 func (c *Client) Stats(ctx context.Context, id string) (Stats, error) {
-	stats, err := c.statsJSON(ctx, id)
-	if err != nil {
-		return Stats{}, err
-	}
+	return guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) (Stats, error) {
+			stats, err := c.statsJSON(callCtx, id)
+			if err != nil {
+				return Stats{}, err
+			}
 
-	info, err := c.cli.ContainerInspect(ctx, id)
-	if err != nil {
-		return Stats{}, fmt.Errorf("inspecting container %s: %w", shortID(id), err)
-	}
+			info, err := c.cli.ContainerInspect(callCtx, id)
+			if err != nil {
+				return Stats{}, fmt.Errorf("inspecting container %s: %w", shortID(id), err)
+			}
 
-	return Stats{
-		CPUPercent: cpuPercent(stats),
-		MemBytes:   memUsage(stats),
-		MemLimit:   stats.MemoryStats.Limit,
-		Restarts:   info.RestartCount,
-		StartedAt:  startedAt(info),
-	}, nil
+			return Stats{
+				CPUPercent: cpuPercent(stats),
+				MemBytes:   memUsage(stats),
+				MemLimit:   stats.MemoryStats.Limit,
+				Restarts:   info.RestartCount,
+				StartedAt:  startedAt(info),
+			}, nil
+		})
 }
 
 // SizedList lists running containers with writable-layer sizes for disk use.
 func (c *Client) SizedList(ctx context.Context) ([]Container, []int64, error) {
-	summaries, err := c.cli.ContainerList(ctx, container.ListOptions{All: false, Size: true})
+	summaries, err := guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) ([]container.Summary, error) {
+			return c.cli.ContainerList(callCtx, container.ListOptions{All: false, Size: true})
+		})
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing containers with size: %w", err)
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/system"
 )
 
 // Image is one local daemon image.
@@ -42,7 +43,10 @@ type PruneReport struct {
 
 // Images lists local daemon images, newest first.
 func (c *Client) Images(ctx context.Context) ([]Image, error) {
-	summaries, err := c.cli.ImageList(ctx, image.ListOptions{All: true})
+	summaries, err := guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) ([]image.Summary, error) {
+			return c.cli.ImageList(callCtx, image.ListOptions{All: true})
+		})
 	if err != nil {
 		return nil, fmt.Errorf("listing images: %w", err)
 	}
@@ -97,7 +101,10 @@ func isDangling(summary image.Summary) bool {
 
 // PruneImages removes dangling images only, never tagged ones.
 func (c *Client) PruneImages(ctx context.Context) (PruneReport, error) {
-	report, err := c.cli.ImagesPrune(ctx, filters.NewArgs(filters.Arg("dangling", "true")))
+	report, err := guardedCall(ctx, c.guard, defaultDockerPruneTimeout,
+		func(callCtx context.Context) (image.PruneReport, error) {
+			return c.cli.ImagesPrune(callCtx, filters.NewArgs(filters.Arg("dangling", "true")))
+		})
 	if err != nil {
 		return PruneReport{}, fmt.Errorf("pruning dangling images: %w", err)
 	}
@@ -112,7 +119,10 @@ func (c *Client) PruneImages(ctx context.Context) (PruneReport, error) {
 
 // DaemonInfo queries docker info for the System screen.
 func (c *Client) DaemonInfo(ctx context.Context) (DaemonInfo, error) {
-	info, err := c.cli.Info(ctx)
+	info, err := guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) (system.Info, error) {
+			return c.cli.Info(callCtx)
+		})
 	if err != nil {
 		return DaemonInfo{}, fmt.Errorf("querying daemon info: %w", err)
 	}

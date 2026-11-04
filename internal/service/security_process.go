@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -15,8 +16,8 @@ import (
 )
 
 const (
-	defaultSecurityProcessInterval = 30 * time.Second
-	defaultSecurityWorkers         = 4
+	defaultSecurityProcessInterval = 2 * time.Minute
+	defaultSecurityWorkers         = 2
 )
 
 type processInventory interface {
@@ -89,7 +90,11 @@ func (s *ProcessScanner) Run(ctx context.Context) {
 
 func (s *ProcessScanner) scanAndLog(ctx context.Context) {
 	if err := s.Scan(ctx); err != nil && ctx.Err() == nil {
-		s.logger.Warn("container process scan degraded", "error_category", "security_process_scan")
+		category := "security_process_scan"
+		if errors.Is(err, docker.ErrDaemonBackoff) {
+			category = "docker_daemon_backoff"
+		}
+		s.logger.Warn("container process scan degraded", "error_category", category)
 	}
 }
 
@@ -137,7 +142,11 @@ func (s *ProcessScanner) Scan(ctx context.Context) error {
 	for result := range results {
 		complete = complete && result.complete
 		if result.err != nil {
-			_ = s.security.RecordCollector(ctx, "security_process", false, "evaluation_failed", s.interval)
+			category := "evaluation_failed"
+			if errors.Is(result.err, docker.ErrDaemonBackoff) {
+				category = "docker_daemon_backoff"
+			}
+			_ = s.security.RecordCollector(ctx, "security_process", false, category, s.interval)
 			return result.err
 		}
 	}
@@ -164,6 +173,9 @@ func (s *ProcessScanner) scanContainer(ctx context.Context, instance model.Conta
 	callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	snapshot, scanErr := s.docker.Processes(callCtx, instance.ID)
 	cancel()
+	if errors.Is(scanErr, docker.ErrDaemonBackoff) {
+		return false, scanErr
+	}
 	if scanErr != nil {
 		snapshot = docker.ProcessSnapshot{Processes: []docker.Process{}, Complete: false}
 		s.logger.Warn("container process collection failed", "container", instance.Name,

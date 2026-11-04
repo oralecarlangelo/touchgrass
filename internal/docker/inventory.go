@@ -54,7 +54,10 @@ type InspectionMount struct {
 
 // ListAll returns containers in every lifecycle state.
 func (c *Client) ListAll(ctx context.Context) ([]Container, error) {
-	summaries, err := c.cli.ContainerList(ctx, container.ListOptions{All: true})
+	summaries, err := guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) ([]container.Summary, error) {
+			return c.cli.ContainerList(callCtx, container.ListOptions{All: true})
+		})
 	if err != nil {
 		return nil, fmt.Errorf("listing all containers: %w", err)
 	}
@@ -69,7 +72,10 @@ func (c *Client) ListAll(ctx context.Context) ([]Container, error) {
 
 // Inspect returns a normalized, secret-safe security view of one container.
 func (c *Client) Inspect(ctx context.Context, id string) (Inspection, error) {
-	response, err := c.cli.ContainerInspect(ctx, id)
+	response, err := guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) (container.InspectResponse, error) {
+			return c.cli.ContainerInspect(callCtx, id)
+		})
 	if err != nil {
 		return Inspection{}, fmt.Errorf("inspecting container %q: %w", id, err)
 	}

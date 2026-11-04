@@ -27,27 +27,30 @@ func (c *Client) Logs(
 	containerID, since string,
 	tail int,
 ) ([]LogLine, error) {
-	resp, err := c.cli.ContainerLogs(ctx, containerID, container.LogsOptions{
-		ShowStdout: true,
-		ShowStderr: true,
-		Since:      since,
-		Timestamps: true,
-		Tail:       strconv.Itoa(tail),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tailing container logs: %w", err)
-	}
+	return guardedCall(ctx, c.guard, defaultDockerCallTimeout,
+		func(callCtx context.Context) ([]LogLine, error) {
+			resp, err := c.cli.ContainerLogs(callCtx, containerID, container.LogsOptions{
+				ShowStdout: true,
+				ShowStderr: true,
+				Since:      since,
+				Timestamps: true,
+				Tail:       strconv.Itoa(tail),
+			})
+			if err != nil {
+				return nil, fmt.Errorf("tailing container logs: %w", err)
+			}
 
-	defer func() {
-		_ = resp.Close()
-	}()
+			defer func() {
+				_ = resp.Close()
+			}()
 
-	lines, err := parseLogStream(resp)
-	if err != nil {
-		return nil, err
-	}
+			lines, err := parseLogStream(resp)
+			if err != nil {
+				return nil, err
+			}
 
-	return lines, nil
+			return lines, nil
+		})
 }
 
 // parseLogStream demuxes a Docker log stream into timestamped lines.

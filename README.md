@@ -75,11 +75,11 @@ Environment only (no config file):
 | `TOUCHGRASS_ADMIN_PASSWORD`          | required           | Seeds the `admin` user on first boot; rotate in the Users screen after |
 | `TOUCHGRASS_COOKIE_SECURE`           | `false`            | Set `true` when serving behind TLS                     |
 | `TOUCHGRASS_METRICS_INTERVAL`        | `30s`              | Metric sample cadence                                  |
-| `TOUCHGRASS_INVENTORY_INTERVAL`      | `30s`              | All-state Docker reconciliation cadence                |
-| `TOUCHGRASS_INVENTORY_WORKERS`       | `4`                | Maximum concurrent safe container inspections          |
-| `TOUCHGRASS_SECURITY_PROCESS_INTERVAL` | `30s`            | Running-container process scan cadence                 |
-| `TOUCHGRASS_SECURITY_DIFF_INTERVAL`  | `10m`              | Writable-layer metadata scan cadence                   |
-| `TOUCHGRASS_SECURITY_WORKERS`        | `4`                | Maximum concurrent process/diff scans                  |
+| `TOUCHGRASS_INVENTORY_INTERVAL`      | `2m`               | All-state Docker reconciliation cadence                |
+| `TOUCHGRASS_INVENTORY_WORKERS`       | `2`                | Maximum concurrent safe container inspections          |
+| `TOUCHGRASS_SECURITY_PROCESS_INTERVAL` | `2m`             | Running-container process scan cadence                 |
+| `TOUCHGRASS_SECURITY_DIFF_INTERVAL`  | `30m`              | Writable-layer metadata scan cadence                   |
+| `TOUCHGRASS_SECURITY_WORKERS`        | `2`                | Maximum concurrent process/diff scans                  |
 | `TOUCHGRASS_RETENTION_METRICS`       | `168h`             | Metric max age                                         |
 | `TOUCHGRASS_RETENTION_NOTIFICATIONS` | `720h`             | Notification max age                                   |
 | `TOUCHGRASS_RETENTION_DEPLOYS`       | `8760h`            | Deploy history max age                                 |

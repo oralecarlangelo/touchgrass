@@ -22,6 +22,14 @@ func TestDiffScannerFlagsUserLocalExecutable(t *testing.T) {
 	}
 }
 
+func TestDiffScannerUsesConservativeDefaults(t *testing.T) {
+	t.Parallel()
+	scanner := NewDiffScanner(DiffScannerConfig{})
+	if scanner.interval != 30*time.Minute || scanner.workers != 2 {
+		t.Fatalf("defaults = interval %s, workers %d; want 30m and 2", scanner.interval, scanner.workers)
+	}
+}
+
 func TestDiffScannerAllowsConfiguredCache(t *testing.T) {
 	t.Parallel()
 	got := observationByRule(EvaluateLayerChanges("c", []docker.LayerChange{{Kind: docker.LayerChangeModified, Path: "/var/cache/app/item"}}, model.SecurityPolicy{AllowedWritablePaths: []string{"/var/cache/app"}}, true), "diff.runtime_modification")
@@ -87,6 +95,24 @@ func TestDiffFailurePreservesPriorFinding(t *testing.T) {
 	if !containsFindingRule(findings, "diff.runtime_modification") ||
 		!containsFindingRule(findings, "collector.security_diff.failure") {
 		t.Fatalf("open findings = %+v; want preserved diff episode and collector incident", findings)
+	}
+}
+
+func TestDiffScannerPropagatesDockerDaemonBackoff(t *testing.T) {
+	t.Parallel()
+	security, db := testSecurity(t)
+	securityStore := store.NewSecurityStore(db)
+	if _, err := securityStore.Activate(context.Background(), "admin"); err != nil {
+		t.Fatal(err)
+	}
+	scanner := NewDiffScanner(DiffScannerConfig{
+		Inventory: processInventoryStub{containers: []model.ContainerInstance{{ID: "container", State: "running", Present: true}}},
+		Docker:    diffListerStub{err: docker.ErrDaemonBackoff}, Security: security,
+		Policies: securityStore, Interval: time.Minute, Workers: 1, Logger: slog.New(slog.DiscardHandler),
+	})
+
+	if err := scanner.Scan(context.Background()); !errors.Is(err, docker.ErrDaemonBackoff) {
+		t.Fatalf("Scan() error = %v, want docker daemon backoff", err)
 	}
 }
 

@@ -128,7 +128,7 @@ func TestMigrateUp(t *testing.T) {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
-	want := []string{"0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020"}
+	want := []string{"0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014", "0015", "0016", "0017", "0018", "0019", "0020", "0021"}
 
 	if !slices.Equal(applied, want) {
 		t.Fatalf("MigrateUp() applied = %v, want %v", applied, want)
@@ -154,7 +154,7 @@ func TestMigrationStatus(t *testing.T) {
 		t.Fatalf("MigrationStatus() error = %v, want nil", err)
 	}
 
-	if len(applied) != 20 || len(pending) != 0 {
-		t.Errorf("MigrationStatus() = (%v, %v), want (20 applied, 0 pending)", applied, pending)
+	if len(applied) != 21 || len(pending) != 0 {
+		t.Errorf("MigrationStatus() = (%v, %v), want (21 applied, 0 pending)", applied, pending)
 	}
 }

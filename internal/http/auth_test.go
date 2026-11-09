@@ -443,6 +443,13 @@ func TestViewerForbiddenMatrix(t *testing.T) {
 		{name: "create security policy", method: nethttp.MethodPost, target: "/api/security/policies"},
 		{name: "update security policy", method: nethttp.MethodPatch, target: "/api/security/policies/1"},
 		{name: "delete security policy", method: nethttp.MethodDelete, target: "/api/security/policies/1"},
+		{name: "stage env entry", method: nethttp.MethodPut, target: "/api/services/tn-api/env/entries/PORT"},
+		{name: "remove env entry", method: nethttp.MethodDelete, target: "/api/services/tn-api/env/entries/PORT"},
+		{name: "reveal env entry", method: nethttp.MethodPost, target: "/api/services/tn-api/env/entries/PORT/reveal"},
+		{name: "discard env", method: nethttp.MethodPost, target: "/api/services/tn-api/env/discard"},
+		{name: "import env", method: nethttp.MethodPost, target: "/api/services/tn-api/env/import"},
+		{name: "apply env", method: nethttp.MethodPost, target: "/api/services/tn-api/env/apply"},
+		{name: "rollback env", method: nethttp.MethodPost, target: "/api/services/tn-api/env/revisions/1/rollback"},
 	}
 
 	for _, tt := range tests {

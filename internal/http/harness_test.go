@@ -142,9 +142,24 @@ func (s stubStatsLister) Logs(
 	return []docker.LogLine{}, nil
 }
 
+// testServerOptions tunes fullTestServerWith.
+type testServerOptions struct {
+	// envHost replaces the env pillar's host; nil uses a fresh stubEnvHost.
+	envHost service.EnvHost
+	// envKeyMissing builds the env pillar without an encryption key.
+	envKeyMissing bool
+}
+
 // fullTestServer builds a Server with every service on a seeded store.
 // The sampler is wired but never run; tests drive methods via HTTP.
 func fullTestServer(t *testing.T) (*Server, *store.DB) {
+	t.Helper()
+
+	return fullTestServerWith(t, testServerOptions{})
+}
+
+// fullTestServerWith is fullTestServer with options.
+func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.DB) {
 	t.Helper()
 
 	db, err := store.Open(":memory:")
@@ -173,27 +188,7 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 		Deploys:  store.NewDeployStore(db),
 	})
 
-	sampler := service.NewSampler(service.SamplerConfig{
-		Services:      services,
-		Docker:        stubStatsLister{},
-		Metrics:       store.NewMetricStore(db),
-		Rules:         store.NewRuleStore(db),
-		Notifications: store.NewNotificationStore(db),
-		Deploys:       store.NewDeployStore(db),
-		Occurrences:   store.NewOccurrenceStore(db),
-		Issues:        store.NewIssueStore(db),
-		IssueRules:    store.NewIssueRuleStore(db),
-		Logs:          store.NewLogStore(db),
-		SDKLogs:       store.NewSDKLogStore(db),
-		Fleet:         store.NewFleetStore(db),
-		Performance:   performance,
-		Interval:      time.Hour,
-		Retention: service.Retention{
-			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,
-			SDKLogs: time.Hour,
-		},
-		Logger: logger,
-	})
+	sampler := testSampler(db, services, performance, logger)
 
 	deploys := service.NewDeploys(services, store.NewDeployStore(db))
 	audit := service.NewAudit(services, store.NewAuditStore(db))
@@ -209,6 +204,8 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 		Interval: time.Minute, InspectLimit: 2, Logger: logger,
 		Security: securityStore, Evaluator: securityService, Audit: audit,
 	})
+
+	envService := newTestEnvService(t, db, services, audit, hub, opts)
 
 	server := New(Config{
 		Addr:      testDatabaseAddr,
@@ -267,11 +264,42 @@ func fullTestServer(t *testing.T) (*Server, *store.DB) {
 		}),
 		Performance:    performance,
 		FleetInventory: fleetInventory,
+		Env:            envService,
 		Dist:           testDist(),
 		Docs:           testDocs(),
 	})
 
 	return server, db
+}
+
+// testSampler wires the harness sampler; it is never run.
+func testSampler(
+	db *store.DB,
+	services *store.ServiceStore,
+	performance *service.Performance,
+	logger *slog.Logger,
+) *service.Sampler {
+	return service.NewSampler(service.SamplerConfig{
+		Services:      services,
+		Docker:        stubStatsLister{},
+		Metrics:       store.NewMetricStore(db),
+		Rules:         store.NewRuleStore(db),
+		Notifications: store.NewNotificationStore(db),
+		Deploys:       store.NewDeployStore(db),
+		Occurrences:   store.NewOccurrenceStore(db),
+		Issues:        store.NewIssueStore(db),
+		IssueRules:    store.NewIssueRuleStore(db),
+		Logs:          store.NewLogStore(db),
+		SDKLogs:       store.NewSDKLogStore(db),
+		Fleet:         store.NewFleetStore(db),
+		Performance:   performance,
+		Interval:      time.Hour,
+		Retention: service.Retention{
+			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,
+			SDKLogs: time.Hour,
+		},
+		Logger: logger,
+	})
 }
 
 // authCookie logs in as admin and returns the session cookie. The

@@ -43,6 +43,7 @@ type Config struct {
 	Performance    *service.Performance
 	FleetInventory *service.FleetInventory
 	Security       *service.Security
+	Env            *service.Env
 	Dist           fs.FS
 	Docs           fs.FS
 	DevProxy       string
@@ -70,6 +71,7 @@ type Server struct {
 	performance    *service.Performance
 	fleetInventory *service.FleetInventory
 	security       *service.Security
+	env            *service.Env
 	handler        nethttp.Handler
 }
 
@@ -97,6 +99,7 @@ func New(cfg Config) *Server {
 		performance:    cfg.Performance,
 		fleetInventory: cfg.FleetInventory,
 		security:       cfg.Security,
+		env:            cfg.Env,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)
@@ -178,6 +181,17 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("GET /api/services/{id}/performance/routes", server.handlePerformanceRoutes)
 	mux.HandleFunc("GET /api/services/{id}/performance/postgres", server.handlePerformancePostgres)
 	mux.HandleFunc("GET /api/services/{id}/performance/redis", server.handlePerformanceRedis)
+	mux.HandleFunc("GET /api/services/{id}/env", server.handleEnv)
+	mux.HandleFunc("PUT /api/services/{id}/env/entries/{key}", server.requireAdmin(server.handleEnvPut))
+	mux.HandleFunc("DELETE /api/services/{id}/env/entries/{key}", server.requireAdmin(server.handleEnvDelete))
+	mux.HandleFunc("POST /api/services/{id}/env/entries/{key}/reveal", server.requireAdmin(server.handleEnvReveal))
+	mux.HandleFunc("GET /api/services/{id}/env/diff", server.handleEnvDiff)
+	mux.HandleFunc("POST /api/services/{id}/env/discard", server.requireAdmin(server.handleEnvDiscard))
+	mux.HandleFunc("POST /api/services/{id}/env/import", server.requireAdmin(server.handleEnvImport))
+	mux.HandleFunc("POST /api/services/{id}/env/apply", server.requireAdmin(server.handleEnvApply))
+	mux.HandleFunc("GET /api/services/{id}/env/runs/{run_id}", server.handleEnvRun)
+	mux.HandleFunc("GET /api/services/{id}/env/revisions", server.handleEnvRevisions)
+	mux.HandleFunc("POST /api/services/{id}/env/revisions/{rev}/rollback", server.requireAdmin(server.handleEnvRollback))
 
 	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Redirect(w, r, "/docs/", nethttp.StatusFound)

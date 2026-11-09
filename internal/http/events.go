@@ -114,11 +114,24 @@ func (s *Server) handleEvents(w nethttp.ResponseWriter, r *nethttp.Request) {
 				return
 			}
 
-			if _, err := w.Write([]byte("data: " + string(data) + "\n\n")); err != nil {
+			if _, err := w.Write([]byte(sseFrame(event.Type, data))); err != nil {
 				return
 			}
 
 			flusher.Flush()
 		}
 	}
+}
+
+// sseFrame renders one event. Env apply progress is a named event so
+// EventSource listeners can subscribe to it directly; every other type
+// stays an unnamed message for existing clients.
+func sseFrame(eventType string, data []byte) string {
+	frame := "data: " + string(data) + "\n\n"
+
+	if eventType == model.EventEnvApply {
+		return "event: " + eventType + "\n" + frame
+	}
+
+	return frame
 }

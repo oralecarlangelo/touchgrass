@@ -46,6 +46,13 @@ func (a *Audit) Record(ctx context.Context, record model.AuditRecord) (int64, er
 	case model.AuditSecurityPolicyCreate,
 		model.AuditSecurityPolicyUpdate,
 		model.AuditSecurityPolicyDelete:
+	case model.AuditEnvStage,
+		model.AuditEnvDiscard,
+		model.AuditEnvImport,
+		model.AuditEnvReveal,
+		model.AuditEnvApply,
+		model.AuditEnvApplyFailed,
+		model.AuditEnvRollback:
 	default:
 		return 0, fmt.Errorf(
 			"%w: unsupported audit action %q",

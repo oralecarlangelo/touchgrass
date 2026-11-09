@@ -13,7 +13,8 @@ container security monitoring.
 | 2 | SDK → ingest API | Bearer API key per service | Payload contents (validated, size-capped, scrubbed client-side) |
 | 3 | touchgrass → Docker socket | Local daemon answers truthfully | Socket file permissions (see below) |
 | 4 | touchgrass → service health URLs | HTTP status codes | Latency/body (timeouts on every probe) |
-| 5 | Operator → host | Env-provided secrets | Disk (no secrets at rest by design) |
+| 5 | Operator → host | Env-provided secrets for touchgrass itself | Disk for touchgrass's own credentials (none at rest) |
+| 7 | Env pillar key file ↔ SQLite | `TOUCHGRASS_ENV_KEY_FILE` (0600, outside the DB) | The SQLite file and its backups alone (ciphertext only; ADR-0012) |
 | 6 | touchgrass → Postgres/Redis | `docker exec` + in-container trust auth | No DB credentials held anywhere (nothing to leak) |
 
 ## Authentication and sessions
@@ -128,6 +129,41 @@ Operators contain through an independently reviewed incident runbook.
 - Security observations default to 168h, container events to 720h, and
   resolved findings to 2160h. All remain inside the global SQLite byte budget.
 
+## Env pillar: managed env files and secrets at rest
+
+ADR-0012 supersedes the original "no secrets at rest" stance for one
+scoped case: values of each managed service's runtime env file.
+
+- Values are AES-256-GCM sealed under one operator key loaded from
+  `TOUCHGRASS_ENV_KEY_FILE` (32 raw / 64 hex bytes; the binary refuses
+  any mode but `0600`) or, for development only, `TOUCHGRASS_ENV_KEY`.
+  Associated data binds each ciphertext to its service id and key name;
+  `key_id` tags rows for future rotation. Without a key the pillar is
+  off and every env route answers 503 `env_key_missing`.
+- The SQLite file therefore holds ciphertext, not plaintext. Someone
+  who copies `touchgrass.db` without the key file learns key *names*
+  and which ones are flagged secret — nothing else. Keep the key out of
+  DB backups and off shared hosts; losing it loses the stored values
+  (the file on disk and `import` recover the working set).
+- Plaintext exists only in request scope: the view never returns a
+  secret's value for any role, `String()`/JSON on store models omit
+  ciphertext, logs carry key names only, and buffers are zeroed after
+  use. Non-secret values are visible to every authenticated role.
+- `POST …/reveal` is admin-only, rate-limited (10/min per user), and
+  writes an `env.reveal` audit row with the key name. Stage, discard,
+  import, apply, apply-failed, and rollback are audited the same way
+  with key names and summaries — never values.
+- Applies run the service-configured `validate_cmd` and `restart_cmd`
+  with the process's privileges, or through `sudo -n` when the service
+  says `sudo: true`. That is the same trust as deploy scripts: blast
+  radius is one service, scripts live outside touchgrass, and the
+  operator reviews the sudoers rule. The written file gets the
+  configured owner and mode (default `0600`), the previous file stays
+  as `.bak`, and a failed restart or probe restores it.
+- Validator output is stored as `last_validation` lines (bounded).
+  A validator that echoes values would put them in SQLite in clear —
+  write validators that print key names and reasons only.
+
 ## Operator-powered destruction (all admin-gated + audited)
 
 These exist so the operator can act fast; the control is the admin
@@ -167,7 +203,8 @@ session plus confirm-gating in the UI, with an audit entry per run:
   restarts (restart logs everyone out, same as before).
 - No webhook/email egress — alerts stay in-app, so a compromised box
   can't spam from here.
-- No secrets manager — env vars only, documented in README/CONTRIBUTING.
+- No general secrets manager — touchgrass holds only the managed
+  services' env files (ADR-0012); its own credentials stay env-only.
 - No automatic containment, kernel telemetry, eBPF, host file scanning, or
   binary-content collection.
 

@@ -1033,6 +1033,124 @@ power; every action still audited, per actor.
 - Validation: gate suite green; EC2 viewer walkthrough per the
   status note.
 
+### S29 — Environment & secrets pillar, backend (2026-11-10)
+
+**Status**: BUILT (2026-11-10, API + CLI + docs; the React UI ships
+separately against the contract below). Each managed service may
+own one runtime env file that touchgrass renders, validates,
+writes, restarts, probes, and rolls back — values encrypted at
+rest, secrets masked for every role, reveals audited, every apply
+a revision. FROZEN CONTRACT:
+
+Config — `Service.Config.env`: `target{path,owner,mode}`,
+`validate_cmd`, `restart_cmd`, `probe_url`, `sudo`, plus optional
+`probe_timeout_secs` (default 120), `read_cmd` (import parses its
+stdout) and `write_cmd` (apply pipes the rendered file to its stdin;
+the command owns install; failure = write step failed with its output
+as `validation_lines`, nothing restored; later restart/probe failure
+replays the applied revision through it). `model.EnvConfigOf`.
+
+Store — migration `0021_env.sql`: `env_entries(service_id,key,
+ciphertext,nonce,key_id,is_secret,state,updated_by,updated_at)`,
+`env_revisions`, `env_revision_entries` (cascade), `env_runs(id,
+service_id,revision_id,state,started_at,finished_at,steps_json)`,
+`env_validations(service_id PK,ok,lines_json,at)`; audit CHECK
+rebuilt with `env.stage|discard|import|reveal|apply|apply_failed|
+rollback`; `services.Delete` clears the env tables.
+
+Crypto — `internal/secret`: AES-256-GCM, 12-byte random nonce,
+AAD = service id + key, key from `TOUCHGRASS_ENV_KEY_FILE` (32 raw
+or 64 hex bytes, mode 0600 enforced) or `TOUCHGRASS_ENV_KEY` (hex,
+dev); `key_id` = first 8 hex of SHA-256(key); no key → pillar off,
+503 `env_key_missing`, view `configured:false, reason:key_missing`.
+
+API (session auth; viewer GET only; mutations `requireAdmin`):
+`GET /api/services/{id}/env` → `{configured, reason?, target,
+entries[{key,is_secret,value|null,applied_value?(changed non-secret
+only),masked,updated_by,updated_at,state:applied|added|changed|
+removed,required}], applied_revision, pending_count, last_validation
+{ok,lines,missing_required,at}, apply_in_progress, active_run_id?}`;
+`PUT …/env/entries/{key}` `{value,is_secret}` → 200 entry (400
+`env_key_invalid` `^[A-Z_][A-Z0-9_]*$`, 400 `env_value_invalid`
+UTF-8/no newlines/≤64 KiB); `DELETE …/entries/{key}` → 204;
+`POST …/entries/{key}/reveal` → `{value}` (admin, audited,
+10/min/user → 429 `env_reveal_rate_limited`); `GET …/env/diff` →
+`{added,changed,removed,rendered_sha256}`; `POST …/env/discard` →
+204; `POST …/env/import` `{replace?}` → `{imported,skipped,
+secret_guessed}` (409 `env_has_entries`); `POST …/env/apply`
+`{confirm:<service name>,summary}` → 202 `{run_id}` (409
+`env_apply_in_progress`, 409 `env_nothing_to_apply`, 400
+`confirmation_mismatch`); `GET …/env/runs/{run_id}` → `{run_id,
+status:queued|running|succeeded|failed, steps[{name,status,message?,
+at}], error?, validation_lines?, restored?, started_at, finished_at?}`;
+`GET …/env/revisions` → newest first with key diffs + `applied`;
+`POST …/env/revisions/{rev}/rollback` `{confirm}` → 202 `{run_id}`.
+Service without an `env` block: view `configured:false,
+reason:not_configured`, mutations 400 `env_not_configured`.
+
+Run — render (header `# managed by touchgrass — do not edit`,
+sorted `KEY=VALUE`, LF, raw values) to a temp file beside the
+target with mode/owner → `validate_cmd` + candidate path as last
+arg and `TOUCHGRASS_ENV_CANDIDATE|TARGET|SERVICE` env (60 s; fail →
+delete candidate, store `last_validation`, run failed
+`env_validation_failed`) → atomic rename keeping one `.bak` →
+`restart_cmd` (10 min, streamed) → probe until 200 (default 120 s)
+→ revision + mark applied + audit `env.apply`; restart/probe
+failure → restore `.bak`, rerun restart, audit `env.apply_failed`.
+SSE named event `event: env.apply` with data `{type,service_id,
+run_id,step:render|validate|write|restart|probe|done|failed,message,
+at}`. 429 reveal sets `Retry-After`. Error envelope stays the repo's
+flat `{error,code}` (the UI accepts both forms). `required`
+parses `INVALID <service>:<KEY>:` validator lines. `sudo:true`
+escalates file ops and commands with `sudo -n`.
+
+CLI — `touchgrass env import [--replace] | set [--secret]
+KEY=VALUE | apply [--summary] --service <id>` (thin; actor
+`cli:<user>`).
+
+Docs — ADR-0012, threat-model boundary 7 + env section,
+ARCHITECTURE pillar/diagram/data/config/CLI, PROJECT_STRUCTURE +
+AGENTS layout (`internal/secret`), docs-site `env.md` + sidebar,
+openapi (10 paths, redocly clean), README + self-hosting env vars.
+
+**Goal**: operators manage each service's env file from the
+console with staged review, validation before restart, audit per
+actor, and one-click rollback — with no plaintext at rest.
+
+- S29.1 Secret envelope + key loading (0.5pd) [NFR-5]
+  Acceptance: round trip, tamper/wrong-key/AAD-mismatch → error,
+  key file mode check, key id stable per key.
+- S29.2 Store + migration (1pd) [NFR-2]
+  Acceptance: entries CRUD with pending/applied states, revision
+  snapshot + applied pointer, runs with step log, orphan reconcile,
+  service delete cascades.
+- S29.3 Service: stage/diff/discard/import/reveal (1pd) [FR-P1]
+  Acceptance: state machine proven, discard restores from the
+  applied snapshot, import heuristic + 409, reveal limit + audit,
+  masked view for every role.
+- S29.4 Apply/rollback engine + SSE (1.5pd) [FR-D1, FR-D3]
+  Acceptance: deterministic render + sha, validate failure keeps
+  the target and records lines, restart/probe failure restores the
+  `.bak` and restarts, rollback stages the snapshot, in-progress
+  lock, events carry run id + step.
+- S29.5 API + CLI + docs (1pd) [NFR-6]
+  Acceptance: viewer 403 on every mutation, admin flow end to end
+  with fake host/prober, contract codes per route, OpenAPI parity
+  test, ADR/threat-model/guide updated in the same sprint.
+- Standards in play: `golang-security` (AES-GCM, AAD, zeroing,
+  no values in logs/errors), `golang-database` (parameterized
+  store, sentinel not-found, transactions), `golang-concurrency` +
+  `golang-context` (per-service run lock, detached apply context,
+  bounded step timeouts), `golang-testing` (fixtures with scripted
+  host, table-driven validation).
+- Validation: `make vet`/`lint` (0 new issues)/`test`/`test-race`/
+  `build` green; redocly lint clean; new suites — secret (8),
+  store env (11), service env (18), http env (12) + 7 viewer
+  matrix rows. Not yet exercised on a host with real sudo.
+
+SCOPE GUARD: one key, no rotation tooling, no per-service keys,
+no external secrets manager, no UI (separate PR) — follow-ups.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

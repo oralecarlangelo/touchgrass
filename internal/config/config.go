@@ -64,6 +64,8 @@ const (
 	retentionNotificationsEnvVar         = "TOUCHGRASS_RETENTION_NOTIFICATIONS"
 	retentionDeploysEnvVar               = "TOUCHGRASS_RETENTION_DEPLOYS"
 	adminPasswordEnvVar                  = "TOUCHGRASS_ADMIN_PASSWORD"
+	envKeyFileEnvVar                     = "TOUCHGRASS_ENV_KEY_FILE"
+	envKeyEnvVar                         = "TOUCHGRASS_ENV_KEY"
 	cookieSecureEnvVar                   = "TOUCHGRASS_COOKIE_SECURE"
 	watchIntervalEnvVar                  = "TOUCHGRASS_WATCH_INTERVAL"
 	cutoverTimeoutEnvVar                 = "TOUCHGRASS_CUTOVER_TIMEOUT"
@@ -130,6 +132,11 @@ type Config struct {
 	AdminPassword string
 	// CookieSecure sets the Secure cookie flag (behind TLS).
 	CookieSecure bool
+	// EnvKeyFile is the AES-256 key file (mode 0600) that encrypts env
+	// values at rest; empty with EnvKey empty disables the env pillar.
+	EnvKeyFile string
+	// EnvKey is the hex-encoded dev alternative to EnvKeyFile.
+	EnvKey string
 	// WatchInterval paces nginx target polling.
 	WatchInterval time.Duration
 	// CutoverTimeout bounds one cutover run.
@@ -233,8 +240,10 @@ type ingestConfig struct {
 
 // adminConfig groups validated admin authentication settings.
 type adminConfig struct {
-	password string
-	secure   bool
+	password   string
+	secure     bool
+	envKeyFile string
+	envKey     string
 }
 
 // databaseConfig groups validated database health and backup settings.
@@ -330,6 +339,8 @@ func load(getenv func(string) string) (Config, error) {
 		RetentionDeploys:              schedule.retentionDeploys,
 		AdminPassword:                 admin.password,
 		CookieSecure:                  admin.secure,
+		EnvKeyFile:                    admin.envKeyFile,
+		EnvKey:                        admin.envKey,
 		WatchInterval:                 schedule.watch,
 		CutoverTimeout:                schedule.cutoverTimeout,
 		RetentionErrors:               schedule.retentionErrors,
@@ -731,7 +742,10 @@ func loadAdmin(getenv func(string) string) (adminConfig, error) {
 		secure = parsed
 	}
 
-	return adminConfig{password: password, secure: secure}, nil
+	return adminConfig{
+		password: password, secure: secure,
+		envKeyFile: getenv(envKeyFileEnvVar), envKey: getenv(envKeyEnvVar),
+	}, nil
 }
 
 // parseRetentionDays reads a day-count retention variable with a

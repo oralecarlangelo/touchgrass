@@ -17,10 +17,13 @@ const (
 	EventSecurityRecovery = "security_recovery"
 )
 
-// Event is one server-sent event.
+// Event is one server-sent event. RunID and Step are set by env apply
+// progress only and stay absent from every other event.
 type Event struct {
 	Type      string    `json:"type"`
 	ServiceID string    `json:"service_id"`
 	Message   string    `json:"message"`
 	At        time.Time `json:"at"`
+	RunID     string    `json:"run_id,omitempty"`
+	Step      string    `json:"step,omitempty"`
 }

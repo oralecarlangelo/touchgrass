@@ -37,6 +37,7 @@ export default defineConfig({
           { text: 'Deploys', link: '/deploys' },
           { text: 'Environment & secrets', link: '/env' },
           { text: 'Databases', link: '/databases' },
+          { text: 'Environment & secrets', link: '/env' },
           { text: 'Self-hosting', link: '/self-hosting' },
           { text: 'Troubleshooting', link: '/troubleshooting' },
         ],

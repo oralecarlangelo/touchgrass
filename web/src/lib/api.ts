@@ -186,19 +186,50 @@ interface DeploysResponse {
   deploys: Deploy[];
 }
 
+// Two envelope shapes exist on the wire: the original flat
+// `{ error: "message", code }` and the nested `{ error: { code, message } }`
+// used by newer pillars. Both resolve to the same ApiError.
 interface ErrorResponse {
-  error: string;
-  code: string;
+  error: string | { code?: string; message?: string };
+  code?: string;
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
+  code: string;
+  retryAfterSeconds: number | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code = '', retryAfterSeconds: number | null = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+export function apiErrorCode(error: unknown): string {
+  return error instanceof ApiError ? error.code : '';
+}
+
+function parseRetryAfter(header: string | null): number | null {
+  if (header === null) {
+    return null;
+  }
+
+  const seconds = Number(header);
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds);
+  }
+
+  const at = new Date(header).getTime();
+
+  if (Number.isNaN(at)) {
+    return null;
+  }
+
+  return Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 
 export function isUnauthorized(error: unknown): boolean {
@@ -220,17 +251,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     let detail = `HTTP ${res.status}`;
+    let code = '';
 
     try {
       const body = (await res.json()) as ErrorResponse;
-      if (body.error !== '') {
-        detail = body.error;
+
+      if (typeof body.error === 'string') {
+        if (body.error !== '') {
+          detail = body.error;
+        }
+        code = body.code ?? '';
+      } else if (body.error !== null && typeof body.error === 'object') {
+        if (typeof body.error.message === 'string' && body.error.message !== '') {
+          detail = body.error.message;
+        }
+        code = body.error.code ?? body.code ?? '';
       }
     } catch {
       // Fall through with the HTTP status.
     }
 
-    throw new ApiError(res.status, detail);
+    throw new ApiError(res.status, detail, code, parseRetryAfter(res.headers.get('Retry-After')));
   }
 
   return (await res.json()) as T;
@@ -1407,4 +1448,195 @@ export interface CreatedService {
 
 export async function createService(input: CreateServiceInput): Promise<CreatedService> {
   return request<CreatedService>('/api/services', jsonBody(input));
+}
+
+// --- Environment & secrets pillar (S29) ---------------------------------
+//
+// Secret entries always arrive masked (`value: null, masked: true`); the only
+// way a secret value reaches the browser is an explicit admin reveal call.
+
+export type EnvEntryState = 'applied' | 'added' | 'changed' | 'removed';
+export type EnvNotConfiguredReason = 'key_missing' | 'no_target';
+
+export interface EnvTarget {
+  path: string;
+  owner: string;
+  mode: string;
+}
+
+export interface EnvEntry {
+  key: string;
+  is_secret: boolean;
+  value: string | null;
+  masked: boolean;
+  updated_by: string;
+  updated_at: string;
+  state: EnvEntryState;
+  required: boolean;
+  // Optional: the value currently applied on the host when `state` is
+  // `changed`. Lets the UI offer "undo this change" without a guess.
+  applied_value?: string | null;
+}
+
+export interface EnvRevisionSummary {
+  id: number | string;
+  created_at: string;
+  created_by: string;
+  summary: string;
+}
+
+export interface EnvValidation {
+  ok: boolean;
+  lines: string[];
+  at: string;
+  // Optional structured hints; the UI falls back to parsing `lines`.
+  missing_required?: string[];
+  required_keys?: string[];
+}
+
+export interface EnvOverview {
+  configured: boolean;
+  reason?: EnvNotConfiguredReason;
+  target: EnvTarget | null;
+  entries: EnvEntry[];
+  applied_revision: EnvRevisionSummary | null;
+  pending_count: number;
+  last_validation: EnvValidation | null;
+  apply_in_progress: boolean;
+  // Optional: id of the run behind `apply_in_progress`, when the API has one.
+  active_run_id?: string | null;
+}
+
+export interface EnvDiff {
+  added: string[];
+  changed: string[];
+  removed: string[];
+  rendered_sha256: string;
+}
+
+export interface EnvImportResult {
+  imported: number;
+  skipped: number;
+  secret_guessed: number;
+}
+
+export type EnvApplyStep = 'render' | 'validate' | 'write' | 'restart' | 'probe' | 'done' | 'failed';
+export type EnvRunStatus = 'running' | 'done' | 'failed';
+
+export interface EnvRunStep {
+  name: string;
+  // The server reports `succeeded`; the stepper's own vocabulary is `done`.
+  status: 'pending' | 'running' | 'succeeded' | 'done' | 'failed';
+  message: string;
+  at: string;
+}
+
+export interface EnvRun {
+  id: string;
+  service_id: string;
+  status: EnvRunStatus;
+  started_at: string;
+  finished_at: string | null;
+  steps: EnvRunStep[];
+  error?: string | null;
+  validation_lines?: string[];
+  restored?: boolean;
+}
+
+export interface EnvRevision extends EnvRevisionSummary {
+  // Key names (never values) that this revision added, changed or removed
+  // relative to its predecessor.
+  added: string[];
+  changed: string[];
+  removed: string[];
+  rendered_sha256: string;
+  applied: boolean;
+}
+
+function envPath(serviceId: string, suffix = ''): string {
+  return `/api/services/${encodeURIComponent(serviceId)}/env${suffix}`;
+}
+
+function envEntryPath(serviceId: string, key: string, suffix = ''): string {
+  return envPath(serviceId, `/entries/${encodeURIComponent(key)}${suffix}`);
+}
+
+export async function fetchEnv(serviceId: string): Promise<EnvOverview> {
+  const body = await request<EnvOverview>(envPath(serviceId));
+
+  return {
+    ...body,
+    entries: body.entries ?? [],
+    target: body.target ?? null,
+    applied_revision: body.applied_revision ?? null,
+    last_validation: body.last_validation ?? null,
+    pending_count: body.pending_count ?? 0,
+    apply_in_progress: body.apply_in_progress === true,
+  };
+}
+
+export async function putEnvEntry(
+  serviceId: string,
+  key: string,
+  input: { value: string; is_secret: boolean },
+): Promise<EnvEntry> {
+  return request<EnvEntry>(envEntryPath(serviceId, key), { ...jsonBody(input), method: 'PUT' });
+}
+
+export async function deleteEnvEntry(serviceId: string, key: string): Promise<void> {
+  await request<undefined>(envEntryPath(serviceId, key), { method: 'DELETE' });
+}
+
+export async function revealEnvEntry(serviceId: string, key: string): Promise<{ value: string }> {
+  return request<{ value: string }>(envEntryPath(serviceId, key, '/reveal'), { method: 'POST' });
+}
+
+export async function fetchEnvDiff(serviceId: string): Promise<EnvDiff> {
+  const body = await request<EnvDiff>(envPath(serviceId, '/diff'));
+
+  return {
+    added: body.added ?? [],
+    changed: body.changed ?? [],
+    removed: body.removed ?? [],
+    rendered_sha256: body.rendered_sha256 ?? '',
+  };
+}
+
+export async function discardEnvChanges(serviceId: string): Promise<void> {
+  await request<undefined>(envPath(serviceId, '/discard'), { method: 'POST' });
+}
+
+export async function importEnvFile(serviceId: string, replace = false): Promise<EnvImportResult> {
+  return request<EnvImportResult>(envPath(serviceId, '/import'), jsonBody({ replace }));
+}
+
+export async function applyEnv(
+  serviceId: string,
+  input: { confirm: string; summary: string },
+): Promise<{ run_id: string }> {
+  return request<{ run_id: string }>(envPath(serviceId, '/apply'), jsonBody(input));
+}
+
+export async function fetchEnvRun(serviceId: string, runId: string): Promise<EnvRun> {
+  const body = await request<EnvRun & { run_id?: string }>(envPath(serviceId, `/runs/${encodeURIComponent(runId)}`));
+
+  // The server names the id `run_id`; older fixtures used `id`.
+  return { ...body, id: body.id ?? body.run_id ?? runId, steps: body.steps ?? [] };
+}
+
+export async function fetchEnvRevisions(serviceId: string): Promise<EnvRevision[]> {
+  const body = await request<EnvRevision[] | { revisions: EnvRevision[] }>(envPath(serviceId, '/revisions'));
+
+  return Array.isArray(body) ? body : (body.revisions ?? []);
+}
+
+export async function rollbackEnvRevision(
+  serviceId: string,
+  revisionId: string,
+  confirm: string,
+): Promise<{ run_id: string }> {
+  return request<{ run_id: string }>(
+    envPath(serviceId, `/revisions/${encodeURIComponent(revisionId)}/rollback`),
+    jsonBody({ confirm }),
+  );
 }

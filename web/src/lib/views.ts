@@ -12,6 +12,7 @@ export type ViewId =
   | 'rules'
   | 'keys'
   | 'databases'
+  | 'environment'
   | 'users'
   | 'help';
 
@@ -56,6 +57,7 @@ export const navGroups: NavGroup[] = [
     label: 'Operations',
     items: [
       { id: 'databases', label: 'Databases' },
+      { id: 'environment', label: 'Environment' },
       { id: 'images', label: 'Images' },
     ],
   },

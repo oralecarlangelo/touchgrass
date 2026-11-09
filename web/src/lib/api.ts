@@ -1479,7 +1479,7 @@ export interface EnvEntry {
 }
 
 export interface EnvRevisionSummary {
-  id: string;
+  id: number | string;
   created_at: string;
   created_by: string;
   summary: string;
@@ -1544,9 +1544,11 @@ export interface EnvRun {
 }
 
 export interface EnvRevision extends EnvRevisionSummary {
-  added: number;
-  changed: number;
-  removed: number;
+  // Key names (never values) that this revision added, changed or removed
+  // relative to its predecessor.
+  added: string[];
+  changed: string[];
+  removed: string[];
   rendered_sha256: string;
   applied: boolean;
 }

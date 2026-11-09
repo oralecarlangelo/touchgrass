@@ -20,6 +20,30 @@ import type { EnvRevision } from '@/lib/api.ts';
 import { shortSha } from '@/lib/env.ts';
 import { formatTime, timeAgo } from '@/lib/format.ts';
 
+// RevisionKeys prints "+2 added · KEY_A, KEY_B" for one change kind; the
+// count stays muted when nothing of that kind happened.
+function RevisionKeys({
+  sign,
+  label,
+  keys,
+  className,
+}: {
+  sign: string;
+  label: string;
+  keys: string[];
+  className: string;
+}) {
+  const count = keys.length;
+
+  return (
+    <span className={count > 0 ? className : 'text-muted-foreground'} title={count > 0 ? keys.join(', ') : undefined}>
+      {sign}
+      {count} {label}
+      {count > 0 && <span className="text-muted-foreground font-mono"> · {keys.join(', ')}</span>}
+    </span>
+  );
+}
+
 export function sortRevisions(revisions: EnvRevision[]): EnvRevision[] {
   return [...revisions].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 }
@@ -112,10 +136,10 @@ export function EnvRevisionsList({
               </div>
               {revision.applied && <Badge>current</Badge>}
             </div>
-            <p className="flex gap-3 text-xs">
-              <span className={revision.added > 0 ? stateTextClass.added : 'text-muted-foreground'}>+{revision.added} added</span>
-              <span className={revision.changed > 0 ? stateTextClass.changed : 'text-muted-foreground'}>~{revision.changed} changed</span>
-              <span className={revision.removed > 0 ? stateTextClass.removed : 'text-muted-foreground'}>−{revision.removed} removed</span>
+            <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+              <RevisionKeys sign="+" label="added" keys={revision.added} className={stateTextClass.added} />
+              <RevisionKeys sign="~" label="changed" keys={revision.changed} className={stateTextClass.changed} />
+              <RevisionKeys sign="−" label="removed" keys={revision.removed} className={stateTextClass.removed} />
             </p>
             {isAdmin && !revision.applied && (
               picked ? (
@@ -139,7 +163,7 @@ export function EnvRevisionsList({
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' && ready) {
                           event.preventDefault();
-                          onRollback(revision.id);
+                          onRollback(String(revision.id));
                         }
                       }}
                     />
@@ -159,7 +183,7 @@ export function EnvRevisionsList({
                       variant="destructive"
                       disabled={!ready}
                       aria-label={`Roll back to revision ${revision.id}`}
-                      onClick={() => onRollback(revision.id)}
+                      onClick={() => onRollback(String(revision.id))}
                     >
                       {busy ? 'Starting…' : 'Roll back'}
                     </Button>
@@ -171,7 +195,7 @@ export function EnvRevisionsList({
                   size="sm"
                   variant="outline"
                   disabled={disabled || busy}
-                  onClick={() => onPickRollback(revision.id)}
+                  onClick={() => onPickRollback(String(revision.id))}
                 >
                   Roll back to this
                 </Button>

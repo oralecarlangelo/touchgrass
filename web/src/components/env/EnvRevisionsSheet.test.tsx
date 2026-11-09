@@ -14,8 +14,8 @@ function buttonTag(html: string, label: string): string {
 }
 
 const revisions: EnvRevision[] = [
-  { id: 'rev-1', created_at: '2026-11-08T00:00:00Z', created_by: 'ana', summary: 'Initial import', added: 12, changed: 0, removed: 0, rendered_sha256: 'sha256:aaaaaaaa1111', applied: false },
-  { id: 'rev-2', created_at: '2026-11-09T00:00:00Z', created_by: 'ben', summary: 'Rotate GCASH_KEY', added: 0, changed: 1, removed: 0, rendered_sha256: 'sha256:bbbbbbbb2222', applied: true },
+  { id: 'rev-1', created_at: '2026-11-08T00:00:00Z', created_by: 'ana', summary: 'Initial import', added: ['APP_NAME', 'DB_URL', 'PORT'], changed: [], removed: [], rendered_sha256: 'sha256:aaaaaaaa1111', applied: false },
+  { id: 'rev-2', created_at: '2026-11-09T00:00:00Z', created_by: 'ben', summary: 'Rotate GCASH_KEY', added: [], changed: ['GCASH_KEY'], removed: [], rendered_sha256: 'sha256:bbbbbbbb2222', applied: true },
 ];
 
 function render(overrides: Partial<Parameters<typeof EnvRevisionsList>[0]> = {}): string {
@@ -54,7 +54,7 @@ describe('EnvRevisionsList', () => {
     expect(html.indexOf('Rotate GCASH_KEY')).toBeLessThan(html.indexOf('Initial import'));
     expect(html).toContain('>current<');
     expect(html).toContain('bbbbbbbb');
-    expect(html).toContain('+12 added');
+    expect(html).toContain('+3 added');
     expect(html).toContain('~1 changed');
     expect(html).toContain('ben');
     // The applied revision has no rollback button; the older one does.

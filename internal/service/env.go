@@ -417,11 +417,7 @@ func (e *Env) Stage(
 		return model.EnvEntryView{}, err
 	}
 
-	if err := validateEnvKey(key); err != nil {
-		return model.EnvEntryView{}, err
-	}
-
-	if err := validateEnvValue(value); err != nil {
+	if err := validateEnvPair(key, value); err != nil {
 		return model.EnvEntryView{}, err
 	}
 
@@ -432,17 +428,13 @@ func (e *Env) Stage(
 
 	exists := err == nil
 
-	// Staging the applied value again cancels a pending change or removal:
-	// the UI's undo, and a script re-setting the same value, both land here.
-	if exists && (current.State == model.EnvStateChanged || current.State == model.EnvStateRemoved) {
-		restored, err := e.restoreApplied(ctx, serviceID, key, value, isSecret, actor)
-		if err != nil {
-			return model.EnvEntryView{}, err
-		}
+	restored, err := e.cancelPending(ctx, current, exists, value, isSecret, actor)
+	if err != nil {
+		return model.EnvEntryView{}, err
+	}
 
-		if restored != nil {
-			return e.entryView(*restored, false)
-		}
+	if restored != nil {
+		return e.entryView(*restored, false)
 	}
 
 	state, unchanged, err := e.stageState(current, exists, value, isSecret)
@@ -466,6 +458,33 @@ func (e *Env) Stage(
 	e.record(ctx, serviceID, actor, model.AuditEnvStage, model.AuditSuccess, state+" "+key)
 
 	return e.entryView(entry, false)
+}
+
+// validateEnvPair checks a key and its value together.
+func validateEnvPair(key, value string) error {
+	if err := validateEnvKey(key); err != nil {
+		return err
+	}
+
+	return validateEnvValue(value)
+}
+
+// cancelPending handles the undo case: staging the applied value again on a
+// pending change or removal returns the entry to applied. It returns nil
+// when the entry is not pending or the value differs.
+func (e *Env) cancelPending(
+	ctx context.Context,
+	current model.EnvEntry,
+	exists bool,
+	value string,
+	isSecret bool,
+	actor string,
+) (*model.EnvEntry, error) {
+	if !exists || (current.State != model.EnvStateChanged && current.State != model.EnvStateRemoved) {
+		return nil, nil //nolint:nilnil // nothing pending to cancel
+	}
+
+	return e.restoreApplied(ctx, current.ServiceID, current.Key, value, isSecret, actor)
 }
 
 // restoreApplied returns the entry to its applied state when value and

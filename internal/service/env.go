@@ -430,7 +430,22 @@ func (e *Env) Stage(
 		return model.EnvEntryView{}, err
 	}
 
-	state, unchanged, err := e.stageState(current, err == nil, value, isSecret)
+	exists := err == nil
+
+	// Staging the applied value again cancels a pending change or removal:
+	// the UI's undo, and a script re-setting the same value, both land here.
+	if exists && (current.State == model.EnvStateChanged || current.State == model.EnvStateRemoved) {
+		restored, err := e.restoreApplied(ctx, serviceID, key, value, isSecret, actor)
+		if err != nil {
+			return model.EnvEntryView{}, err
+		}
+
+		if restored != nil {
+			return e.entryView(*restored, false)
+		}
+	}
+
+	state, unchanged, err := e.stageState(current, exists, value, isSecret)
 	if err != nil {
 		return model.EnvEntryView{}, err
 	}
@@ -451,6 +466,50 @@ func (e *Env) Stage(
 	e.record(ctx, serviceID, actor, model.AuditEnvStage, model.AuditSuccess, state+" "+key)
 
 	return e.entryView(entry, false)
+}
+
+// restoreApplied returns the entry to its applied state when value and
+// flag match the applied revision's snapshot; nil means no match.
+func (e *Env) restoreApplied(
+	ctx context.Context,
+	serviceID, key, value string,
+	isSecret bool,
+	actor string,
+) (*model.EnvEntry, error) {
+	snapshot, err := e.appliedSnapshot(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+
+	previous, ok := snapshot[key]
+	if !ok || previous.IsSecret != isSecret {
+		return nil, nil //nolint:nilnil // no applied value to restore to
+	}
+
+	plaintext, err := e.decrypt(serviceID, key, previous.Ciphertext, previous.Nonce)
+	if err != nil {
+		return nil, err
+	}
+
+	same := string(plaintext) == value
+	secret.Zero(plaintext)
+
+	if !same {
+		return nil, nil //nolint:nilnil // a different value is a real change
+	}
+
+	entry, err := e.encryptEntry(serviceID, key, value, isSecret, model.EnvStateApplied, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := e.store.UpsertEntry(ctx, entry); err != nil {
+		return nil, err
+	}
+
+	e.record(ctx, serviceID, actor, model.AuditEnvStage, model.AuditSuccess, "unstaged "+key)
+
+	return &entry, nil
 }
 
 // stageState picks the pending state for a staged value. Unchanged is

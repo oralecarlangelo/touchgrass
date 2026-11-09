@@ -229,7 +229,10 @@ describe('apply run state machine', () => {
     state = reduceRunEvent(state, event('failed', 'probe: 503 from /health'));
 
     expect(state.failedStep).toBe('probe');
-    expect(state.restored).toBe(true);
+    // The stream does not know whether the previous file came back; the
+    // polled record does.
+    expect(state.restored).toBe(false);
+    expect(mergeRun(state, { id: 'run-1', service_id: 'svc', status: 'failed', started_at: state.startedAt, finished_at: null, steps: [], restored: true }).restored).toBe(true);
     expect(state.error).toBe('probe: 503 from /health');
     expect(reduceRunEvent(initialRunState('run-1'), { ...event('render'), run_id: 'other' })).toEqual(initialRunState('run-1'));
   });

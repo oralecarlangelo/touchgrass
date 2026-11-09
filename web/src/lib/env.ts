@@ -538,7 +538,9 @@ export function reduceRunEvent(state: ApplyRunState, event: EnvApplyEvent): Appl
       running === 'validate' && messageLines.length > 0
         ? [...state.validatorLines, ...messageLines]
         : state.validatorLines;
-    const restored = running === 'write' || running === 'restart' || running === 'probe';
+    // Whether the previous file came back is the server's call (a refused
+    // write_cmd installs nothing); the run record sets it on reconcile.
+    const restored = false;
 
     return {
       ...state,

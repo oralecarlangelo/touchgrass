@@ -136,6 +136,12 @@ export default function EnvApplyProgress({
                 {run.failedStep === 'validate' && run.validatorLines.length > 0 && (
                   <p>The validator rejected the rendered file; its output is below.</p>
                 )}
+                {run.failedStep === 'write' && !run.restored && (
+                  <p>
+                    The write command refused the rendered file
+                    {run.validatorLines.length > 0 ? '; its output is below' : ''}. Nothing was installed.
+                  </p>
+                )}
                 {run.restored && <p>The previous file was restored; the service is back on it.</p>}
                 {run.failedStep === 'validate' && <p>Nothing was written to the host.</p>}
               </AlertDescription>
@@ -144,9 +150,11 @@ export default function EnvApplyProgress({
 
           {run.validatorLines.length > 0 && (
             <div>
-              <p className="mb-1 text-xs font-medium">Validator output</p>
+              <p className="mb-1 text-xs font-medium">
+                {run.failedStep === 'write' ? 'Write command output' : 'Validator output'}
+              </p>
               <pre
-                aria-label="Validator output"
+                aria-label={run.failedStep === 'write' ? 'Write command output' : 'Validator output'}
                 className="max-h-48 overflow-auto rounded-md bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-100 dark:bg-zinc-900"
               >
                 {run.validatorLines.join('\n')}

@@ -108,6 +108,8 @@ function ValueCell({ entry, ctx }: { entry: EnvEntry; ctx: RowContext }) {
             className="font-mono text-xs"
             onChange={(event) => ctx.onEditChange(event.target.value)}
             onKeyDown={handleKey}
+            // Typing replaces the old value; the caret can still be placed by clicking.
+            onFocus={(event) => event.currentTarget.select()}
           />
           <Button type="button" size="sm" disabled={busy} onClick={() => ctx.onCommitEdit(entry)}>
             {busy ? 'Saving…' : 'Save'}

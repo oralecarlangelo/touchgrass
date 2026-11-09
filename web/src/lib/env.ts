@@ -705,19 +705,25 @@ export function secondsLeft(until: number | null, now: number): number {
 
 export const envDocsHref = '/docs/env.html';
 
-// envKeyEnvVar names the host variable that holds the encryption key. The
-// backend owns the real name; keep this constant aligned with it.
-export const envKeyEnvVar = 'TOUCHGRASS_ENV_KEY';
+// envKeyEnvVar names the host variable that points at the encryption key
+// file (the server also accepts the raw key in TOUCHGRASS_ENV_KEY).
+export const envKeyEnvVar = 'TOUCHGRASS_ENV_KEY_FILE';
 
 // envTargetConfigSnippet is the JSON an admin adds to the service config to
-// name the file on the host. Service config is a flat string map, so the
-// target is three flat keys.
+// name the file on the host: the `env` block of the service config
+// (`EnvConfig` on the server), with the target nested under `target`.
 export function envTargetConfigSnippet(serviceId: string): string {
   return JSON.stringify(
     {
-      env_path: `/srv/${serviceId}/.env`,
-      env_owner: 'app:app',
-      env_mode: '0600',
+      env: {
+        target: {
+          path: `/srv/${serviceId}/.env`,
+          owner: 'app:app',
+          mode: '0600',
+        },
+        validate_cmd: `/srv/${serviceId}/bin/validate-env.sh`,
+        restart_cmd: `/srv/${serviceId}/bin/restart.sh`,
+      },
     },
     null,
     2,

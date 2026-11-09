@@ -105,11 +105,11 @@ describe('EnvironmentTabView states', () => {
     const viewer = render({ overview: base, isAdmin: false });
 
     expect(admin).toContain('Configure the env target');
-    expect(admin).toContain('env_path');
+    expect(admin).toContain('"target"');
     expect(admin).toContain('/srv/shop-api/.env');
     expect(admin).toContain('/docs/env.html');
     expect(viewer).toContain('Configure the env target');
-    expect(viewer).not.toContain('env_path');
+    expect(viewer).not.toContain('"target"');
     expect(viewer).toContain('An admin adds the target');
   });
 

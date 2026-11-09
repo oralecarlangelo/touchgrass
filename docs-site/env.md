@@ -13,11 +13,13 @@ entries, and the REST routes (also mirrored in openapi.yaml). -->
 
 _TODO(api)._ Until this lands, the UI assumes:
 
-- the encryption key is read from the host environment variable the server
-  documents here (the UI names it `TOUCHGRASS_ENV_KEY` in its empty state —
-  keep `envKeyEnvVar` in `web/src/lib/env.ts` aligned);
-- the env target is three flat keys in the service config: `env_path`,
-  `env_owner`, `env_mode` (see `envTargetConfigSnippet` in the same file).
+- the encryption key file is named by `TOUCHGRASS_ENV_KEY_FILE` on the host
+  (the server also accepts the raw key in `TOUCHGRASS_ENV_KEY`); the UI names
+  the file variable in its empty state (`envKeyEnvVar` in `web/src/lib/env.ts`);
+- the env target lives in the service config's `env` block:
+  `{ "env": { "target": { "path", "owner", "mode" }, "validate_cmd",
+  "restart_cmd", "read_cmd", "write_cmd", "probe_url", "sudo" } }` (see
+  `envTargetConfigSnippet` in the same file).
 
 ## The Environment tab
 
@@ -29,7 +31,7 @@ not applied, apply running, no target, no key) and links to the same tab.
 
 | What you see | Why | What to do |
 | --- | --- | --- |
-| **Configure the env target** | The service config has no `env_path` | Admins see the exact JSON to add; reload the tab afterwards |
+| **Configure the env target** | The service config has no `env.target` | Admins see the exact JSON to add; reload the tab afterwards |
 | **This host has no encryption key** | The server started without a key (`503 env_key_missing`) | Set the key on the host and restart touchgrass |
 | **No entries yet** | Target configured, nothing tracked | **Import the current file** reads what is on the host; secret-looking keys are marked secret by name |
 | **An apply is running** | Another session (or this one) started an apply | The table is read-only; the live progress is pinned at the top |

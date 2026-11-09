@@ -462,6 +462,30 @@ func TestEnvStageStates(t *testing.T) {
 	requireEqual(t, "pending", fixture.view(t).PendingCount, 3)
 }
 
+func TestEnvStageAppliedValueCancelsPending(t *testing.T) {
+	t.Parallel()
+
+	fixture := newEnvFixture(t, healthyProber())
+
+	fixture.stage(t, "EDIT", "old", false)
+	fixture.stage(t, "DROP", "x", true)
+	fixture.apply(t, "baseline")
+
+	// A pending change goes back to applied when the applied value returns.
+	requireEqual(t, "EDIT changed", fixture.stage(t, "EDIT", "new", false).State, model.EnvStateChanged)
+	requireEqual(t, "EDIT undone", fixture.stage(t, "EDIT", "old", false).State, model.EnvStateApplied)
+
+	// So does a pending removal — the UI's undo re-stages the applied value.
+	fixture.remove(t, "DROP")
+	requireEqual(t, "DROP undone", fixture.stage(t, "DROP", "x", true).State, model.EnvStateApplied)
+
+	// A different flag on the same value is still a change.
+	requireEqual(t, "DROP flag flip", fixture.stage(t, "DROP", "x", false).State, model.EnvStateChanged)
+
+	requireEqual(t, "pending", fixture.view(t).PendingCount, 1)
+	requireEqual(t, "undo audited", fixture.auditActions(t)[1].Detail, "unstaged DROP")
+}
+
 func TestEnvDiscardRestoresApplied(t *testing.T) {
 	t.Parallel()
 

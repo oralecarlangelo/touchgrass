@@ -720,6 +720,17 @@ func (e *Env) fail(ctx context.Context, run *envRun, cause error) {
 	run.run.State = model.EnvRunFailed
 	run.run.FinishedAt = &finished
 	run.run.Error = cause.Error()
+
+	// The step that was running is the one that failed; close it so a polled
+	// record never shows a "running" step inside a failed run.
+	for i := len(run.run.Steps) - 1; i >= 0; i-- {
+		if run.run.Steps[i].Status == model.EnvRunRunning {
+			run.run.Steps[i].Status = model.EnvRunFailed
+
+			break
+		}
+	}
+
 	e.progress(ctx, run, model.EnvStepFailed, model.EnvRunFailed, cause.Error())
 
 	detail := "apply failed (" + cause.Error() + ") " + describeDiff(run.diff)

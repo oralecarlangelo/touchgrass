@@ -62,7 +62,8 @@ describe('EnvApplyProgress', () => {
   });
 
   it('says the previous file was restored when the probe fails', () => {
-    const run = play([['render', ''], ['validate', ''], ['write', ''], ['restart', ''], ['probe', ''], ['failed', 'probe: 503']]);
+    // `restored` is reported by the run record once the stream ends the run.
+    const run = { ...play([['render', ''], ['validate', ''], ['write', ''], ['restart', ''], ['probe', ''], ['failed', 'probe: 503']]), restored: true };
     const html = renderToStaticMarkup(
       <EnvApplyProgress run={run} kind="rollback" now={0} streamLost={false} onRetry={null} onDismiss={noop} />,
     );

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,14 +8,16 @@ import LogSearch from '../logs/LogSearch.tsx';
 import ActivityTab from './ActivityTab.tsx';
 import AlertsTab from './AlertsTab.tsx';
 import DeploysTab from './DeploysTab.tsx';
+import EnvironmentTab from './EnvironmentTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
 import OverviewTab from './OverviewTab.tsx';
 import PerformanceTab from './PerformanceTab.tsx';
 import type { ServiceView } from '@/lib/api.ts';
 
-type Tab =
+export type ServiceTab =
   | 'overview'
   | 'deploys'
+  | 'environment'
   | 'performance'
   | 'logs'
   | 'activity'
@@ -29,14 +31,22 @@ export default function ServiceWorkspace({
   onServiceChanged,
   onUnauthorized,
   isAdmin,
+  initialTab = 'overview',
+  onTabChange,
 }: {
   service: ServiceView;
   onBack: () => void;
   onServiceChanged: () => void;
   onUnauthorized: () => void;
   isAdmin: boolean;
+  initialTab?: ServiceTab;
+  onTabChange?: (tab: ServiceTab) => void;
 }) {
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<ServiceTab>(initialTab);
+
+  useEffect(() => {
+    setTab(initialTab);
+  }, [initialTab, service.id]);
 
   return (
     <div className="space-y-4">
@@ -62,17 +72,24 @@ export default function ServiceWorkspace({
         </span>
       </div>
 
-      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)}>
-        <TabsList>
+      <Tabs value={tab} onValueChange={(value) => {
+          setTab(value as ServiceTab);
+          onTabChange?.(value as ServiceTab);
+        }}>
+        {/* Nine tabs outgrow a phone-width viewport; let the strip scroll instead of the page. */}
+        <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="deploys">Deploys</TabsTrigger>
+          <TabsTrigger value="environment">Environment</TabsTrigger>
           <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
           <TabsTrigger value="issues">Issues</TabsTrigger>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
-        </TabsList>
+          </TabsList>
+        </div>
 
         <TabsContent value="overview">
           {tab === 'overview' && (
@@ -87,6 +104,11 @@ export default function ServiceWorkspace({
               onUnauthorized={onUnauthorized}
               isAdmin={isAdmin}
             />
+          )}
+        </TabsContent>
+        <TabsContent value="environment">
+          {tab === 'environment' && (
+            <EnvironmentTab service={service} isAdmin={isAdmin} onUnauthorized={onUnauthorized} />
           )}
         </TabsContent>
         <TabsContent value="performance">

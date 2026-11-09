@@ -5,6 +5,7 @@ import ErrorState from './components/ErrorState.tsx';
 import Dashboard from './components/Dashboard.tsx';
 import ContainerDetail from './components/ContainerDetail.tsx';
 import DatabasesScreen from './components/DatabasesScreen.tsx';
+import EnvironmentScreen from './components/EnvironmentScreen.tsx';
 import HistoryScreen from './components/HistoryScreen.tsx';
 import HelpScreen from './components/HelpScreen.tsx';
 import ImagesScreen from './components/ImagesScreen.tsx';
@@ -17,7 +18,7 @@ import PerformanceScreen from './components/PerformanceScreen.tsx';
 import RulesScreen from './components/RulesScreen.tsx';
 import SecurityScreen from './components/SecurityScreen.tsx';
 import ServicesList from './components/ServicesList.tsx';
-import ServiceWorkspace from './components/service/ServiceWorkspace.tsx';
+import ServiceWorkspace, { type ServiceTab } from './components/service/ServiceWorkspace.tsx';
 import FleetScreen from './components/FleetScreen.tsx';
 import UsersScreen from './components/UsersScreen.tsx';
 import AppShell from './components/layout/AppShell.tsx';
@@ -52,14 +53,17 @@ export default function App() {
   const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
   const [selectedSecurityFindingId, setSelectedSecurityFindingId] = useState<number | null>(null);
   const [view, setView] = useState<ViewId>(() => parseHash(window.location.hash).view);
+  const [serviceTab, setServiceTab] = useState<ServiceTab>(
+    () => (parseHash(window.location.hash).tab as ServiceTab | null) ?? 'overview',
+  );
 
   // Deep-link: the hash mirrors the view + selected service both ways.
   // A linked service resolves once the inventory loads.
   const pendingServiceRef = useRef<string | null>(parseHash(window.location.hash).serviceId);
 
   useEffect(() => {
-    writeHash(view, selected?.id ?? null);
-  }, [view, selected]);
+    writeHash(view, selected?.id ?? null, serviceTab);
+  }, [view, selected, serviceTab]);
 
   const refreshSession = useCallback(async () => {
     setSessionError(null);
@@ -189,7 +193,9 @@ export default function App() {
   }, []);
 
   const handleSelectService = useCallback(
-    (id: string | null) => {
+    (id: string | null, tab: ServiceTab = 'overview') => {
+      setServiceTab(tab);
+
       if (id === null) {
         setSelected(null);
         setView('services');
@@ -290,10 +296,15 @@ export default function App() {
         ) : selected !== null ? (
           <ServiceWorkspace
             service={selected}
-            onBack={() => setSelected(null)}
+            onBack={() => {
+              setSelected(null);
+              setServiceTab('overview');
+            }}
             onServiceChanged={() => void load()}
             onUnauthorized={handleUnauthorized}
             isAdmin={isAdmin}
+            initialTab={serviceTab}
+            onTabChange={setServiceTab}
           />
         ) : view === 'dashboard' ? (
           <Dashboard
@@ -340,6 +351,13 @@ export default function App() {
           />
         ) : view === 'databases' ? (
           <DatabasesScreen onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
+        ) : view === 'environment' ? (
+          <EnvironmentScreen
+            services={services}
+            isAdmin={isAdmin}
+            onUnauthorized={handleUnauthorized}
+            onOpenService={(id) => handleSelectService(id, 'environment')}
+          />
         ) : view === 'rules' ? (
           <RulesScreen services={services ?? []} onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
         ) : view === 'keys' ? (

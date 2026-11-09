@@ -36,6 +36,7 @@ export default defineConfig({
           { text: 'Fleet monitoring', link: '/fleet' },
           { text: 'Deploys', link: '/deploys' },
           { text: 'Databases', link: '/databases' },
+          { text: 'Environment & secrets', link: '/env' },
           { text: 'Self-hosting', link: '/self-hosting' },
           { text: 'Troubleshooting', link: '/troubleshooting' },
         ],

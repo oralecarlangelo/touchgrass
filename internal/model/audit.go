@@ -23,6 +23,13 @@ const (
 	AuditSecurityPolicyCreate = "security_policy_create"
 	AuditSecurityPolicyUpdate = "security_policy_update"
 	AuditSecurityPolicyDelete = "security_policy_delete"
+	AuditEnvStage             = "env.stage"
+	AuditEnvDiscard           = "env.discard"
+	AuditEnvImport            = "env.import"
+	AuditEnvReveal            = "env.reveal"
+	AuditEnvApply             = "env.apply"
+	AuditEnvApplyFailed       = "env.apply_failed"
+	AuditEnvRollback          = "env.rollback"
 )
 
 // Audit results recorded in the append-only log.

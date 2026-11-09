@@ -40,6 +40,8 @@ const usageText = `Usage: touchgrass <command> [args]
 Commands:
   serve               run the HTTP server (default when no command is given)
   migrate [up|status] manage the database schema (default: status)
+  env <import|set|apply> --service <id>
+                      manage a service's encrypted env file (see env -h)
   version             print the version and build SHA
 `
 
@@ -61,12 +63,14 @@ func run(args []string) error {
 		return runServe(args[1:])
 	case "migrate":
 		return runMigrate(args[1:])
+	case "env":
+		return runEnv(args[1:])
 	case "version", "-v", "--version":
 		return runVersion(args[1:])
 	case "help", "-h", "--help":
 		return usage(os.Stdout)
 	default:
-		return fmt.Errorf("unknown command %q: want serve, migrate, or version", args[0])
+		return fmt.Errorf("unknown command %q: want serve, migrate, env, or version", args[0])
 	}
 }
 
@@ -196,6 +200,7 @@ type serveServices struct {
 	performance *service.Performance
 	fleet       *service.FleetInventory
 	security    *service.Security
+	env         *service.Env
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -241,6 +246,7 @@ func newServeServer(
 		Performance:    services.performance,
 		FleetInventory: services.fleet,
 		Security:       services.security,
+		Env:            services.env,
 		Dist:           dist,
 		Docs:           docs,
 		DevProxy:       devProxy,
@@ -353,6 +359,13 @@ func runServe(args []string) error {
 		Logger:        logger,
 	})
 	inv.SetFlipReporter(notificationStore, audit, cutover.Active)
+
+	envService, err := newEnvService(ctx, envWiring{
+		db: db, cfg: cfg, services: serviceStore, audit: audit, prober: prober, emit: hub.Broadcast, logger: logger,
+	})
+	if err != nil {
+		return err
+	}
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: serviceStore, Containers: store.NewContainerStore(db), Docker: dockerClient,
 		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
@@ -410,6 +423,7 @@ func runServe(args []string) error {
 		database: databases, onboarding: onboarding, performance: performance,
 		fleet:    fleetInventory,
 		security: securityService,
+		env:      envService,
 	}, version)
 	if err != nil {
 		return err

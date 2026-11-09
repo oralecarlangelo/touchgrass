@@ -49,6 +49,8 @@ func mutateCustomTestConfig(cfg *Config) {
 	cfg.SecurityWorkers = 6
 	cfg.SecurityDiffInterval = 12 * time.Minute
 	cfg.CookieSecure = true
+	cfg.EnvKeyFile = "/etc/touchgrass/env.key"
+	cfg.EnvKey = "00ff"
 	cfg.WatchInterval = 2 * time.Second
 	cfg.RetentionErrors = 24 * time.Hour
 	cfg.MaxOccurrences = 500
@@ -104,6 +106,7 @@ func TestLoad(t *testing.T) {
 				securityProcessIntervalEnvVar: "45s", securityWorkersEnvVar: "6",
 				securityDiffIntervalEnvVar: "12m",
 				"TOUCHGRASS_COOKIE_SECURE": "true", "TOUCHGRASS_WATCH_INTERVAL": "2s",
+				envKeyFileEnvVar: "/etc/touchgrass/env.key", envKeyEnvVar: "00ff",
 				"TOUCHGRASS_RETENTION_ERRORS": "24h", "TOUCHGRASS_INGEST_MAX_OCCURRENCES": "500",
 				"TOUCHGRASS_RETENTION_LOGS": "48h", "TOUCHGRASS_LOGS_MAX_LINES": "1000",
 				"TOUCHGRASS_LOG_POLL_INTERVAL": "2s", "TOUCHGRASS_RETENTION_SDK_LOGS": "3",

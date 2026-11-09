@@ -119,6 +119,10 @@ var serviceChildren = []string{
 	"audit",
 	"deploy_probes",
 	"deploys",
+	"env_entries",
+	"env_runs",
+	"env_revisions", // env_revision_entries cascade from here
+	"env_validations",
 	"issue_rules",
 	"issues",
 	"log_lines",

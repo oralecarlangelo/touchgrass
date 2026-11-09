@@ -106,7 +106,18 @@ func (h *stubEnvHost) Remove(_ context.Context, path string, _ bool) error {
 	return nil
 }
 
-func (h *stubEnvHost) Run(ctx context.Context, command string, _ []string, _ bool, emit func(string)) error {
+func (h *stubEnvHost) Output(_ context.Context, _ string, _ []string, _ bool) ([]byte, error) {
+	return nil, errors.New("read_cmd not scripted")
+}
+
+func (h *stubEnvHost) Run(
+	ctx context.Context,
+	command string,
+	_ []byte,
+	_ []string,
+	_ bool,
+	emit func(string),
+) error {
 	h.mutex.Lock()
 	h.commands = append(h.commands, command)
 	failValidate, block := h.failValidate, h.block
@@ -426,6 +437,8 @@ func TestEnvAdminApplyFlow(t *testing.T) {
 		t.Fatalf("run = %+v, want succeeded with steps", run)
 	}
 
+	checkRunShape(t, server, runID)
+
 	if got := host.file(testEnvTarget); got != "# managed by touchgrass — do not edit\nAPI_TOKEN=hidden-token\nPORT=8080\n" {
 		t.Errorf("written file = %q", got)
 	}
@@ -445,6 +458,34 @@ func TestEnvAdminApplyFlow(t *testing.T) {
 
 	if strings.Contains(string(data), "hidden-token") {
 		t.Error("audit leaks a secret value")
+	}
+}
+
+// checkRunShape asserts the run JSON carries the UI contract field names.
+func checkRunShape(t *testing.T, server *Server, runID string) {
+	t.Helper()
+
+	status, data := doRequest(t, server, nethttp.MethodGet, testEnvPath+"/runs/"+runID, "")
+	expectStatus(t, "GET run", status, nethttp.StatusOK, data)
+
+	var got map[string]any
+
+	decodeInto(t, data, &got)
+
+	for _, field := range []string{"run_id", "status", "steps", "started_at", "finished_at"} {
+		if _, ok := got[field]; !ok {
+			t.Errorf("run JSON lacks %s: %s", field, data)
+		}
+	}
+
+	steps, ok := got["steps"].([]any)
+	if !ok || len(steps) == 0 {
+		t.Fatalf("run steps = %v, want a non-empty list", got["steps"])
+	}
+
+	first, ok := steps[0].(map[string]any)
+	if !ok || first["name"] != "render" || first["status"] != "succeeded" {
+		t.Errorf("first step = %v, want name render status succeeded", steps[0])
 	}
 }
 
@@ -608,11 +649,19 @@ func TestEnvRevealRateLimitAndAudit(t *testing.T) {
 		}
 	}
 
-	status, data := doRequest(t, server, nethttp.MethodPost, target, "")
-	expectStatus(t, "reveal #4", status, nethttp.StatusTooManyRequests, data)
-	expectCode(t, "reveal #4", data, "env_reveal_rate_limited")
+	req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodPost, target, nil)
+	req.AddCookie(authCookie(t, server))
 
-	status, data = doRequest(t, server, nethttp.MethodGet, "/api/audit?service_id="+testEnvService, "")
+	rec := httptest.NewRecorder()
+	server.handler.ServeHTTP(rec, req)
+	expectStatus(t, "reveal #4", rec.Code, nethttp.StatusTooManyRequests, rec.Body.Bytes())
+	expectCode(t, "reveal #4", rec.Body.Bytes(), "env_reveal_rate_limited")
+
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("rate-limited reveal lacks a Retry-After header")
+	}
+
+	status, data := doRequest(t, server, nethttp.MethodGet, "/api/audit?service_id="+testEnvService, "")
 	expectStatus(t, "GET audit", status, nethttp.StatusOK, data)
 
 	var audit auditResponse
@@ -688,8 +737,8 @@ func TestEnvApplyInProgress(t *testing.T) {
 	expectStatus(t, "second apply", status, nethttp.StatusConflict, data)
 	expectCode(t, "second apply", data, "env_apply_in_progress")
 
-	if !envView(t, server, authCookie(t, server)).ApplyInProgress {
-		t.Error("apply_in_progress = false during a held run")
+	if held := envView(t, server, authCookie(t, server)); !held.ApplyInProgress || held.ActiveRunID != accepted.RunID {
+		t.Errorf("held view = in_progress %t active_run_id %q, want true and %s", held.ApplyInProgress, held.ActiveRunID, accepted.RunID)
 	}
 
 	close(host.block)
@@ -789,6 +838,26 @@ func TestEnvSSEEventShape(t *testing.T) {
 		if !steps[step] {
 			t.Errorf("missing step %s in %v", step, steps)
 		}
+	}
+}
+
+func TestEnvSSENamedEvent(t *testing.T) {
+	t.Parallel()
+
+	event := model.Event{Type: model.EventEnvApply, ServiceID: testEnvService, RunID: "r1", Step: "render"}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	frame := sseFrame(event.Type, data)
+	if !strings.HasPrefix(frame, "event: env.apply\ndata: ") || !strings.HasSuffix(frame, "\n\n") {
+		t.Errorf("env frame = %q, want a named event", frame)
+	}
+
+	if plain := sseFrame(model.EventDeployStarted, data); strings.Contains(plain, "event:") {
+		t.Errorf("deploy frame = %q, want unnamed", plain)
 	}
 }
 

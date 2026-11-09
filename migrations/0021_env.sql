@@ -42,7 +42,10 @@ CREATE TABLE env_runs (
   state TEXT NOT NULL CHECK (state IN ('running', 'succeeded', 'failed')),
   started_at TEXT NOT NULL,
   finished_at TEXT,
-  steps_json TEXT NOT NULL DEFAULT '[]'
+  steps_json TEXT NOT NULL DEFAULT '[]',
+  error TEXT NOT NULL DEFAULT '',
+  validation_lines_json TEXT NOT NULL DEFAULT '[]',
+  restored INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_env_runs_service ON env_runs (service_id, started_at);
 

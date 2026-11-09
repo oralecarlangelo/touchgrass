@@ -17,3 +17,4 @@ standards (`AGENTS.md`, `docs/ARCHITECTURE.md`,
 | [0009](0009-otel-log-support.md) | OTel log support in the Node SDK | Accepted |
 | [0010](0010-two-role-auth.md) | Two-role auth — admin and viewer | Accepted |
 | [0011](0011-agentless-performance-diagnostics.md) | Agentless performance diagnostics | Accepted |
+| [0012](0012-encrypted-env-store.md) | Encrypted env store — secrets at rest under an operator key | Accepted |

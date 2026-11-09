@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -152,7 +153,10 @@ func TestEnvApplyValidationFailure(t *testing.T) {
 
 	requireEqual(t, "run state", run.State, model.EnvRunFailed)
 	requireEqual(t, "run revision", run.RevisionID == nil, true)
-	requireEqual(t, "steps", strings.Join(stepNames(run), ","), "render,failed")
+	requireEqual(t, "steps", strings.Join(stepNames(run), ","), "render,validate,failed")
+	requireEqual(t, "run error", strings.Contains(run.Error, "env_validation_failed"), true)
+	requireEqual(t, "run validation lines", len(run.ValidationLines), 2)
+	requireEqual(t, "run restored", run.Restored, false)
 	requireEqual(t, "failure names validation", strings.Contains(last.Message, "env_validation_failed"), true)
 	requireEqual(t, "target untouched", fixture.readTarget(t, ""), testEnvOldFile)
 	requireEqual(t, "target dir entries (temp removed)", fixture.targetDirCount(t), 1)
@@ -194,6 +198,8 @@ func TestEnvApplyRestartFailureRestoresBackup(t *testing.T) {
 	}
 
 	requireEqual(t, "run state", run.State, model.EnvRunFailed)
+	requireEqual(t, "run restored flag", run.Restored, true)
+	requireEqual(t, "run error", run.Error, "restart: restart command failed")
 	requireEqual(t, "target restored", fixture.readTarget(t, ""), testEnvOldFile)
 	requireEqual(t, "restart runs (fail + rerun)", fixture.host.count("restart"), 2)
 	requireEqual(t, "restore note", slices.Contains(messages, "restored previous file"), true)
@@ -264,7 +270,9 @@ func TestEnvApplyInProgressLock(t *testing.T) {
 
 	_, err = fixture.env.Rollback(ctx, testEnvServiceID, 1, testEnvServiceID, testEnvActor)
 	requireIs(t, "Rollback() during run", err, ErrEnvApplyInProgress)
-	requireEqual(t, "View() in progress", fixture.view(t).ApplyInProgress, true)
+	held := fixture.view(t)
+	requireEqual(t, "View() in progress", held.ApplyInProgress, true)
+	requireEqual(t, "View() active run id", held.ActiveRunID, runID)
 
 	running, err := fixture.env.Run(ctx, testEnvServiceID, runID)
 	requireNoError(t, err, "Run()")
@@ -387,4 +395,140 @@ func TestParseFileMode(t *testing.T) {
 			}
 		})
 	}
+}
+
+// writeCmdFixture configures the fixture service with read_cmd/write_cmd
+// adapters instead of a touchgrass-owned target.
+func writeCmdFixture(t *testing.T) *envFixture {
+	t.Helper()
+
+	fixture := newEnvFixture(t, healthyProber())
+	services := store.NewServiceStore(fixture.db)
+	config := map[string]any{
+		"service": testAdminService, "health_url": "http://127.0.0.1:1/health",
+		"env": model.EnvConfig{
+			Target:      model.EnvTarget{Path: fixture.target, Owner: "ops", Mode: "0600"},
+			ValidateCmd: testEnvValidate, RestartCmd: testEnvRestart, ProbeURL: testEnvProbeURL,
+			ReadCmd: "sudo read-env env-svc", WriteCmd: "sudo write-env env-svc", ProbeTimeoutSecs: 1,
+		},
+	}
+
+	raw, err := json.Marshal(config)
+	requireNoError(t, err, "marshal write_cmd config")
+	requireNoError(t, services.UpdateConfig(context.Background(), testEnvServiceID, raw), "UpdateConfig()")
+
+	return fixture
+}
+
+func TestEnvApplyWriteCmd(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeCmdFixture(t)
+	fixture.stage(t, "B", "2", false)
+	fixture.stage(t, "A", "1", true)
+
+	run := fixture.apply(t, "via write_cmd")
+
+	requireEqual(t, "run state", run.State, model.EnvRunSucceeded)
+	requireEqual(t, "steps", strings.Join(stepNames(run), ","), strings.Join(successSteps, ","))
+	requireEqual(t, "write_cmd stdin", fixture.host.lastInput("write-env"), envHeader+"A=1\nB=2\n")
+	requireEqual(t, "target untouched by touchgrass", fixture.readTarget(t, ""), "")
+	requireEqual(t, "private candidate removed", fixture.targetDirCount(t), 0)
+	requireEqual(t, "validate ran", fixture.host.count("validate"), 1)
+	requireEqual(t, "restart ran", fixture.host.count("restart"), 1)
+}
+
+func TestEnvApplyWriteCmdFailure(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeCmdFixture(t)
+	fixture.host.write = func(_ []byte, emit func(string)) error {
+		emit("missing required keys: DB_URL, API_KEY")
+
+		return errors.New("exit status 2")
+	}
+	fixture.stage(t, "PORT", "1", false)
+
+	run := fixture.apply(t, "")
+
+	requireEqual(t, "run state", run.State, model.EnvRunFailed)
+	requireEqual(t, "run error", run.Error, "write: write command failed")
+	requireEqual(t, "validation lines", strings.Join(run.ValidationLines, "|"), "missing required keys: DB_URL, API_KEY")
+	requireEqual(t, "restored", run.Restored, false)
+	requireEqual(t, "restart never ran", fixture.host.count("restart"), 0)
+
+	view := fixture.view(t)
+	requireEqual(t, "last validation ok", view.LastValidation.OK, false)
+	requireEqual(t, "missing required", strings.Join(view.LastValidation.MissingRequired, ","), "DB_URL,API_KEY")
+	requireEqual(t, "pending kept", view.PendingCount, 1)
+}
+
+func TestEnvApplyWriteCmdRestartFailureReplaysPrevious(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeCmdFixture(t)
+	fixture.stage(t, "A", "old", false)
+	fixture.apply(t, "baseline")
+
+	calls := 0
+	fixture.host.restart = func(context.Context) error {
+		calls++
+		if calls == 1 {
+			return errors.New("boom")
+		}
+
+		return nil
+	}
+
+	fixture.stage(t, "A", "new", false)
+
+	run := fixture.apply(t, "")
+
+	requireEqual(t, "run state", run.State, model.EnvRunFailed)
+	requireEqual(t, "restored via write_cmd", run.Restored, true)
+	requireEqual(t, "write_cmd replayed previous", fixture.host.lastInput("write-env"), envHeader+"A=old\n")
+	requireEqual(t, "write_cmd calls", fixture.host.count("write-env"), 3)
+}
+
+func TestEnvImportReadCmd(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeCmdFixture(t)
+	fixture.host.output = []byte("PORT=1\nDB_PASSWORD=x\n")
+
+	result, err := fixture.env.Import(context.Background(), testEnvServiceID, false, testEnvActor)
+	requireNoError(t, err, "Import()")
+	requireEqual(t, "imported", result.Imported, 2)
+	requireEqual(t, "secret guessed", result.SecretGuessed, 1)
+	requireEqual(t, "read_cmd ran", fixture.host.count("read-env"), 1)
+}
+
+func TestEnvViewAppliedValue(t *testing.T) {
+	t.Parallel()
+
+	fixture := newEnvFixture(t, healthyProber())
+	fixture.stage(t, "PLAIN", "old", false)
+	fixture.stage(t, "TOKEN", "s1", true)
+	fixture.apply(t, "baseline")
+	fixture.stage(t, "PLAIN", "new", false)
+	fixture.stage(t, "TOKEN", "s2", true)
+	fixture.stage(t, "FRESH", "f", false)
+
+	view := fixture.view(t)
+	plain := entryByKey(t, view, "PLAIN")
+	requireEqual(t, "PLAIN value", valueOf(plain), "new")
+	requireEqual(t, "PLAIN applied_value set", plain.AppliedValue != nil, true)
+	requireEqual(t, "PLAIN applied_value", *plain.AppliedValue, "old")
+	requireEqual(t, "TOKEN applied_value hidden", entryByKey(t, view, "TOKEN").AppliedValue == nil, true)
+	requireEqual(t, "FRESH applied_value absent", entryByKey(t, view, "FRESH").AppliedValue == nil, true)
+	requireEqual(t, "active run id idle", view.ActiveRunID, "")
+}
+
+func TestMissingRequired(t *testing.T) {
+	t.Parallel()
+
+	got := missingRequired([]string{
+		"checking env-svc", "Missing required keys: DB_URL, API_KEY", "missing required key: PORT", "DB_URL again",
+	})
+	requireEqual(t, "missingRequired", strings.Join(got, ","), "DB_URL,API_KEY,PORT")
 }

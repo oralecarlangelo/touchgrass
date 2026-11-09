@@ -53,6 +53,12 @@ var envKeyPattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 // envInvalidLine extracts the key from a validator "INVALID <service>:<KEY>:" line.
 var envInvalidLine = regexp.MustCompile(`^INVALID\s+[^:\s]+:([A-Z_][A-Z0-9_]*):`)
 
+// envMissingLine matches a validator "missing required keys: A, B" line.
+var envMissingLine = regexp.MustCompile(`(?i)missing required keys?:\s*(.+)$`)
+
+// envKeyToken matches one key name inside a missing-required list.
+var envKeyToken = regexp.MustCompile(`[A-Z_][A-Z0-9_]*`)
+
 // secretKeyHints mark keys whose values default to secret on import.
 var secretKeyHints = []string{"KEY", "SECRET", "TOKEN", "PASSWORD", "PASS", "DSN", "PRIVATE"}
 
@@ -209,47 +215,25 @@ func (e *Env) View(ctx context.Context, serviceID string) (model.EnvView, error)
 		}
 	}
 
-	entries, err := e.store.ListEntries(ctx, serviceID)
+	validation, required, err := e.viewValidation(ctx, serviceID)
 	if err != nil {
 		return model.EnvView{}, err
 	}
 
-	validation, hasValidation, err := e.store.GetValidation(ctx, serviceID)
+	views, pending, err := e.entryViews(ctx, serviceID, required)
 	if err != nil {
 		return model.EnvView{}, err
 	}
 
-	required := map[string]bool{}
-	if hasValidation {
-		required = requiredKeys(validation.Lines)
-	}
-
-	views := make([]model.EnvEntryView, 0, len(entries))
-	pending := 0
-
-	for _, entry := range entries {
-		view, err := e.entryView(entry, required[entry.Key])
-		if err != nil {
-			return model.EnvView{}, err
-		}
-
-		if entry.Pending() {
-			pending++
-		}
-
-		views = append(views, view)
-	}
-
+	runID, active := e.activeRun(serviceID)
 	view := model.EnvView{
 		Configured:      true,
 		Target:          &target.cfg.Target,
 		Entries:         views,
 		PendingCount:    pending,
-		ApplyInProgress: e.Active(serviceID),
-	}
-
-	if hasValidation {
-		view.LastValidation = &validation
+		LastValidation:  validation,
+		ApplyInProgress: active,
+		ActiveRunID:     runID,
 	}
 
 	applied, found, err := e.store.AppliedRevision(ctx, serviceID)
@@ -264,6 +248,69 @@ func (e *Env) View(ctx context.Context, serviceID string) (model.EnvView, error)
 	}
 
 	return view, nil
+}
+
+// viewValidation loads the last validator outcome and derives the set of
+// keys it reported invalid or missing. A nil validation means none ran.
+func (e *Env) viewValidation(ctx context.Context, serviceID string) (*model.EnvValidation, map[string]bool, error) {
+	validation, found, err := e.store.GetValidation(ctx, serviceID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	required := map[string]bool{}
+	if !found {
+		return nil, required, nil
+	}
+
+	validation.MissingRequired = missingRequired(validation.Lines)
+	required = requiredKeys(validation.Lines)
+
+	for _, key := range validation.MissingRequired {
+		required[key] = true
+	}
+
+	return &validation, required, nil
+}
+
+// entryViews builds the entry list with masking, applied values for
+// changed non-secret entries, and the pending count.
+func (e *Env) entryViews(
+	ctx context.Context,
+	serviceID string,
+	required map[string]bool,
+) ([]model.EnvEntryView, int, error) {
+	entries, err := e.store.ListEntries(ctx, serviceID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	snapshot, err := e.appliedSnapshot(ctx, serviceID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	views := make([]model.EnvEntryView, 0, len(entries))
+	pending := 0
+
+	for _, entry := range entries {
+		view, err := e.entryView(entry, required[entry.Key])
+		if err != nil {
+			return nil, 0, err
+		}
+
+		if err := e.attachAppliedValue(&view, entry, snapshot); err != nil {
+			return nil, 0, err
+		}
+
+		if entry.Pending() {
+			pending++
+		}
+
+		views = append(views, view)
+	}
+
+	return views, pending, nil
 }
 
 // unconfiguredView builds the empty view for a disabled pillar.
@@ -293,6 +340,57 @@ func (e *Env) entryView(entry model.EnvEntry, required bool) (model.EnvEntryView
 	view.Value = &value
 
 	return view, nil
+}
+
+// attachAppliedValue adds the applied plaintext to a changed, non-secret
+// entry so a UI can offer undo. Secrets never carry it.
+func (e *Env) attachAppliedValue(
+	view *model.EnvEntryView,
+	entry model.EnvEntry,
+	snapshot map[string]model.EnvRevisionEntry,
+) error {
+	if entry.State != model.EnvStateChanged || entry.IsSecret {
+		return nil
+	}
+
+	previous, ok := snapshot[entry.Key]
+	if !ok || previous.IsSecret {
+		return nil
+	}
+
+	plaintext, err := e.decrypt(entry.ServiceID, entry.Key, previous.Ciphertext, previous.Nonce)
+	if err != nil {
+		return err
+	}
+
+	value := string(plaintext)
+	secret.Zero(plaintext)
+
+	view.AppliedValue = &value
+
+	return nil
+}
+
+// missingRequired parses "missing required keys: A, B" validator lines.
+func missingRequired(lines []string) []string {
+	keys := []string{}
+	seen := map[string]bool{}
+
+	for _, line := range lines {
+		match := envMissingLine.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+
+		for _, key := range envKeyToken.FindAllString(match[1], -1) {
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key)
+			}
+		}
+	}
+
+	return keys
 }
 
 // requiredKeys parses validator lines for keys it reported invalid.
@@ -630,7 +728,7 @@ func (e *Env) Import(ctx context.Context, serviceID string, replace bool, actor 
 		return model.EnvImportResult{}, fmt.Errorf("%w: %d entries", ErrEnvHasEntries, len(existing))
 	}
 
-	data, err := e.host.ReadFile(ctx, target.cfg.Target.Path, target.cfg.Sudo)
+	data, err := e.readTarget(ctx, target)
 	if err != nil {
 		e.logger.Error("env import read failed", "service", serviceID, "error", err)
 
@@ -673,6 +771,23 @@ func (e *Env) Import(ctx context.Context, serviceID string, replace bool, actor 
 		fmt.Sprintf("import %d keys (%d skipped, %d guessed secret)", result.Imported, result.Skipped, result.SecretGuessed))
 
 	return result, nil
+}
+
+// readTarget returns the current file: read_cmd's stdout when configured,
+// otherwise the target path itself.
+func (e *Env) readTarget(ctx context.Context, target envTarget) ([]byte, error) {
+	cfg := target.cfg
+
+	if cfg.ReadCmd == "" {
+		return e.host.ReadFile(ctx, cfg.Target.Path, cfg.Sudo)
+	}
+
+	readCtx, cancel := context.WithTimeout(ctx, e.validateTimeout)
+	defer cancel()
+
+	env := []string{"TOUCHGRASS_ENV_TARGET=" + cfg.Target.Path, "TOUCHGRASS_ENV_SERVICE=" + target.def.ID}
+
+	return e.host.Output(readCtx, cfg.ReadCmd, env, cfg.Sudo)
 }
 
 // envLine is one parsed KEY=VALUE import line.

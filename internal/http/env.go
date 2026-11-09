@@ -268,6 +268,9 @@ func decodeJSONAllowEmpty(r *nethttp.Request, target any) error {
 // maxOptionalBody bounds small optional request bodies.
 const maxOptionalBody = 64 * 1024
 
+// revealRetryAfter is the Retry-After hint (seconds) on a rate-limited reveal.
+const revealRetryAfter = "60"
+
 // writeEnvError maps env errors to the contract codes before the shared
 // service mapping.
 func writeEnvError(w nethttp.ResponseWriter, logger *slog.Logger, err error, message string) {
@@ -289,6 +292,7 @@ func writeEnvError(w nethttp.ResponseWriter, logger *slog.Logger, err error, mes
 	case errors.Is(err, service.ErrEnvConfirmationMismatch):
 		writeError(w, logger, err, "confirmation must equal the service name", "confirmation_mismatch", nethttp.StatusBadRequest)
 	case errors.Is(err, service.ErrEnvRevealRateLimited):
+		w.Header().Set("Retry-After", revealRetryAfter)
 		writeError(w, logger, err, "too many reveals, try again later", "env_reveal_rate_limited", nethttp.StatusTooManyRequests)
 	case errors.Is(err, store.ErrEnvEntryNotFound):
 		writeError(w, logger, err, "unknown env key", "not_found", nethttp.StatusNotFound)

@@ -37,6 +37,7 @@ touchgrass/
 │   ├── docker/                # Docker socket client wrapper (ps, stats, logs tail).
 │   ├── probe/                 # health probing + downtime-stat computation.
 │   ├── notify/                # webhook + email senders.
+│   ├── secret/                # AES-256-GCM sealing for env values (key from env, 0600 file).
 │   └── config/                # env parsing + validation. Single Config struct.
 │
 ├── web/                       # React + Vite + Tailwind SPA source
@@ -79,6 +80,7 @@ starts in Phase 0.)
 | `internal/probe` | probing + downtime math | store (returns results; service persists) |
 | `internal/notify` | webhook/email senders | services (service decides when) |
 | `internal/config` | env parsing into `Config` | everything else |
+| `internal/secret` | key loading, seal/open, key ids | store, service, HTTP (pure crypto helper) |
 
 ## Placement rules (with examples)
 

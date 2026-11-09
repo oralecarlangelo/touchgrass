@@ -41,6 +41,8 @@ tags:
     description: Postgres health, backups, and restores
   - name: performance
     description: Bounded agentless performance investigations and collector health
+  - name: env
+    description: Encrypted per-service env files with staged changes, audited reveals, apply runs, and rollback
 paths:
   /health:
     get:
@@ -1660,6 +1662,261 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/env:
+    get:
+      operationId: getEnv
+      tags: [env]
+      summary: Env state for one service (secrets masked for every role)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '200':
+          description: Env view; configured=false with a reason when the key or service config is missing
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvView' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/env/entries/{key}:
+    put:
+      operationId: stageEnvEntry
+      tags: [env]
+      summary: Stage an add or change (admin; does not touch the file)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/EnvKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: string, description: UTF-8 without newlines, at most 64 KiB }
+                is_secret: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Staged entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvEntry' }
+        '400':
+          description: env_key_invalid, env_value_invalid, env_not_configured, or invalid_request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+    delete:
+      operationId: removeEnvEntry
+      tags: [env]
+      summary: Stage the removal of a key (admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/EnvKey'
+      responses:
+        '204': { description: Removal staged }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/env/entries/{key}/reveal:
+    post:
+      operationId: revealEnvEntry
+      tags: [env]
+      summary: Decrypt one value (admin; audited as env.reveal; 10 per minute per user)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - $ref: '#/components/parameters/EnvKey'
+      responses:
+        '200':
+          description: Plaintext value
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [value]
+                properties:
+                  value: { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: env_reveal_rate_limited
+          headers:
+            Retry-After:
+              description: Seconds until the per-user reveal window reopens
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/env/diff:
+    get:
+      operationId: getEnvDiff
+      tags: [env]
+      summary: Pending versus applied keys plus the sha256 of the file an apply would write
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '200':
+          description: Key-level diff (values never included)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvDiff' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/env/discard:
+    post:
+      operationId: discardEnv
+      tags: [env]
+      summary: Drop every pending change (admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '204': { description: Pending changes dropped }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/env/import:
+    post:
+      operationId: importEnv
+      tags: [env]
+      summary: Read the configured target file into the store as applied entries (admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                replace: { type: boolean, default: false, description: Overwrite entries that already exist }
+      responses:
+        '200':
+          description: Import counts; keys that look secret by name default to is_secret
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imported, skipped, secret_guessed]
+                properties:
+                  imported: { type: integer }
+                  skipped: { type: integer }
+                  secret_guessed: { type: integer }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: env_has_entries (pass replace to overwrite)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/env/apply:
+    post:
+      operationId: applyEnv
+      tags: [env]
+      summary: Render, validate, write, restart, probe; rolls back on failure (admin, async)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnvApplyRequest' }
+      responses:
+        '202':
+          description: Run started; progress streams as env.apply SSE events
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvRunAccepted' }
+        '400':
+          description: confirmation_mismatch or invalid_request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: env_apply_in_progress or env_nothing_to_apply
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/env/runs/{run_id}:
+    get:
+      operationId: getEnvRun
+      tags: [env]
+      summary: One apply or rollback run with its step log
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Run
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvRun' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/env/revisions:
+    get:
+      operationId: listEnvRevisions
+      tags: [env]
+      summary: Applied revisions newest first with key-level diffs
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '200':
+          description: Revisions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EnvRevision' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/env/revisions/{rev}/rollback:
+    post:
+      operationId: rollbackEnv
+      tags: [env]
+      summary: Stage a revision's snapshot as pending and apply it (admin, async)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - name: rev
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm: { type: string, description: Must equal the service name }
+      responses:
+        '202':
+          description: Rollback run started
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvRunAccepted' }
+        '400':
+          description: confirmation_mismatch or invalid_request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: env_apply_in_progress or env_nothing_to_apply
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
 components:
   securitySchemes:
     cookieAuth:
@@ -1731,6 +1988,11 @@ components:
       in: path
       required: true
       schema: { type: integer, minimum: 1 }
+    EnvKey:
+      name: key
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Z_][A-Z0-9_]*$' }
   responses:
     BadRequest:
       description: Invalid input
@@ -1752,7 +2014,140 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    EnvKeyMissing:
+      description: env_key_missing — no TOUCHGRASS_ENV_KEY_FILE / TOUCHGRASS_ENV_KEY configured
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    EnvTarget:
+      type: object
+      required: [path, owner, mode]
+      properties:
+        path: { type: string }
+        owner: { type: string }
+        mode: { type: string, example: "0600" }
+    EnvEntry:
+      type: object
+      required: [key, is_secret, value, masked, updated_by, updated_at, state, required]
+      properties:
+        key: { type: string }
+        is_secret: { type: boolean }
+        value:
+          type: [string, 'null']
+          description: Plaintext for non-secret entries only; always null for secrets
+        applied_value:
+          type: string
+          description: Currently applied plaintext, present only on changed non-secret entries
+        masked: { type: boolean }
+        updated_by: { type: string }
+        updated_at: { type: string, format: date-time }
+        state: { type: string, enum: [applied, added, changed, removed] }
+        required:
+          type: boolean
+          description: True when the last validation reported this key in an INVALID service:KEY line
+    EnvRevisionSummary:
+      type: object
+      required: [id, created_at, created_by, summary]
+      properties:
+        id: { type: integer }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+        summary: { type: string }
+    EnvValidation:
+      type: object
+      required: [ok, lines, missing_required, at]
+      properties:
+        ok: { type: boolean }
+        lines: { type: array, items: { type: string } }
+        missing_required:
+          type: array
+          items: { type: string }
+          description: Keys parsed from a validator line of the form missing required keys A, B
+        at: { type: string, format: date-time }
+    EnvView:
+      type: object
+      required: [configured, target, entries, applied_revision, pending_count, last_validation, apply_in_progress]
+      properties:
+        configured: { type: boolean }
+        reason: { type: string, enum: [key_missing, not_configured], description: Present when configured is false }
+        target:
+          oneOf:
+            - $ref: '#/components/schemas/EnvTarget'
+            - type: 'null'
+        entries:
+          type: array
+          items: { $ref: '#/components/schemas/EnvEntry' }
+        applied_revision:
+          oneOf:
+            - $ref: '#/components/schemas/EnvRevisionSummary'
+            - type: 'null'
+        pending_count: { type: integer }
+        last_validation:
+          oneOf:
+            - $ref: '#/components/schemas/EnvValidation'
+            - type: 'null'
+        apply_in_progress: { type: boolean }
+        active_run_id: { type: string, description: Present while apply_in_progress is true }
+    EnvDiff:
+      type: object
+      required: [added, changed, removed, rendered_sha256]
+      properties:
+        added: { type: array, items: { type: string } }
+        changed: { type: array, items: { type: string } }
+        removed: { type: array, items: { type: string } }
+        rendered_sha256: { type: string }
+    EnvApplyRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm: { type: string, description: Must equal the service name }
+        summary: { type: string }
+    EnvRunAccepted:
+      type: object
+      required: [run_id]
+      properties:
+        run_id: { type: string }
+    EnvRunStep:
+      type: object
+      required: [name, status, at]
+      properties:
+        name: { type: string, enum: [render, validate, write, restart, probe, done, failed] }
+        status: { type: string, enum: [running, succeeded, failed] }
+        message: { type: string }
+        at: { type: string, format: date-time }
+    EnvRun:
+      type: object
+      required: [run_id, service_id, revision_id, status, started_at, steps]
+      properties:
+        run_id: { type: string }
+        service_id: { type: string }
+        revision_id: { type: [integer, 'null'] }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/EnvRunStep' }
+        error: { type: string, description: Failure cause, value-free }
+        validation_lines:
+          type: array
+          items: { type: string }
+          description: Validator or write command output of a failed run
+        restored: { type: boolean, description: True when the previous file was put back }
+    EnvRevision:
+      type: object
+      required: [id, created_at, created_by, summary, added, changed, removed, rendered_sha256, applied]
+      properties:
+        id: { type: integer }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+        summary: { type: string }
+        added: { type: array, items: { type: string } }
+        changed: { type: array, items: { type: string } }
+        removed: { type: array, items: { type: string } }
+        rendered_sha256: { type: string }
+        applied: { type: boolean, description: True for the revision currently on disk }
     SecuritySummary:
       type: object
       required: [open, critical, high, suppressed, coverage_complete]

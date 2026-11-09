@@ -258,7 +258,7 @@ func runEnvApply(args []string) error {
 	}
 
 	for _, step := range run.Steps {
-		if err := outputLine(step.Step + ": " + step.Message); err != nil {
+		if err := outputLine(step.Name + " [" + step.Status + "]: " + step.Message); err != nil {
 			return err
 		}
 	}

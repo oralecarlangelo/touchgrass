@@ -38,9 +38,11 @@ type EnvHost interface {
 	Restore(ctx context.Context, target string, hadPrevious, sudo bool) error
 	// Remove deletes path, ignoring a missing file.
 	Remove(ctx context.Context, path string, sudo bool) error
-	// Run executes a whitespace-split command with extra environment,
-	// streaming merged output lines to emit.
-	Run(ctx context.Context, command string, env []string, sudo bool, emit func(string)) error
+	// Run executes a whitespace-split command with extra environment and
+	// optional stdin, streaming merged output lines to emit.
+	Run(ctx context.Context, command string, input []byte, env []string, sudo bool, emit func(string)) error
+	// Output executes a whitespace-split command and returns its stdout.
+	Output(ctx context.Context, command string, env []string, sudo bool) ([]byte, error)
 }
 
 // localEnvHost is the production EnvHost: direct os calls without sudo,
@@ -161,34 +163,25 @@ func (localEnvHost) Remove(ctx context.Context, path string, sudo bool) error {
 func (localEnvHost) Run(
 	ctx context.Context,
 	command string,
+	input []byte,
 	env []string,
 	sudo bool,
 	emit func(string),
 ) error {
-	words := strings.Fields(command)
-	if len(words) == 0 {
-		return errEnvCommandEmpty
+	cmd, err := buildCommand(ctx, command, env, sudo)
+	if err != nil {
+		return err
 	}
 
-	var cmd *exec.Cmd
-
-	if sudo {
-		args := append([]string{"-n", "env"}, env...)
-		args = append(args, words...)
-		//nolint:gosec // sudo arguments are admin-configured paths and commands from service config, never request input.
-		cmd = exec.CommandContext(ctx, "sudo", args...)
-	} else {
-		//nolint:gosec // command is admin-configured service config, split on whitespace, never request input.
-		cmd = exec.CommandContext(ctx, words[0], words[1:]...)
-
-		cmd.Env = append(os.Environ(), env...)
+	if input != nil {
+		cmd.Stdin = bytes.NewReader(input)
 	}
 
 	writer := &lineWriter{emit: emit}
 	cmd.Stdout = writer
 	cmd.Stderr = writer
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	writer.flush()
 
@@ -197,6 +190,48 @@ func (localEnvHost) Run(
 	}
 
 	return nil
+}
+
+// Output implements EnvHost.
+func (localEnvHost) Output(ctx context.Context, command string, env []string, sudo bool) ([]byte, error) {
+	cmd, err := buildCommand(ctx, command, env, sudo)
+	if err != nil {
+		return nil, err
+	}
+
+	var out bytes.Buffer
+
+	cmd.Stdout = &out
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+
+	return out.Bytes(), nil
+}
+
+// buildCommand splits an admin-configured command on whitespace and
+// escalates it with `sudo -n env` when sudo is set.
+func buildCommand(ctx context.Context, command string, env []string, sudo bool) (*exec.Cmd, error) {
+	words := strings.Fields(command)
+	if len(words) == 0 {
+		return nil, errEnvCommandEmpty
+	}
+
+	if sudo {
+		args := append([]string{"-n", "env"}, env...)
+		args = append(args, words...)
+
+		//nolint:gosec // sudo arguments are admin-configured paths and commands from service config, never request input.
+		return exec.CommandContext(ctx, "sudo", args...), nil
+	}
+
+	//nolint:gosec // command is admin-configured service config, split on whitespace, never request input.
+	cmd := exec.CommandContext(ctx, words[0], words[1:]...)
+
+	cmd.Env = append(os.Environ(), env...)
+
+	return cmd, nil
 }
 
 // sudoWrite streams data through a privileged shell that applies the

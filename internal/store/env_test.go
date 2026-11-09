@@ -244,7 +244,7 @@ func TestEnvRunInsertAndGet(t *testing.T) {
 
 	if err := env.InsertRun(ctx, model.EnvRun{
 		ID: "run-1", ServiceID: testServiceAPI, State: model.EnvRunRunning, StartedAt: started,
-		Steps: []model.EnvRunStep{{Step: model.EnvStepRender, Message: "rendered", At: started}},
+		Steps: []model.EnvRunStep{{Name: model.EnvStepRender, Status: model.EnvRunSucceeded, Message: "rendered", At: started}},
 	}); err != nil {
 		t.Fatalf("InsertRun() error = %v", err)
 	}
@@ -281,7 +281,10 @@ func TestEnvRunUpdate(t *testing.T) {
 	run.State = model.EnvRunSucceeded
 	run.FinishedAt = &finished
 	run.RevisionID = &revision
-	run.Steps = []model.EnvRunStep{{Step: model.EnvStepDone, Message: "ok", At: finished}}
+	run.Steps = []model.EnvRunStep{{Name: model.EnvStepDone, Status: model.EnvRunSucceeded, Message: "ok", At: finished}}
+	run.Error = ""
+	run.ValidationLines = []string{"INVALID x:A: bad"}
+	run.Restored = true
 
 	if err := env.UpdateRun(ctx, run); err != nil {
 		t.Fatalf("UpdateRun() error = %v", err)
@@ -296,12 +299,24 @@ func TestEnvRunUpdate(t *testing.T) {
 		t.Errorf("GetRun(updated) = %+v, want succeeded with one step and revision", got)
 	}
 
-	if got.FinishedAt == nil || !got.FinishedAt.Equal(finished) {
-		t.Errorf("finished_at = %v, want %v", got.FinishedAt, finished)
-	}
+	checkRunExtras(t, got, finished)
 
 	if err := env.UpdateRun(ctx, model.EnvRun{ID: "nope", State: model.EnvRunFailed}); !errors.Is(err, ErrEnvRunNotFound) {
 		t.Errorf("UpdateRun(unknown) error = %v, want ErrEnvRunNotFound", err)
+	}
+}
+
+// checkRunExtras asserts the restored flag, validation lines, step
+// status, and finish time of an updated run.
+func checkRunExtras(t *testing.T, got model.EnvRun, finished time.Time) {
+	t.Helper()
+
+	if !got.Restored || len(got.ValidationLines) != 1 || got.Steps[0].Status != model.EnvRunSucceeded {
+		t.Errorf("GetRun(updated) = %+v, want restored flag, one validation line, step status", got)
+	}
+
+	if got.FinishedAt == nil || !got.FinishedAt.Equal(finished) {
+		t.Errorf("finished_at = %v, want %v", got.FinishedAt, finished)
 	}
 }
 
@@ -338,6 +353,10 @@ func TestEnvFailRunningRuns(t *testing.T) {
 
 	if orphan.State != model.EnvRunFailed || len(orphan.Steps) != 1 || orphan.Steps[0].Message != "restarted" {
 		t.Errorf("orphan = %+v, want failed with the restart note", orphan)
+	}
+
+	if orphan.Error != "restarted" || orphan.Steps[0].Name != model.EnvStepFailed {
+		t.Errorf("orphan = %+v, want error set and a failed step", orphan)
 	}
 
 	done, err := env.GetRun(ctx, testServiceAPI, "done")

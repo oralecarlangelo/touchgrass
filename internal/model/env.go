@@ -15,8 +15,9 @@ const (
 	EnvStateRemoved = "removed"
 )
 
-// Env run states.
+// Env run and step statuses.
 const (
+	EnvRunQueued    = "queued"
 	EnvRunRunning   = "running"
 	EnvRunSucceeded = "succeeded"
 	EnvRunFailed    = "failed"
@@ -51,10 +52,19 @@ type EnvTarget struct {
 
 // EnvConfig is the per-service env pillar configuration, stored under the
 // "env" key of Service.Config beside the strategy fields.
+//
+// ReadCmd and WriteCmd are optional adapters: when set, import parses
+// ReadCmd's stdout instead of reading the target, and apply pipes the
+// rendered file to WriteCmd's stdin instead of installing it (the command
+// then owns ownership, mode, and atomic install). Sudo prefixes every
+// command and file operation with `sudo -n`; commands may also spell sudo
+// themselves and leave Sudo false.
 type EnvConfig struct {
 	Target           EnvTarget `json:"target"`
 	ValidateCmd      string    `json:"validate_cmd"`
 	RestartCmd       string    `json:"restart_cmd"`
+	ReadCmd          string    `json:"read_cmd,omitempty"`
+	WriteCmd         string    `json:"write_cmd,omitempty"`
 	ProbeURL         string    `json:"probe_url"`
 	ProbeTimeoutSecs int       `json:"probe_timeout_secs,omitempty"`
 	Sudo             bool      `json:"sudo"`
@@ -111,15 +121,18 @@ func (e EnvEntry) Pending() bool {
 
 // EnvEntryView is the API representation of one entry. Value is nil for
 // secrets regardless of role; reveal is a separate audited call.
+// AppliedValue carries the currently applied plaintext for changed,
+// non-secret entries so a UI can offer undo.
 type EnvEntryView struct {
-	Key       string    `json:"key"`
-	IsSecret  bool      `json:"is_secret"`
-	Value     *string   `json:"value"`
-	Masked    bool      `json:"masked"`
-	UpdatedBy string    `json:"updated_by"`
-	UpdatedAt time.Time `json:"updated_at"`
-	State     string    `json:"state"`
-	Required  bool      `json:"required"`
+	Key          string    `json:"key"`
+	IsSecret     bool      `json:"is_secret"`
+	Value        *string   `json:"value"`
+	AppliedValue *string   `json:"applied_value,omitempty"`
+	Masked       bool      `json:"masked"`
+	UpdatedBy    string    `json:"updated_by"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	State        string    `json:"state"`
+	Required     bool      `json:"required"`
 }
 
 // EnvRevision is one applied snapshot of every entry.
@@ -178,30 +191,39 @@ type EnvDiff struct {
 	RenderedSHA256 string   `json:"rendered_sha256"`
 }
 
-// EnvRunStep is one logged step of an apply run.
+// EnvRunStep is one logged step of an apply run. Name is the pipeline
+// step; Status is running, succeeded, or failed.
 type EnvRunStep struct {
-	Step    string    `json:"step"`
-	Message string    `json:"message"`
+	Name    string    `json:"name"`
+	Status  string    `json:"status"`
+	Message string    `json:"message,omitempty"`
 	At      time.Time `json:"at"`
 }
 
-// EnvRun is one apply or rollback run with its step log.
+// EnvRun is one apply or rollback run with its step log. Error holds the
+// failure cause, ValidationLines the validator or write command output
+// of a failed run, and Restored whether the previous file was put back.
 type EnvRun struct {
-	ID         string       `json:"id"`
-	ServiceID  string       `json:"service_id"`
-	RevisionID *int64       `json:"revision_id"`
-	State      string       `json:"state"`
-	StartedAt  time.Time    `json:"started_at"`
-	FinishedAt *time.Time   `json:"finished_at"`
-	Steps      []EnvRunStep `json:"steps"`
+	ID              string       `json:"run_id"`
+	ServiceID       string       `json:"service_id"`
+	RevisionID      *int64       `json:"revision_id"`
+	State           string       `json:"status"`
+	StartedAt       time.Time    `json:"started_at"`
+	FinishedAt      *time.Time   `json:"finished_at,omitempty"`
+	Steps           []EnvRunStep `json:"steps"`
+	Error           string       `json:"error,omitempty"`
+	ValidationLines []string     `json:"validation_lines,omitempty"`
+	Restored        bool         `json:"restored,omitempty"`
 }
 
-// EnvValidation is the outcome of the last validator run.
+// EnvValidation is the outcome of the last validator run. MissingRequired
+// is parsed from "missing required keys: A, B" output lines.
 type EnvValidation struct {
-	ServiceID string    `json:"-"`
-	OK        bool      `json:"ok"`
-	Lines     []string  `json:"lines"`
-	At        time.Time `json:"at"`
+	ServiceID       string    `json:"-"`
+	OK              bool      `json:"ok"`
+	Lines           []string  `json:"lines"`
+	MissingRequired []string  `json:"missing_required"`
+	At              time.Time `json:"at"`
 }
 
 // EnvImportResult reports one import run.
@@ -221,4 +243,5 @@ type EnvView struct {
 	PendingCount    int                 `json:"pending_count"`
 	LastValidation  *EnvValidation      `json:"last_validation"`
 	ApplyInProgress bool                `json:"apply_in_progress"`
+	ActiveRunID     string              `json:"active_run_id,omitempty"`
 }

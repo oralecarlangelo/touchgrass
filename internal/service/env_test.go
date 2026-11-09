@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -37,14 +38,46 @@ type scriptedHost struct {
 	mutex    sync.Mutex
 	validate func(emit func(string)) error
 	restart  func(ctx context.Context) error
+	write    func(input []byte, emit func(string)) error
+	output   []byte
 	commands []string
 	envs     [][]string
+	inputs   [][]byte
+}
+
+// Output answers read_cmd with the scripted bytes.
+func (h *scriptedHost) Output(_ context.Context, command string, _ []string, _ bool) ([]byte, error) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	h.commands = append(h.commands, command)
+
+	if h.output == nil {
+		return nil, errors.New("no scripted output")
+	}
+
+	return append([]byte{}, h.output...), nil
+}
+
+// lastInput returns the stdin of the most recent command with a prefix.
+func (h *scriptedHost) lastInput(prefix string) string {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	for i, command := range slices.Backward(h.commands) {
+		if strings.HasPrefix(strings.TrimPrefix(command, "sudo "), prefix) {
+			return string(h.inputs[i])
+		}
+	}
+
+	return ""
 }
 
 // Run dispatches on the first word of the command.
 func (h *scriptedHost) Run(
 	ctx context.Context,
 	command string,
+	input []byte,
 	env []string,
 	_ bool,
 	emit func(string),
@@ -52,10 +85,19 @@ func (h *scriptedHost) Run(
 	h.mutex.Lock()
 	h.commands = append(h.commands, command)
 	h.envs = append(h.envs, env)
-	validate, restart := h.validate, h.restart
+	h.inputs = append(h.inputs, append([]byte{}, input...))
+	validate, restart, write := h.validate, h.restart, h.write
 	h.mutex.Unlock()
 
+	command = strings.TrimPrefix(command, "sudo ")
+
 	switch {
+	case strings.HasPrefix(command, "write"):
+		if write != nil {
+			return write(input, emit)
+		}
+
+		return nil
 	case strings.HasPrefix(command, "validate"):
 		if validate != nil {
 			return validate(emit)
@@ -90,7 +132,7 @@ func (h *scriptedHost) count(prefix string) int {
 	total := 0
 
 	for _, command := range h.ran() {
-		if strings.HasPrefix(command, prefix) {
+		if strings.HasPrefix(strings.TrimPrefix(command, "sudo "), prefix) {
 			total++
 		}
 	}
@@ -313,8 +355,8 @@ func stepNames(run model.EnvRun) []string {
 	names := []string{}
 
 	for _, step := range run.Steps {
-		if len(names) == 0 || names[len(names)-1] != step.Step {
-			names = append(names, step.Step)
+		if len(names) == 0 || names[len(names)-1] != step.Name {
+			names = append(names, step.Name)
 		}
 	}
 

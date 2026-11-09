@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,8 +25,16 @@ const (
 	envPostRunTimeout       = 30 * time.Second
 )
 
-// errEnvProbeTimeout reports a probe that never turned healthy.
-var errEnvProbeTimeout = errors.New("probe did not become healthy before the timeout")
+// Apply failure causes, kept short and value-free for run records.
+var (
+	errEnvProbeTimeout     = errors.New("probe did not become healthy before the timeout")
+	errEnvValidationFailed = errors.New("env_validation_failed")
+	errEnvWriteCmdFailed   = errors.New("write command failed")
+	errEnvCandidateWrite   = errors.New("writing the candidate file failed")
+	errEnvReplaceFailed    = errors.New("replacing the target file failed")
+	errEnvRestartFailed    = errors.New("restart command failed")
+	errEnvNoRevision       = errors.New("no applied revision to restore")
+)
 
 // envRun is one in-flight apply with its mutable state.
 type envRun struct {
@@ -34,9 +44,13 @@ type envRun struct {
 	summary     string
 	entries     []model.EnvEntry
 	diff        model.EnvDiff
+	rendered    []byte
+	sha         string
 	tempPath    string
+	privateDir  string
 	hadPrevious bool
 	wrote       bool
+	swapped     bool
 }
 
 // Apply validates the request and starts an async apply run.
@@ -274,12 +288,19 @@ func (e *Env) release(serviceID, runID string) {
 
 // Active reports whether an apply run is in flight for a service.
 func (e *Env) Active(serviceID string) bool {
+	_, running := e.activeRun(serviceID)
+
+	return running
+}
+
+// activeRun returns the in-flight run id for a service.
+func (e *Env) activeRun(serviceID string) (string, bool) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
-	_, running := e.running[serviceID]
+	runID, running := e.running[serviceID]
 
-	return running
+	return runID, running
 }
 
 // Done returns a channel closed when the run finishes. Unknown or
@@ -335,6 +356,7 @@ func (e *Env) Reconcile(ctx context.Context) error {
 // execute drives one apply run end to end.
 func (e *Env) execute(ctx context.Context, run *envRun) {
 	defer e.release(run.target.def.ID, run.run.ID)
+	defer e.cleanup(ctx, run)
 
 	err := e.renderAndValidate(ctx, run)
 	if err == nil {
@@ -353,106 +375,176 @@ func (e *Env) execute(ctx context.Context, run *envRun) {
 	e.succeed(postCtx, run)
 }
 
-// renderAndValidate renders the candidate, writes it beside the target,
-// and runs the validator. A validation failure deletes the candidate.
+// cleanup zeroes the rendered file and removes any leftover candidate.
+func (e *Env) cleanup(ctx context.Context, run *envRun) {
+	secret.Zero(run.rendered)
+
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), envPostRunTimeout)
+	defer cancel()
+
+	if run.wrote {
+		if err := e.host.Remove(cleanupCtx, run.tempPath, run.target.cfg.Sudo); err != nil {
+			e.logger.Warn("env candidate cleanup failed", "service", run.target.def.ID, "error", err)
+		}
+
+		run.wrote = false
+	}
+
+	if run.privateDir != "" {
+		if err := os.RemoveAll(run.privateDir); err != nil {
+			e.logger.Warn("env private candidate cleanup failed", "service", run.target.def.ID, "error", err)
+		}
+
+		run.privateDir = ""
+	}
+}
+
+// renderAndValidate renders the candidate, places it where the validator
+// can read it, and runs the validator. A validation failure deletes the
+// candidate and records the output.
 func (e *Env) renderAndValidate(ctx context.Context, run *envRun) error {
 	rendered, err := e.render(run.entries)
 	if err != nil {
 		return fmt.Errorf("render: %w", err)
 	}
 
-	defer secret.Zero(rendered.data)
-
-	run.tempPath = envTempPath(run.target.cfg.Target.Path, run.run.ID)
-	e.step(ctx, run, model.EnvStepRender, fmt.Sprintf("rendered %d keys (sha256 %s)", len(rendered.keys), rendered.sha))
-
+	run.rendered = rendered.data
+	run.sha = rendered.sha
 	cfg := run.target.cfg
 
-	if err := e.host.WriteFile(ctx, run.tempPath, rendered.data, cfg.Target.Mode, cfg.Target.Owner, cfg.Sudo); err != nil {
+	if err := e.placeCandidate(ctx, run); err != nil {
 		e.logger.Error("env candidate write failed", "service", run.target.def.ID, "error", err)
 
-		return errors.New("render: writing the candidate file failed")
+		return fmt.Errorf("render: %w", errEnvCandidateWrite)
 	}
 
-	run.wrote = true
+	e.progress(ctx, run, model.EnvStepRender, model.EnvRunSucceeded,
+		fmt.Sprintf("rendered %d keys (sha256 %s)", len(rendered.keys), rendered.sha))
 
 	if cfg.ValidateCmd == "" {
-		e.step(ctx, run, model.EnvStepValidate, "no validate_cmd configured; skipped")
+		e.progress(ctx, run, model.EnvStepValidate, model.EnvRunSucceeded, "no validate_cmd configured; skipped")
 
 		return nil
 	}
 
-	lines, err := e.runValidator(ctx, run)
-	validation := model.EnvValidation{ServiceID: run.target.def.ID, OK: err == nil, Lines: lines, At: time.Now()}
+	e.progress(ctx, run, model.EnvStepValidate, model.EnvRunRunning, "validating candidate")
 
-	if storeErr := e.store.UpsertValidation(ctx, validation); storeErr != nil {
-		e.logger.Error("env validation record failed", "service", run.target.def.ID, "error", storeErr)
-	}
+	lines, err := e.runValidator(ctx, run)
+	e.recordValidation(ctx, run.target.def.ID, err == nil, lines)
 
 	if err != nil {
-		if removeErr := e.host.Remove(ctx, run.tempPath, cfg.Sudo); removeErr != nil {
-			e.logger.Warn("env candidate cleanup failed", "service", run.target.def.ID, "error", removeErr)
-		}
+		run.run.ValidationLines = lines
+		e.cleanup(ctx, run)
 
-		run.wrote = false
-
-		return fmt.Errorf("validate: env_validation_failed: %d lines", len(lines))
+		return fmt.Errorf("validate: %w: %d lines", errEnvValidationFailed, len(lines))
 	}
 
-	e.step(ctx, run, model.EnvStepValidate, fmt.Sprintf("validation passed (%d lines)", len(lines)))
+	e.progress(ctx, run, model.EnvStepValidate, model.EnvRunSucceeded,
+		fmt.Sprintf("validation passed (%d lines)", len(lines)))
 
 	return nil
+}
+
+// placeCandidate writes the rendered file where the next step needs it:
+// beside the target when touchgrass installs it, or in a private temp
+// dir when write_cmd owns the install and only the validator reads it.
+func (e *Env) placeCandidate(ctx context.Context, run *envRun) error {
+	cfg := run.target.cfg
+
+	if cfg.WriteCmd == "" {
+		run.tempPath = envTempPath(cfg.Target.Path, run.run.ID)
+
+		if err := e.host.WriteFile(ctx, run.tempPath, run.rendered, cfg.Target.Mode, cfg.Target.Owner, cfg.Sudo); err != nil {
+			return err
+		}
+
+		run.wrote = true
+
+		return nil
+	}
+
+	if cfg.ValidateCmd == "" {
+		return nil
+	}
+
+	dir, err := os.MkdirTemp("", "touchgrass-env-")
+	if err != nil {
+		return fmt.Errorf("creating private candidate dir: %w", err)
+	}
+
+	run.privateDir = dir
+	run.tempPath = filepath.Join(dir, filepath.Base(cfg.Target.Path))
+
+	if err := os.WriteFile(run.tempPath, run.rendered, defaultEnvFileMode); err != nil {
+		return fmt.Errorf("writing private candidate: %w", err)
+	}
+
+	return nil
+}
+
+// recordValidation stores the validator outcome, logging on failure.
+func (e *Env) recordValidation(ctx context.Context, serviceID string, ok bool, lines []string) {
+	validation := model.EnvValidation{ServiceID: serviceID, OK: ok, Lines: lines, At: time.Now()}
+
+	if err := e.store.UpsertValidation(ctx, validation); err != nil {
+		e.logger.Error("env validation record failed", "service", serviceID, "error", err)
+	}
+}
+
+// lineCollector gathers bounded command output.
+type lineCollector struct {
+	lines []string
+}
+
+// collect appends one line within the caps.
+func (c *lineCollector) collect(line string) {
+	if len(c.lines) >= envMaxValidationLines {
+		return
+	}
+
+	if len(line) > envMaxValidationLineLen {
+		line = line[:envMaxValidationLineLen]
+	}
+
+	c.lines = append(c.lines, line)
+}
+
+// runEnv builds the variables every env command receives.
+func runEnv(run *envRun) []string {
+	return []string{
+		"TOUCHGRASS_ENV_CANDIDATE=" + run.tempPath,
+		"TOUCHGRASS_ENV_TARGET=" + run.target.cfg.Target.Path,
+		"TOUCHGRASS_ENV_SERVICE=" + run.target.def.ID,
+		"TOUCHGRASS_ENV_RUN=" + run.run.ID,
+	}
 }
 
 // runValidator executes validate_cmd against the candidate and collects
 // bounded output lines.
 func (e *Env) runValidator(ctx context.Context, run *envRun) ([]string, error) {
 	cfg := run.target.cfg
-	lines := []string{}
-	collect := func(line string) {
-		if len(lines) >= envMaxValidationLines {
-			return
-		}
-
-		if len(line) > envMaxValidationLineLen {
-			line = line[:envMaxValidationLineLen]
-		}
-
-		lines = append(lines, line)
-	}
+	collector := &lineCollector{lines: []string{}}
 
 	validateCtx, cancel := context.WithTimeout(ctx, e.validateTimeout)
 	defer cancel()
 
-	env := []string{
-		"TOUCHGRASS_ENV_CANDIDATE=" + run.tempPath,
-		"TOUCHGRASS_ENV_TARGET=" + cfg.Target.Path,
-		"TOUCHGRASS_ENV_SERVICE=" + run.target.def.ID,
-	}
-
-	if err := e.host.Run(validateCtx, cfg.ValidateCmd+" "+run.tempPath, env, cfg.Sudo, collect); err != nil {
+	err := e.host.Run(validateCtx, cfg.ValidateCmd+" "+run.tempPath, nil, runEnv(run), cfg.Sudo, collector.collect)
+	if err != nil {
 		e.logger.Warn("env validation failed", "service", run.target.def.ID, "error", err)
 
-		return lines, err
+		return collector.lines, err
 	}
 
-	return lines, nil
+	return collector.lines, nil
 }
 
-// writeRestartProbe swaps the file in, restarts the service, and probes it.
+// writeRestartProbe installs the file, restarts the service, and probes it.
 func (e *Env) writeRestartProbe(ctx context.Context, run *envRun) error {
-	cfg := run.target.cfg
-
-	hadPrevious, err := e.host.Replace(ctx, run.tempPath, cfg.Target.Path, cfg.Sudo)
-	if err != nil {
-		e.logger.Error("env file replace failed", "service", run.target.def.ID, "error", err)
-
-		return errors.New("write: replacing the target file failed")
+	if err := e.install(ctx, run); err != nil {
+		return err
 	}
 
-	run.hadPrevious = hadPrevious
-	run.wrote = false
-	e.step(ctx, run, model.EnvStepWrite, "wrote target file (previous kept as .bak)")
+	run.swapped = true
 
 	if err := e.restart(ctx, run); err != nil {
 		return err
@@ -461,11 +553,62 @@ func (e *Env) writeRestartProbe(ctx context.Context, run *envRun) error {
 	return e.probe(ctx, run)
 }
 
+// install swaps the candidate in, either by touchgrass's atomic rename
+// (keeping one .bak) or by piping the rendered file to write_cmd.
+func (e *Env) install(ctx context.Context, run *envRun) error {
+	cfg := run.target.cfg
+
+	if cfg.WriteCmd != "" {
+		e.progress(ctx, run, model.EnvStepWrite, model.EnvRunRunning, "running write command")
+
+		lines, err := e.pipeWrite(ctx, run, run.rendered)
+		if err != nil {
+			e.logger.Error("env write command failed", "service", run.target.def.ID, "error", err)
+			run.run.ValidationLines = lines
+			e.recordValidation(ctx, run.target.def.ID, false, lines)
+
+			return fmt.Errorf("write: %w", errEnvWriteCmdFailed)
+		}
+
+		e.progress(ctx, run, model.EnvStepWrite, model.EnvRunSucceeded, "write command installed the file")
+
+		return nil
+	}
+
+	hadPrevious, err := e.host.Replace(ctx, run.tempPath, cfg.Target.Path, cfg.Sudo)
+	if err != nil {
+		e.logger.Error("env file replace failed", "service", run.target.def.ID, "error", err)
+
+		return fmt.Errorf("write: %w", errEnvReplaceFailed)
+	}
+
+	run.hadPrevious = hadPrevious
+	run.wrote = false
+	e.progress(ctx, run, model.EnvStepWrite, model.EnvRunSucceeded, "wrote target file (previous kept as .bak)")
+
+	return nil
+}
+
+// pipeWrite streams content to write_cmd and returns its output lines.
+func (e *Env) pipeWrite(ctx context.Context, run *envRun, content []byte) ([]string, error) {
+	cfg := run.target.cfg
+	collector := &lineCollector{lines: []string{}}
+
+	writeCtx, cancel := context.WithTimeout(ctx, e.validateTimeout)
+	defer cancel()
+
+	if err := e.host.Run(writeCtx, cfg.WriteCmd, content, runEnv(run), cfg.Sudo, collector.collect); err != nil {
+		return collector.lines, err
+	}
+
+	return collector.lines, nil
+}
+
 // restart runs restart_cmd with streamed lines.
 func (e *Env) restart(ctx context.Context, run *envRun) error {
 	cfg := run.target.cfg
 	if cfg.RestartCmd == "" {
-		e.step(ctx, run, model.EnvStepRestart, "no restart_cmd configured; skipped")
+		e.progress(ctx, run, model.EnvStepRestart, model.EnvRunSucceeded, "no restart_cmd configured; skipped")
 
 		return nil
 	}
@@ -473,16 +616,18 @@ func (e *Env) restart(ctx context.Context, run *envRun) error {
 	restartCtx, cancel := context.WithTimeout(ctx, e.restartTimeout)
 	defer cancel()
 
-	e.step(ctx, run, model.EnvStepRestart, "restarting")
+	e.progress(ctx, run, model.EnvStepRestart, model.EnvRunRunning, "restarting")
 
-	err := e.host.Run(restartCtx, cfg.RestartCmd, nil, cfg.Sudo, func(line string) {
-		e.step(ctx, run, model.EnvStepRestart, line)
+	err := e.host.Run(restartCtx, cfg.RestartCmd, nil, runEnv(run), cfg.Sudo, func(line string) {
+		e.progress(ctx, run, model.EnvStepRestart, model.EnvRunRunning, line)
 	})
 	if err != nil {
 		e.logger.Error("env restart failed", "service", run.target.def.ID, "error", err)
 
-		return errors.New("restart: restart command failed")
+		return fmt.Errorf("restart: %w", errEnvRestartFailed)
 	}
+
+	e.progress(ctx, run, model.EnvStepRestart, model.EnvRunSucceeded, "restarted")
 
 	return nil
 }
@@ -491,7 +636,7 @@ func (e *Env) restart(ctx context.Context, run *envRun) error {
 func (e *Env) probe(ctx context.Context, run *envRun) error {
 	cfg := run.target.cfg
 	if cfg.ProbeURL == "" || e.prober == nil {
-		e.step(ctx, run, model.EnvStepProbe, "no probe_url configured; skipped")
+		e.progress(ctx, run, model.EnvStepProbe, model.EnvRunSucceeded, "no probe_url configured; skipped")
 
 		return nil
 	}
@@ -504,7 +649,7 @@ func (e *Env) probe(ctx context.Context, run *envRun) error {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	e.step(ctx, run, model.EnvStepProbe, "probing "+cfg.ProbeURL)
+	e.progress(ctx, run, model.EnvStepProbe, model.EnvRunRunning, "probing "+cfg.ProbeURL)
 
 	ticker := time.NewTicker(e.probeInterval)
 	defer ticker.Stop()
@@ -512,7 +657,7 @@ func (e *Env) probe(ctx context.Context, run *envRun) error {
 	for {
 		result, err := e.prober.Check(probeCtx, cfg.ProbeURL)
 		if err == nil && result.Healthy {
-			e.step(ctx, run, model.EnvStepProbe, "healthy")
+			e.progress(ctx, run, model.EnvStepProbe, model.EnvRunSucceeded, "healthy")
 
 			return nil
 		}
@@ -529,18 +674,9 @@ func (e *Env) probe(ctx context.Context, run *envRun) error {
 func (e *Env) succeed(ctx context.Context, run *envRun) {
 	serviceID := run.target.def.ID
 
-	rendered, err := e.render(run.entries)
-	if err != nil {
-		e.fail(ctx, run, fmt.Errorf("record: %w", err))
-
-		return
-	}
-
-	secret.Zero(rendered.data)
-
 	revisionID, err := e.store.InsertRevision(ctx, model.EnvRevision{
 		ServiceID: serviceID, CreatedBy: run.actor, Summary: run.summary,
-		RenderedSHA256: rendered.sha, Applied: true,
+		RenderedSHA256: run.sha, Applied: true,
 	}, snapshotEntries(run.entries))
 	if err != nil {
 		e.fail(ctx, run, fmt.Errorf("record: %w", err))
@@ -558,7 +694,7 @@ func (e *Env) succeed(ctx context.Context, run *envRun) {
 	run.run.RevisionID = &revisionID
 	run.run.State = model.EnvRunSucceeded
 	run.run.FinishedAt = &finished
-	e.step(ctx, run, model.EnvStepDone, fmt.Sprintf("applied as revision %d", revisionID))
+	e.progress(ctx, run, model.EnvStepDone, model.EnvRunSucceeded, fmt.Sprintf("applied as revision %d", revisionID))
 
 	detail := "apply " + describeDiff(run.diff)
 	if run.summary != "" {
@@ -572,38 +708,22 @@ func (e *Env) succeed(ctx context.Context, run *envRun) {
 // records the failed run and audits it.
 func (e *Env) fail(ctx context.Context, run *envRun, cause error) {
 	serviceID := run.target.def.ID
-	cfg := run.target.cfg
 
 	e.logger.Error("env apply failed", "service", serviceID, "run", run.run.ID, "error", cause)
+	e.cleanup(ctx, run)
 
-	if run.wrote {
-		if err := e.host.Remove(ctx, run.tempPath, cfg.Sudo); err != nil {
-			e.logger.Warn("env candidate cleanup failed", "service", serviceID, "error", err)
-		}
-	}
-
-	if e.swapped(run) {
+	if run.swapped {
 		e.restoreAndRestart(ctx, run)
 	}
 
 	finished := time.Now()
 	run.run.State = model.EnvRunFailed
 	run.run.FinishedAt = &finished
-	e.step(ctx, run, model.EnvStepFailed, cause.Error())
+	run.run.Error = cause.Error()
+	e.progress(ctx, run, model.EnvStepFailed, model.EnvRunFailed, cause.Error())
 
 	detail := "apply failed (" + cause.Error() + ") " + describeDiff(run.diff)
 	e.record(ctx, serviceID, run.actor, model.AuditEnvApplyFailed, model.AuditFailure, detail)
-}
-
-// swapped reports whether the target file was already replaced.
-func (e *Env) swapped(run *envRun) bool {
-	for _, step := range run.run.Steps {
-		if step.Step == model.EnvStepWrite {
-			return true
-		}
-	}
-
-	return false
 }
 
 // restoreAndRestart puts the previous file back and reruns restart_cmd.
@@ -611,14 +731,15 @@ func (e *Env) restoreAndRestart(ctx context.Context, run *envRun) {
 	serviceID := run.target.def.ID
 	cfg := run.target.cfg
 
-	if err := e.host.Restore(ctx, cfg.Target.Path, run.hadPrevious, cfg.Sudo); err != nil {
+	if err := e.restoreFile(ctx, run); err != nil {
 		e.logger.Error("env file restore failed", "service", serviceID, "error", err)
-		e.step(ctx, run, model.EnvStepWrite, "restoring the previous file failed")
+		e.progress(ctx, run, model.EnvStepWrite, model.EnvRunFailed, "restoring the previous file failed")
 
 		return
 	}
 
-	e.step(ctx, run, model.EnvStepWrite, "restored previous file")
+	run.run.Restored = true
+	e.progress(ctx, run, model.EnvStepWrite, model.EnvRunSucceeded, "restored previous file")
 
 	if cfg.RestartCmd == "" {
 		return
@@ -627,25 +748,67 @@ func (e *Env) restoreAndRestart(ctx context.Context, run *envRun) {
 	restartCtx, cancel := context.WithTimeout(ctx, e.restartTimeout)
 	defer cancel()
 
-	err := e.host.Run(restartCtx, cfg.RestartCmd, nil, cfg.Sudo, func(line string) {
-		e.step(ctx, run, model.EnvStepRestart, line)
+	err := e.host.Run(restartCtx, cfg.RestartCmd, nil, runEnv(run), cfg.Sudo, func(line string) {
+		e.progress(ctx, run, model.EnvStepRestart, model.EnvRunRunning, line)
 	})
 	if err != nil {
 		e.logger.Error("env restart after restore failed", "service", serviceID, "error", err)
-		e.step(ctx, run, model.EnvStepRestart, "restart after restore failed")
+		e.progress(ctx, run, model.EnvStepRestart, model.EnvRunFailed, "restart after restore failed")
 
 		return
 	}
 
-	e.step(ctx, run, model.EnvStepRestart, "restarted on previous file")
+	e.progress(ctx, run, model.EnvStepRestart, model.EnvRunSucceeded, "restarted on previous file")
 }
 
-// step appends to the run log, persists it, and emits the SSE event.
-func (e *Env) step(ctx context.Context, run *envRun, step, message string) {
+// restoreFile puts the previous file back: the .bak when touchgrass
+// installed the file, or the applied revision re-rendered through
+// write_cmd when the command owns the install.
+func (e *Env) restoreFile(ctx context.Context, run *envRun) error {
+	cfg := run.target.cfg
+
+	if cfg.WriteCmd == "" {
+		return e.host.Restore(ctx, cfg.Target.Path, run.hadPrevious, cfg.Sudo)
+	}
+
+	snapshot, err := e.appliedSnapshot(ctx, run.target.def.ID)
+	if err != nil {
+		return err
+	}
+
+	if len(snapshot) == 0 {
+		return errEnvNoRevision
+	}
+
+	previous := make([]model.EnvEntry, 0, len(snapshot))
+
+	for key, entry := range snapshot {
+		previous = append(previous, model.EnvEntry{
+			ServiceID: run.target.def.ID, Key: key, Ciphertext: entry.Ciphertext, Nonce: entry.Nonce,
+			KeyID: entry.KeyID, IsSecret: entry.IsSecret, State: model.EnvStateApplied,
+		})
+	}
+
+	rendered, err := e.render(previous)
+	if err != nil {
+		return err
+	}
+
+	defer secret.Zero(rendered.data)
+
+	if _, err := e.pipeWrite(ctx, run, rendered.data); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// progress appends to the run log, persists it, and emits the SSE event.
+func (e *Env) progress(ctx context.Context, run *envRun, name, status, message string) {
 	at := time.Now()
 
 	if len(run.run.Steps) < envMaxRunSteps {
-		run.run.Steps = append(run.run.Steps, model.EnvRunStep{Step: step, Message: message, At: at})
+		run.run.Steps = append(run.run.Steps, model.EnvRunStep{Name: name, Status: status, Message: message, At: at})
 	}
 
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), envPostRunTimeout)
@@ -657,7 +820,7 @@ func (e *Env) step(ctx context.Context, run *envRun, step, message string) {
 
 	e.emit(model.Event{
 		Type: model.EventEnvApply, ServiceID: run.target.def.ID, RunID: run.run.ID,
-		Step: step, Message: message, At: at,
+		Step: name, Message: message, At: at,
 	})
 }
 

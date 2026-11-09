@@ -74,6 +74,8 @@ Environment only (no config file):
 | `DOCKER_HOST`                        | unix socket        | Docker daemon (standard client env)                    |
 | `TOUCHGRASS_ADMIN_PASSWORD`          | required           | Seeds the `admin` user on first boot; rotate in the Users screen after |
 | `TOUCHGRASS_COOKIE_SECURE`           | `false`            | Set `true` when serving behind TLS                     |
+| `TOUCHGRASS_ENV_KEY_FILE`            | (empty)            | 0600 file with the AES-256 key for the env pillar; empty = pillar off |
+| `TOUCHGRASS_ENV_KEY`                 | (empty)            | Hex key inline (development only)                      |
 | `TOUCHGRASS_METRICS_INTERVAL`        | `30s`              | Metric sample cadence                                  |
 | `TOUCHGRASS_INVENTORY_INTERVAL`      | `2m`               | All-state Docker reconciliation cadence                |
 | `TOUCHGRASS_INVENTORY_WORKERS`       | `2`                | Maximum concurrent safe container inspections          |
@@ -130,6 +132,7 @@ make vet        # go vet
 make run        # run the server locally
 make dev        # API + Vite with hot reload
 make migrate    # schema migrations (up|status)
+./bin/touchgrass env import|set|apply --service <id>   # env pillar CLI (see docs/env)
 make help       # list targets
 ```
 

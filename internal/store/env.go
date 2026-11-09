@@ -362,11 +362,18 @@ func (s *EnvStore) InsertRun(ctx context.Context, run model.EnvRun) error {
 		return err
 	}
 
+	lines, err := marshalLines(run.ValidationLines)
+	if err != nil {
+		return err
+	}
+
 	if _, err := s.db.sql.ExecContext(ctx,
-		`INSERT INTO env_runs (id, service_id, revision_id, state, started_at, finished_at, steps_json)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO env_runs
+		   (id, service_id, revision_id, state, started_at, finished_at, steps_json, error, validation_lines_json, restored)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		run.ID, run.ServiceID, nullInt64(run.RevisionID), run.State,
-		formatTime(run.StartedAt), formatNullTime(run.FinishedAt), steps); err != nil {
+		formatTime(run.StartedAt), formatNullTime(run.FinishedAt), steps, run.Error, lines, boolInt(run.Restored),
+	); err != nil {
 		return fmt.Errorf("inserting env run: %w", err)
 	}
 
@@ -380,9 +387,17 @@ func (s *EnvStore) UpdateRun(ctx context.Context, run model.EnvRun) error {
 		return err
 	}
 
+	lines, err := marshalLines(run.ValidationLines)
+	if err != nil {
+		return err
+	}
+
 	res, err := s.db.sql.ExecContext(ctx,
-		`UPDATE env_runs SET revision_id = ?, state = ?, finished_at = ?, steps_json = ? WHERE id = ?`,
-		nullInt64(run.RevisionID), run.State, formatNullTime(run.FinishedAt), steps, run.ID)
+		`UPDATE env_runs SET revision_id = ?, state = ?, finished_at = ?, steps_json = ?,
+		   error = ?, validation_lines_json = ?, restored = ?
+		 WHERE id = ?`,
+		nullInt64(run.RevisionID), run.State, formatNullTime(run.FinishedAt), steps,
+		run.Error, lines, boolInt(run.Restored), run.ID)
 	if err != nil {
 		return fmt.Errorf("updating env run: %w", err)
 	}
@@ -407,12 +422,18 @@ func (s *EnvStore) GetRun(ctx context.Context, serviceID, id string) (model.EnvR
 		startedAt  string
 		finishedAt sql.NullString
 		steps      string
+		lines      string
+		restored   int
 	)
 
 	if err := s.db.sql.QueryRowContext(ctx,
-		`SELECT id, service_id, revision_id, state, started_at, finished_at, steps_json
+		`SELECT id, service_id, revision_id, state, started_at, finished_at, steps_json,
+		   error, validation_lines_json, restored
 		 FROM env_runs WHERE service_id = ? AND id = ?`, serviceID, id,
-	).Scan(&run.ID, &run.ServiceID, &revisionID, &run.State, &startedAt, &finishedAt, &steps); err != nil {
+	).Scan(
+		&run.ID, &run.ServiceID, &revisionID, &run.State, &startedAt, &finishedAt, &steps,
+		&run.Error, &lines, &restored,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.EnvRun{}, fmt.Errorf("%w: %q", ErrEnvRunNotFound, id)
 		}
@@ -432,6 +453,7 @@ func (s *EnvStore) GetRun(ctx context.Context, serviceID, id string) (model.EnvR
 
 	run.StartedAt = started
 	run.FinishedAt = finished
+	run.Restored = restored == 1
 	run.Steps = []model.EnvRunStep{}
 
 	if revisionID.Valid {
@@ -443,22 +465,32 @@ func (s *EnvStore) GetRun(ctx context.Context, serviceID, id string) (model.EnvR
 		return model.EnvRun{}, fmt.Errorf("decoding env run steps: %w", err)
 	}
 
+	if err := json.Unmarshal([]byte(lines), &run.ValidationLines); err != nil {
+		return model.EnvRun{}, fmt.Errorf("decoding env run validation lines: %w", err)
+	}
+
+	if len(run.ValidationLines) == 0 {
+		run.ValidationLines = nil
+	}
+
 	return run, nil
 }
 
 // FailRunningRuns marks every run still recorded as running as failed with
 // the given note. It reconciles runs orphaned by a process restart.
 func (s *EnvStore) FailRunningRuns(ctx context.Context, at time.Time, note string) (int64, error) {
-	step, err := marshalSteps([]model.EnvRunStep{{Step: model.EnvStepFailed, Message: note, At: at}})
+	step, err := marshalSteps([]model.EnvRunStep{
+		{Name: model.EnvStepFailed, Status: model.EnvRunFailed, Message: note, At: at},
+	})
 	if err != nil {
 		return 0, err
 	}
 
 	res, err := s.db.sql.ExecContext(ctx,
-		`UPDATE env_runs SET state = ?, finished_at = ?,
+		`UPDATE env_runs SET state = ?, finished_at = ?, error = ?,
 		   steps_json = json_insert(steps_json, '$[#]', json_extract(?, '$[0]'))
-		 WHERE state = ?`,
-		model.EnvRunFailed, formatTime(at), step, model.EnvRunRunning)
+		 WHERE state IN (?, ?)`,
+		model.EnvRunFailed, formatTime(at), note, step, model.EnvRunRunning, model.EnvRunQueued)
 	if err != nil {
 		return 0, fmt.Errorf("failing orphaned env runs: %w", err)
 	}
@@ -472,15 +504,11 @@ func (s *EnvStore) FailRunningRuns(ctx context.Context, at time.Time, note strin
 }
 
 // UpsertValidation stores the latest validator outcome for a service.
+// MissingRequired is derived from Lines at read time and not stored.
 func (s *EnvStore) UpsertValidation(ctx context.Context, validation model.EnvValidation) error {
-	lines := validation.Lines
-	if lines == nil {
-		lines = []string{}
-	}
-
-	encoded, err := json.Marshal(lines)
+	encoded, err := marshalLines(validation.Lines)
 	if err != nil {
-		return fmt.Errorf("encoding env validation lines: %w", err)
+		return err
 	}
 
 	if validation.At.IsZero() {
@@ -490,7 +518,7 @@ func (s *EnvStore) UpsertValidation(ctx context.Context, validation model.EnvVal
 	if _, err := s.db.sql.ExecContext(ctx,
 		`INSERT INTO env_validations (service_id, ok, lines_json, at) VALUES (?, ?, ?, ?)
 		 ON CONFLICT(service_id) DO UPDATE SET ok = excluded.ok, lines_json = excluded.lines_json, at = excluded.at`,
-		validation.ServiceID, boolInt(validation.OK), string(encoded), formatTime(validation.At)); err != nil {
+		validation.ServiceID, boolInt(validation.OK), encoded, formatTime(validation.At)); err != nil {
 		return fmt.Errorf("upserting env validation: %w", err)
 	}
 
@@ -525,12 +553,27 @@ func (s *EnvStore) GetValidation(ctx context.Context, serviceID string) (model.E
 	validation.OK = ok == 1
 	validation.At = moment
 	validation.Lines = []string{}
+	validation.MissingRequired = []string{}
 
 	if err := json.Unmarshal([]byte(lines), &validation.Lines); err != nil {
 		return model.EnvValidation{}, false, fmt.Errorf("decoding env validation lines: %w", err)
 	}
 
 	return validation, true, nil
+}
+
+// marshalLines encodes a string list, never as null.
+func marshalLines(lines []string) (string, error) {
+	if lines == nil {
+		lines = []string{}
+	}
+
+	encoded, err := json.Marshal(lines)
+	if err != nil {
+		return "", fmt.Errorf("encoding env lines: %w", err)
+	}
+
+	return string(encoded), nil
 }
 
 // scanEnvEntry maps one env_entries row.

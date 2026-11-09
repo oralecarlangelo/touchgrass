@@ -32,10 +32,12 @@ enforce retention.
                          │   ├─ performance (correlate) │
                          │   ├─ security (episodes)    │
                          │   ├─ onboarding (promote)    │
+                         │   ├─ env (encrypted env file)│
                          │   ├─ notify (webhook/email)  │
                          │   └─ audit (append-only)     │
                          │                              │
                          │  internal/store (SQLite)     │
+                         │  internal/secret (AES-GCM)   │
                          │  source adapters             │
                          │   ├─ nginxlog (HTTP timing)  │
                          │   ├─ dbstats (pg/redis)      │
@@ -51,7 +53,8 @@ enforce retention.
 ```
 
 Outbound: the deploy engine shells out to service-configured cutover scripts
-for cutovers and rollbacks. Repository examples may include a Ticketnation
+for cutovers and rollbacks; the env pillar writes each service's env file and
+shells out to its configured validate and restart commands (ADR-0012). Repository examples may include a Ticketnation
 blue-green adapter, but the engine has no Ticketnation-specific branch.
 Notification providers POST webhooks or send email through generic contracts.
 
@@ -108,7 +111,8 @@ and private runbooks do not require an ADR because they are not product logic.
   (also the uptime probe
   target); services (CRUD incl. `DELETE`, metrics, deploys, deploy,
   cutover, rollback); onboarding suggest; alert rules; notifications;
-  audit; users (admin-only account CRUD); issues (+ occurrences,
+  audit; users (admin-only account CRUD); per-service env (view, stage,
+  reveal, diff, discard, import, apply, runs, revisions, rollback); issues (+ occurrences,
   rules, per-issue logs); container logs
   (+ stats, context); SDK logs ingest; API keys; fleet/system
   (containers, host history); databases (health, backups, restore,
@@ -150,6 +154,7 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
 | audit | append-only action log (cutover, rollback, deploy, login, db_*, service_*, user_*) |
 | users | managed login accounts: username, bcrypt hash, role, disabled flag |
 | settings | alert rules, notifications, API keys, retention caps |
+| env_entries / env_revisions / env_runs / env_validations | AES-256-GCM ciphertext per key (working set + applied snapshots), apply runs with step logs, last validator output; plaintext never stored |
 
 - Migrations: versioned `migrations/*.sql` applied in order by an internal
   runner tracking `schema_migrations`. Forward-only in v1.
@@ -229,7 +234,8 @@ Environment variables only in v1 (no config file, no Viper):
 
 - `TOUCHGRASS_ADDR` (default `127.0.0.1:8080`), `TOUCHGRASS_DB`
   (default `./touchgrass.db`), `TOUCHGRASS_ADMIN_PASSWORD` (required),
-  `TOUCHGRASS_DATA_RETENTION_*` overrides.
+  `TOUCHGRASS_DATA_RETENTION_*` overrides, `TOUCHGRASS_ENV_KEY_FILE`
+  (0600 key file; enables the env pillar) or `TOUCHGRASS_ENV_KEY` (dev).
 - Logs to stdout, JSON via `slog`. Graceful shutdown on SIGTERM
   (drain HTTP + stop schedulers).
 - Performance, maintenance, and each native source have independent enable
@@ -242,6 +248,7 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
 
 - `touchgrass serve` (default) — run the server
 - `touchgrass migrate [up|status]` — one-off schema admin
+- `touchgrass env import|set|apply --service <id>` — env pillar for installers
 - `touchgrass version` — version + build SHA
 
 ## Web embedding and dev mode
@@ -290,6 +297,7 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
 - `service`/`store` interfaces stay host-agnostic so multi-host agents can
   slot behind them; `docker/` is the seam an agent would remote.
 - Tracing/APM stays out except OTel log correlation (ADR-0009);
-  browser/mobile SDKs, per-service RBAC scoping, SSO, and secrets
-  management are explicitly out — don't half-build them. The
+  browser/mobile SDKs, per-service RBAC scoping, SSO, and a general
+  secrets manager are explicitly out — don't half-build them. The env
+  pillar (ADR-0012) manages one env file per service and nothing more. The
   admin/viewer split (ADR-0010) is the whole role model.

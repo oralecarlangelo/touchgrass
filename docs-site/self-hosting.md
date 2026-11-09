@@ -26,6 +26,8 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 | `TOUCHGRASS_ADDR`                  | `127.0.0.1:8080`   | Listen address; keep loopback behind a proxy         |
 | `APP_ENV`                          | `prod`             | `dev` enables the Vite proxy; `prod` serves embedded |
 | `TOUCHGRASS_COOKIE_SECURE`         | `false`            | Set `true` behind TLS                                |
+| `TOUCHGRASS_ENV_KEY_FILE`          | (empty)            | 0600 key file enabling [env management](/env)        |
+| `TOUCHGRASS_ENV_KEY`               | (empty)            | Inline hex key — development only                    |
 | `TOUCHGRASS_METRICS_INTERVAL`      | `30s`              | Container sample cadence                             |
 | `TOUCHGRASS_WATCH_INTERVAL`        | `5s`               | Live-color poll cadence                              |
 | `TOUCHGRASS_LOG_POLL_INTERVAL`     | `5s`               | Container log tail cadence                           |

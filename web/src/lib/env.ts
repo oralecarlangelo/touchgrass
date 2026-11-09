@@ -466,6 +466,24 @@ export function initialRunState(runId: string, startedAt = new Date().toISOStrin
   };
 }
 
+// stepFromMessage reads the pipeline step a run message names ("validate: …").
+function stepFromMessage(message: string): ApplyPipelineStep | null {
+  const match = /^(render|validate|write|restart|probe):/.exec(message.trim());
+
+  return match !== null && isPipelineStep(match[1]) ? match[1] : null;
+}
+
+// markEarlierDone completes every step before `step` that has not failed.
+function markEarlierDone(steps: Record<ApplyPipelineStep, StepStatus>, step: ApplyPipelineStep): void {
+  const index = applyStepOrder.indexOf(step);
+
+  applyStepOrder.forEach((candidate, position) => {
+    if (position < index && steps[candidate] !== 'failed') {
+      steps[candidate] = 'done';
+    }
+  });
+}
+
 function isPipelineStep(step: string): step is ApplyPipelineStep {
   return (applyStepOrder as readonly string[]).includes(step);
 }
@@ -504,10 +522,14 @@ export function reduceRunEvent(state: ApplyRunState, event: EnvApplyEvent): Appl
   }
 
   if (event.step === 'failed') {
-    const running = applyStepOrder.find((step) => state.steps[step] === 'running') ?? null;
+    // A run can finish before the stream is attached; the failure message is
+    // prefixed with the step name ("validate: …"), so fall back to it.
+    const running =
+      applyStepOrder.find((step) => state.steps[step] === 'running') ?? stepFromMessage(event.message);
     const steps = { ...state.steps };
 
     if (running !== null) {
+      markEarlierDone(steps, running);
       steps[running] = 'failed';
     }
 
@@ -568,13 +590,30 @@ export function mergeRun(state: ApplyRunState, run: EnvRun): ApplyRunState {
     if (!isPipelineStep(step.name)) {
       continue;
     }
-    steps[step.name] = step.status;
-    if (step.status === 'failed') {
+    // The server says `succeeded`; the stepper says `done`.
+    const stepStatus: StepStatus = step.status === 'succeeded' ? 'done' : step.status;
+    markEarlierDone(steps, step.name);
+    steps[step.name] = stepStatus;
+    if (stepStatus === 'failed') {
       failedStep = step.name;
     }
   }
 
   const status = state.status !== 'running' ? state.status : run.status;
+
+  if (status === 'failed' && failedStep === null) {
+    // Older records leave the failing step "running"; pin the failure on it,
+    // or on the step named in the error.
+    const culprit =
+      applyStepOrder.find((step) => steps[step] === 'running') ??
+      stepFromMessage(typeof run.error === 'string' ? run.error : '');
+
+    if (culprit !== null) {
+      markEarlierDone(steps, culprit);
+      steps[culprit] = 'failed';
+      failedStep = culprit;
+    }
+  }
   const polledLines = run.steps
     .filter((step) => step.message !== '')
     .map((step) => ({ at: step.at, step: step.name, message: step.message }));

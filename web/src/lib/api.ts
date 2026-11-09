@@ -1525,7 +1525,8 @@ export type EnvRunStatus = 'running' | 'done' | 'failed';
 
 export interface EnvRunStep {
   name: string;
-  status: 'pending' | 'running' | 'done' | 'failed';
+  // The server reports `succeeded`; the stepper's own vocabulary is `done`.
+  status: 'pending' | 'running' | 'succeeded' | 'done' | 'failed';
   message: string;
   at: string;
 }
@@ -1615,9 +1616,10 @@ export async function applyEnv(
 }
 
 export async function fetchEnvRun(serviceId: string, runId: string): Promise<EnvRun> {
-  const body = await request<EnvRun>(envPath(serviceId, `/runs/${encodeURIComponent(runId)}`));
+  const body = await request<EnvRun & { run_id?: string }>(envPath(serviceId, `/runs/${encodeURIComponent(runId)}`));
 
-  return { ...body, steps: body.steps ?? [] };
+  // The server names the id `run_id`; older fixtures used `id`.
+  return { ...body, id: body.id ?? body.run_id ?? runId, steps: body.steps ?? [] };
 }
 
 export async function fetchEnvRevisions(serviceId: string): Promise<EnvRevision[]> {

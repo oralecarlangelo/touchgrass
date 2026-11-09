@@ -234,6 +234,37 @@ describe('apply run state machine', () => {
     expect(reduceRunEvent(initialRunState('run-1'), { ...event('render'), run_id: 'other' })).toEqual(initialRunState('run-1'));
   });
 
+  it('pins a failure from the message when no step was seen running', () => {
+    const state = reduceRunEvent(initialRunState('run-1'), event('failed', 'validate: env_validation_failed: 2 lines'));
+
+    expect(state.status).toBe('failed');
+    expect(state.failedStep).toBe('validate');
+    expect(state.steps).toMatchObject({ render: 'done', validate: 'failed', write: 'pending' });
+  });
+
+  it('merges a server record that leaves the failing step running and uses succeeded', () => {
+    const run: EnvRun = {
+      id: 'run-1',
+      service_id: 'svc',
+      status: 'failed',
+      started_at: '2026-11-10T00:00:00Z',
+      finished_at: '2026-11-10T00:00:01Z',
+      steps: [
+        { name: 'render', status: 'succeeded', message: 'rendered 3 keys', at: '2026-11-10T00:00:00Z' },
+        { name: 'validate', status: 'running', message: 'validating candidate', at: '2026-11-10T00:00:00Z' },
+        { name: 'failed', status: 'failed', message: 'validate: env_validation_failed: 2 lines', at: '2026-11-10T00:00:01Z' },
+      ],
+      error: 'validate: env_validation_failed: 2 lines',
+      validation_lines: ['INVALID toy:PORT: required', 'missing required keys:PORT'],
+    };
+    const merged = mergeRun(initialRunState('run-1'), run);
+
+    expect(merged.status).toBe('failed');
+    expect(merged.failedStep).toBe('validate');
+    expect(merged.steps).toMatchObject({ render: 'done', validate: 'failed', write: 'pending' });
+    expect(merged.validatorLines).toEqual(['INVALID toy:PORT: required', 'missing required keys:PORT']);
+  });
+
   it('merges a polled run without regressing a finished state', () => {
     const run: EnvRun = {
       id: 'run-1',

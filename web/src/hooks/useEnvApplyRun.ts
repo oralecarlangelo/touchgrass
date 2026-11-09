@@ -36,12 +36,14 @@ export function useEnvApplyRun({
   const [run, setRun] = useState<ApplyRunState | null>(null);
   const [streamLost, setStreamLost] = useState(false);
   const settledRef = useRef<string | null>(null);
+  const reconciledRef = useRef<string | null>(null);
   const runRef = useRef<ApplyRunState | null>(null);
 
   runRef.current = run;
 
   const start = useCallback((runId: string) => {
     settledRef.current = null;
+    reconciledRef.current = null;
     setStreamLost(false);
     setRun(initialRunState(runId));
   }, []);
@@ -50,6 +52,25 @@ export function useEnvApplyRun({
     setRun(null);
     setStreamLost(false);
   }, []);
+
+  // Once the stream reports a terminal state, read the persisted record once
+  // so a run that finished before the stream attached still shows every step.
+  useEffect(() => {
+    if (run === null || run.status === 'running' || reconciledRef.current === run.runId) {
+      return;
+    }
+
+    reconciledRef.current = run.runId;
+    const { runId } = run;
+
+    void fetchEnvRun(serviceId, runId)
+      .then((fetched) => {
+        setRun((current) => (current === null || current.runId !== runId ? current : mergeRun(current, fetched)));
+      })
+      .catch(() => {
+        // The stream already told us the outcome; the record is a bonus.
+      });
+  }, [run, serviceId]);
 
   // Fire onSettled exactly once per run.
   useEffect(() => {

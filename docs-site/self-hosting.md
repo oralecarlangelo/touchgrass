@@ -7,10 +7,45 @@ covers the common mistakes.
 ## Run it
 
 ```bash
-export TOUCHGRASS_ADMIN_PASSWORD='...'   # required, never commit it
 export TOUCHGRASS_DB=/data/touchgrass.db # default ./touchgrass.db
 ./touchgrass serve                       # listens on 127.0.0.1:8080
+cat /data/initial-admin-password         # first boot only: the one-time admin password
 ```
+
+## First login
+
+There is no default password. On the first boot touchgrass generates a
+one-time password for the `admin` account and writes it to
+`initial-admin-password` in the same directory as the database, readable
+only by the user the server runs as. The server logs where the file is,
+never what it contains.
+
+1. Read the file (`docker compose exec touchgrass cat
+   /data/initial-admin-password` in the Docker image).
+2. Sign in as `admin` with it. The console shows one screen: choose your
+   own password (12 characters or more).
+3. That is it — the one-time password stops working and the file is
+   deleted. Create a second admin in **Users** so one lost password never
+   locks everyone out.
+
+Everyone can change their own password later from the account menu;
+doing so signs them out everywhere else.
+
+**Lost a password** and no other admin can reset it in **Users**? On the
+host, as the user the server runs as and with the same `TOUCHGRASS_DB`:
+
+```bash
+touchgrass users reset-password                  # the admin account
+touchgrass users reset-password --username dana  # anyone else
+```
+
+It prints a new one-time password once; the account must replace it at
+the next login. The reset is recorded in the audit trail.
+
+**Prefer to set the password yourself?** Export
+`TOUCHGRASS_ADMIN_PASSWORD` (12 characters or more) before the first
+boot: the admin is seeded with it and no change is forced. It is ignored
+once an admin has chosen a password.
 
 `migrate up` runs automatically on boot; the binary self-applies
 schema versions. Put it behind nginx or Caddy for TLS, set
@@ -21,7 +56,7 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 
 | Variable                           | Default            | Meaning                                              |
 | ---------------------------------- | ------------------ | ---------------------------------------------------- |
-| `TOUCHGRASS_ADMIN_PASSWORD`        | (required)         | Seeds `admin` on first boot; managed in Users after  |
+| `TOUCHGRASS_ADMIN_PASSWORD`        | (empty)            | Optional seed for `admin`; empty = [generated one-time password](#first-login) |
 | `TOUCHGRASS_DB`                    | `./touchgrass.db`  | SQLite path (WAL sidecars live alongside it)         |
 | `TOUCHGRASS_ADDR`                  | `127.0.0.1:8080`   | Listen address; keep loopback behind a proxy         |
 | `APP_ENV`                          | `prod`             | `dev` enables the Vite proxy; `prod` serves embedded |

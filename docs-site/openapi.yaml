@@ -9,7 +9,11 @@ info:
     All routes except `/api/health`, `/api/auth/login`,
     `/api/ingest`, and `/api/ingest/logs` require the session
     cookie from login. Reads accept any role; every mutating
-    route requires the admin role (viewers get 403 `forbidden`).
+    route requires the admin role (viewers get 403 `forbidden`),
+    except `POST /api/auth/password`, which any role may call for
+    its own account. A session on a one-time password gets 403
+    `password_change_required` everywhere but `/api/auth/me`,
+    `/api/auth/password` and `/api/auth/logout`.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -97,11 +101,58 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [authenticated, username, role]
+                required: [authenticated, username, role, must_change_password]
                 properties:
                   authenticated: { type: boolean }
                   username: { type: string }
                   role: { type: string, enum: [admin, viewer] }
+                  must_change_password:
+                    type: boolean
+                    description: >-
+                      True while the account holds a one-time password (a
+                      generated first-boot password or a CLI reset). Every
+                      route except this one, `POST /auth/password` and
+                      `POST /auth/logout` then answers 403
+                      `password_change_required`.
+  /auth/password:
+    post:
+      operationId: changeOwnPassword
+      tags: [auth]
+      summary: Change the caller's own password (any role)
+      description: >-
+        Replaces the session user's password after proving the current one
+        and lifts the one-time-password restriction. The caller's other
+        sessions are ended; this one stays valid. A wrong current password
+        counts against the login rate limit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password: { type: string }
+                new_password:
+                  type: string
+                  minLength: 12
+                  description: 12 characters to 72 bytes; must differ from the current password
+      responses:
+        '204': { description: Password changed }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The current password is incorrect (`invalid_current_password`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many failed attempts from this address
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /users:
     get:
       operationId: listUsers

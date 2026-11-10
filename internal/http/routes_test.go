@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -723,5 +724,86 @@ func TestViewerWithNoServices(t *testing.T) {
 				t.Errorf("status %d reached=%t, want reached=%t", status, reached, wantReached)
 			}
 		})
+	}
+}
+
+// openAPIAccess is the capability and scope one documented operation
+// declares.
+type openAPIAccess struct {
+	capability string
+	scope      string
+}
+
+// openAPIOperations reads docs-site/openapi.yaml and returns, per
+// "METHOD /api/path", the x-touchgrass-* access extensions. The file is
+// scanned by indentation: paths at two spaces, methods at four, their
+// fields at six.
+func openAPIOperations(t *testing.T) map[string]openAPIAccess {
+	t.Helper()
+
+	body, err := os.ReadFile(filepath.Join("..", "..", "docs-site", "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("reading the OpenAPI document: %v", err)
+	}
+
+	operations := map[string]openAPIAccess{}
+	inPaths := false
+	path, operation := "", ""
+
+	for line := range strings.SplitSeq(string(body), "\n") {
+		switch {
+		case !strings.HasPrefix(line, " "):
+			inPaths = strings.HasPrefix(line, "paths:")
+		case !inPaths:
+		case strings.HasPrefix(line, "  /"):
+			path, operation = strings.TrimSuffix(strings.TrimSpace(line), ":"), ""
+		case strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "     "):
+			operation = strings.ToUpper(strings.TrimSuffix(strings.TrimSpace(line), ":")) + " /api" + path
+			operations[operation] = openAPIAccess{}
+		case strings.HasPrefix(line, "      x-touchgrass-capability: "):
+			access := operations[operation]
+			access.capability = strings.TrimPrefix(line, "      x-touchgrass-capability: ")
+			operations[operation] = access
+		case strings.HasPrefix(line, "      x-touchgrass-scope: "):
+			access := operations[operation]
+			access.scope = strings.TrimPrefix(line, "      x-touchgrass-scope: ")
+			operations[operation] = access
+		}
+	}
+
+	return operations
+}
+
+// The OpenAPI document states, per operation, the capability and scope
+// the route table enforces. A route added, removed, or re-guarded
+// without updating the document fails here.
+func TestOpenAPIDeclaresEveryRoutesAccess(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+	documented := openAPIOperations(t)
+
+	for _, rt := range server.routes() {
+		want := openAPIAccess{capability: string(rt.capability), scope: authz.ScopeOf(rt.capability).String()}
+		if rt.kind == guardPublic {
+			want = openAPIAccess{capability: "none", scope: "public"}
+		}
+
+		got, ok := documented[routeName(rt)]
+		if !ok {
+			t.Errorf("%s is not in docs-site/openapi.yaml", routeName(rt))
+
+			continue
+		}
+
+		if got != want {
+			t.Errorf("%s: OpenAPI says %+v, the route table enforces %+v", routeName(rt), got, want)
+		}
+
+		delete(documented, routeName(rt))
+	}
+
+	for name := range documented {
+		t.Errorf("docs-site/openapi.yaml documents %s, which is not in the route table", name)
 	}
 }

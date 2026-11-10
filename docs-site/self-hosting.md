@@ -31,6 +31,11 @@ never what it contains.
 Everyone can change their own password later from the account menu;
 doing so signs them out everywhere else.
 
+**Adding people.** Create accounts in **Users**. A `viewer` is
+read-only, and you can limit one to selected services so a developer
+sees only what they work on. The password you set is temporary: the
+user replaces it at first login. See [Users, roles & access](/access).
+
 **Lost a password** and no other admin can reset it in **Users**? On the
 host, as the user the server runs as and with the same `TOUCHGRASS_DB`:
 
@@ -40,7 +45,10 @@ touchgrass users reset-password --username dana  # anyone else
 ```
 
 It prints a new one-time password once; the account must replace it at
-the next login. The reset is recorded in the audit trail.
+the next login. The reset is recorded in the audit trail. The command
+changes the database only: sessions that account already holds on the
+running server become limited to the change-password screen on their
+next request. An admin's reset in **Users** ends them outright.
 
 **Prefer to set the password yourself?** Export
 `TOUCHGRASS_ADMIN_PASSWORD` (12 characters or more) before the first

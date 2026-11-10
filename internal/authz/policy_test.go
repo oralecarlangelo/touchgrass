@@ -296,3 +296,57 @@ func TestCapabilitiesOmitsFleetForScopedSubject(t *testing.T) {
 		t.Error("all-services viewer Capabilities() lacks host.read, want it")
 	}
 }
+
+// The public docs page prints the same matrix. Its viewer and admin
+// columns and its scope column must match the policy, so the page
+// cannot promise something the code does not do.
+func TestDocsPageMatchesPolicy(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile("../../docs-site/access.md")
+	if err != nil {
+		t.Fatalf("reading the access page: %v", err)
+	}
+
+	documented := map[authz.Capability][]string{}
+
+	for line := range strings.SplitSeq(string(body), "\n") {
+		if !strings.HasPrefix(line, "| `") {
+			continue
+		}
+
+		cells := strings.Split(strings.Trim(line, "| "), " | ")
+		if len(cells) != 5 {
+			continue
+		}
+
+		documented[authz.Capability(strings.Trim(cells[0], "`"))] = cells[2:]
+	}
+
+	for _, row := range loadMatrix(t) {
+		got, ok := documented[row.capability]
+		if !ok {
+			t.Errorf("docs-site/access.md has no row for %s", row.capability)
+
+			continue
+		}
+
+		want := []string{row.scope, yesNo(row.holds[model.RoleViewer]), yesNo(row.holds[model.RoleAdmin])}
+		if !slices.Equal(got, want) {
+			t.Errorf("docs-site/access.md says %s is %v, the policy says %v", row.capability, got, want)
+		}
+	}
+
+	if len(documented) != len(authz.Capabilities()) {
+		t.Errorf("docs-site/access.md lists %d capabilities, the policy has %d", len(documented), len(authz.Capabilities()))
+	}
+}
+
+// yesNo renders a matrix cell.
+func yesNo(holds bool) string {
+	if holds {
+		return "yes"
+	}
+
+	return "no"
+}

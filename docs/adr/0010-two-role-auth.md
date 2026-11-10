@@ -1,6 +1,8 @@
 # ADR-0010: Two-role auth — admin and viewer
 
-- Status: Accepted (2026-10-14)
+- Status: Accepted (2026-10-14); superseded in part by ADR-0014
+  (2026-11-10), which adds a per-user service scope. The two roles
+  below stand.
 - Source: S28 multi-user auth; overrides the "single admin
   credential" answers in the BRD (FR-P1, Q5) and the "no RBAC"
   lines in `docs/ARCHITECTURE.md` and `docs/threat-model.md`

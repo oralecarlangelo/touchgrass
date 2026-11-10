@@ -19,3 +19,4 @@ standards (`AGENTS.md`, `docs/ARCHITECTURE.md`,
 | [0011](0011-agentless-performance-diagnostics.md) | Agentless performance diagnostics | Accepted |
 | [0012](0012-encrypted-env-store.md) | Encrypted env store — secrets at rest under an operator key | Accepted |
 | [0013](0013-generated-first-boot-admin-password.md) | Generated first-boot admin password — one-time, replaced at first login | Accepted |
+| [0014](0014-roles-with-service-scope.md) | Roles with service scope — a role says what, a scope says where | Accepted |

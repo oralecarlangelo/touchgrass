@@ -122,6 +122,26 @@ Do not rely on `docker diff` as a complete forensic record.
 ## Security activation or policy controls are unavailable
 
 Only admins can activate monitoring, approve/ignore containers, mutate
-policies, or change finding workflow state. Viewers can inspect everything but
-remain read-only. Before activation, review every unknown and missing-expected
+policies, or change finding workflow state. Viewers with all services can
+inspect everything but remain read-only; a viewer limited to selected services
+does not see the Security screen at all. Before activation, review every unknown and missing-expected
 row; activation itself does not approve or modify containers.
+
+## "You don't have access" or a screen is missing
+
+The account is limited to selected services, or its role does not include
+what was asked. The header shows the role and scope next to the touchgrass
+name, for example `viewer · 2 services`.
+
+- A missing **Fleet, Security, Databases, Images, API keys or Users** entry
+  is expected for an account limited to selected services: those screens
+  cover the whole host.
+- A service that is not in the list has not been granted. An admin grants it
+  under **Users → Access**. Services added after the account was created are
+  not granted automatically.
+- **"No services assigned yet"** means the account exists but has no service.
+- The API answers 403 `forbidden` for the same cases, and 404 for an issue or
+  log line of a service outside the scope. The server log has one `access
+  denied` line per refusal with the user, capability, service and route.
+
+See [Users, roles & access](/access) for the full matrix.

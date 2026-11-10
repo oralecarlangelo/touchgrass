@@ -21,8 +21,11 @@ type User struct {
 	Username     string
 	PasswordHash string
 	Role         Role
-	DisabledAt   *time.Time
-	CreatedAt    time.Time
+	// MustChangePassword marks a one-time password: the account may only
+	// change its password until it has.
+	MustChangePassword bool
+	DisabledAt         *time.Time
+	CreatedAt          time.Time
 }
 
 // Disabled reports whether the account is locked out.

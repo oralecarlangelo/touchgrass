@@ -136,9 +136,11 @@ func TestLoad(t *testing.T) {
 			},
 		},
 		{
-			name:        "missing password",
-			env:         map[string]string{},
-			expectedErr: true,
+			// The password is optional: the first boot generates a
+			// one-time admin password when none is configured.
+			name:   "no password",
+			env:    map[string]string{},
+			mutate: func(c *Config) { c.AdminPassword = "" },
 		},
 		{
 			name:        "invalid addr",

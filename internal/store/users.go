@@ -30,9 +30,9 @@ func (s *UserStore) Create(ctx context.Context, user model.User) (model.User, er
 	}
 
 	res, err := s.db.sql.ExecContext(ctx,
-		`INSERT INTO users (username, password_hash, role, disabled_at, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		user.Username, user.PasswordHash, string(user.Role),
+		`INSERT INTO users (username, password_hash, role, must_change_password, disabled_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		user.Username, user.PasswordHash, string(user.Role), user.MustChangePassword,
 		formatNullTime(user.DisabledAt), formatTime(user.CreatedAt),
 	)
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *UserStore) Create(ctx context.Context, user model.User) (model.User, er
 // ByID returns one user by id.
 func (s *UserStore) ByID(ctx context.Context, id int64) (model.User, error) {
 	row := s.db.sql.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, role, disabled_at, created_at
+		`SELECT id, username, password_hash, role, must_change_password, disabled_at, created_at
 		 FROM users WHERE id = ?`,
 		id,
 	)
@@ -72,7 +72,7 @@ func (s *UserStore) ByID(ctx context.Context, id int64) (model.User, error) {
 // ByUsername returns one user by username.
 func (s *UserStore) ByUsername(ctx context.Context, username string) (model.User, error) {
 	row := s.db.sql.QueryRowContext(ctx,
-		`SELECT id, username, password_hash, role, disabled_at, created_at
+		`SELECT id, username, password_hash, role, must_change_password, disabled_at, created_at
 		 FROM users WHERE username = ?`,
 		username,
 	)
@@ -92,7 +92,7 @@ func (s *UserStore) ByUsername(ctx context.Context, username string) (model.User
 // List returns users oldest first, bounded by limit.
 func (s *UserStore) List(ctx context.Context, limit int) ([]model.User, error) {
 	rows, err := s.db.sql.QueryContext(ctx,
-		`SELECT id, username, password_hash, role, disabled_at, created_at
+		`SELECT id, username, password_hash, role, must_change_password, disabled_at, created_at
 		 FROM users ORDER BY id ASC LIMIT ?`,
 		limit,
 	)
@@ -125,9 +125,9 @@ func (s *UserStore) List(ctx context.Context, limit int) ([]model.User, error) {
 // Update rewrites one user's mutable columns.
 func (s *UserStore) Update(ctx context.Context, user model.User) error {
 	res, err := s.db.sql.ExecContext(ctx,
-		`UPDATE users SET password_hash = ?, role = ?, disabled_at = ?
+		`UPDATE users SET password_hash = ?, role = ?, must_change_password = ?, disabled_at = ?
 		 WHERE id = ?`,
-		user.PasswordHash, string(user.Role),
+		user.PasswordHash, string(user.Role), user.MustChangePassword,
 		formatNullTime(user.DisabledAt), user.ID,
 	)
 	if err != nil {
@@ -193,6 +193,7 @@ func scanUser(row scanner) (model.User, error) {
 		&user.Username,
 		&user.PasswordHash,
 		&role,
+		&user.MustChangePassword,
 		&disabledAt,
 		&createdAt,
 	); err != nil {

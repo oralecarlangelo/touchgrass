@@ -10,6 +10,15 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/testfixture"
 )
 
+const (
+	// testHash stands in for a bcrypt hash the store never inspects.
+	testHash = "hash"
+	// testScopedName is the scoped fixture account.
+	testScopedName = "scoped"
+	// testNoService names a service that does not exist.
+	testNoService = "no-such-service"
+)
+
 // seedGenericServices adds the generic two-service fixture.
 func seedGenericServices(t *testing.T, db *DB) {
 	t.Helper()
@@ -21,6 +30,31 @@ func seedGenericServices(t *testing.T, db *DB) {
 			t.Fatalf("Create(%s) error = %v, want nil", service.ID, err)
 		}
 	}
+}
+
+// openScopeDB returns a migrated database with the generic services and
+// a user store on it.
+func openScopeDB(t *testing.T) (*DB, *UserStore) {
+	t.Helper()
+
+	db := openTestDB(t)
+	seedGenericServices(t, db)
+
+	return db, NewUserStore(db)
+}
+
+// createUser stores one fixture user or fails the test.
+func createUser(t *testing.T, users *UserStore, user model.User) model.User {
+	t.Helper()
+
+	user.PasswordHash = testHash
+
+	created, err := users.Create(context.Background(), user, testGranter)
+	if err != nil {
+		t.Fatalf("Create(%s) error = %v, want nil", user.Username, err)
+	}
+
+	return created
 }
 
 // grantedBy reads who granted one service to one user.
@@ -38,12 +72,13 @@ func grantedBy(t *testing.T, db *DB, userID int64, serviceID string) string {
 	return granter
 }
 
-// countGrants counts the user_services rows matching one column value.
-func countGrants(t *testing.T, db *DB, column string, value any) int {
+// countGrants counts user_services rows for a user, or for a service
+// when byService is set.
+func countGrants(t *testing.T, db *DB, byService bool, value any) int {
 	t.Helper()
 
 	query := `SELECT COUNT(*) FROM user_services WHERE user_id = ?`
-	if column == "service_id" {
+	if byService {
 		query = `SELECT COUNT(*) FROM user_services WHERE service_id = ?`
 	}
 
@@ -59,19 +94,13 @@ func countGrants(t *testing.T, db *DB, column string, value any) int {
 func TestUserStoreScopeRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	_, users := openScopeDB(t)
 	ctx := context.Background()
-	users := NewUserStore(db)
 
-	created, err := users.Create(ctx, model.User{
-		Username: "scoped", PasswordHash: "hash", Role: model.RoleViewer,
+	created := createUser(t, users, model.User{
+		Username: testScopedName, Role: model.RoleViewer,
 		Services: []string{testfixture.GenericOther, testfixture.GenericGranted, testfixture.GenericOther},
-	}, testGranter)
-	if err != nil {
-		t.Fatalf("Create() error = %v, want nil", err)
-	}
+	})
 
 	want := []string{testfixture.GenericGranted, testfixture.GenericOther}
 	if created.AllServices || !slices.Equal(created.Services, want) {
@@ -80,7 +109,7 @@ func TestUserStoreScopeRoundTrip(t *testing.T) {
 
 	for name, read := range map[string]func() (model.User, error){
 		"ByID":       func() (model.User, error) { return users.ByID(ctx, created.ID) },
-		"ByUsername": func() (model.User, error) { return users.ByUsername(ctx, "scoped") },
+		"ByUsername": func() (model.User, error) { return users.ByUsername(ctx, testScopedName) },
 	} {
 		got, err := read()
 		if err != nil {
@@ -91,59 +120,76 @@ func TestUserStoreScopeRoundTrip(t *testing.T) {
 			t.Errorf("%s() = %+v, want scoped to %v", name, got, want)
 		}
 	}
+}
 
-	everywhere, err := users.Create(ctx, model.User{
-		Username: "everywhere", PasswordHash: "hash", Role: model.RoleViewer, AllServices: true,
-	}, testGranter)
-	if err != nil {
-		t.Fatalf("Create(everywhere) error = %v, want nil", err)
-	}
+func TestUserStoreListCarriesScope(t *testing.T) {
+	t.Parallel()
 
-	listed, err := users.List(ctx, 10)
+	_, users := openScopeDB(t)
+
+	createUser(t, users, model.User{
+		Username: testScopedName, Role: model.RoleViewer, Services: []string{testfixture.GenericGranted},
+	})
+	createUser(t, users, model.User{Username: "everywhere", Role: model.RoleViewer, AllServices: true})
+	createUser(t, users, model.User{Username: "unassigned", Role: model.RoleViewer})
+
+	listed, err := users.List(context.Background(), 10)
 	if err != nil {
 		t.Fatalf("List() error = %v, want nil", err)
 	}
 
-	if len(listed) != 2 || !slices.Equal(listed[0].Services, want) ||
-		!listed[1].AllServices || len(listed[1].Services) != 0 || listed[1].Services == nil {
-		t.Errorf("List() = %+v, want scoped then everywhere with an empty, non-nil list", listed)
+	if len(listed) != 3 {
+		t.Fatalf("List() = %+v, want 3 users", listed)
 	}
 
-	if _, err := users.Create(ctx, model.User{
-		Username: "both", PasswordHash: "hash", Role: model.RoleViewer,
-		AllServices: true, Services: []string{testfixture.GenericGranted},
-	}, testGranter); err == nil {
-		t.Error("Create(all services plus a list) error = nil, want a refusal")
+	if scoped := listed[0]; scoped.AllServices || !slices.Equal(scoped.Services, []string{testfixture.GenericGranted}) {
+		t.Errorf("scoped = %+v, want the granted service", scoped)
 	}
 
-	if err := users.Delete(ctx, created.ID); err != nil {
+	for _, user := range listed[1:] {
+		if user.Services == nil || len(user.Services) != 0 {
+			t.Errorf("%s services = %v, want an empty, non-nil list", user.Username, user.Services)
+		}
+	}
+
+	if !listed[1].AllServices || listed[2].AllServices {
+		t.Errorf("List() = %+v, want everywhere on all services and unassigned on none", listed)
+	}
+}
+
+func TestUserStoreDeleteCascadesGrants(t *testing.T) {
+	t.Parallel()
+
+	db, users := openScopeDB(t)
+	ctx := context.Background()
+
+	leaver := createUser(t, users, model.User{
+		Username: "leaver", Role: model.RoleViewer, Services: []string{testfixture.GenericGranted},
+	})
+	stayer := createUser(t, users, model.User{
+		Username: "stayer", Role: model.RoleViewer, Services: []string{testfixture.GenericGranted},
+	})
+
+	if err := users.Delete(ctx, leaver.ID); err != nil {
 		t.Fatalf("Delete() error = %v, want nil", err)
 	}
 
-	if got := countGrants(t, db, "user_id", created.ID); got != 0 {
+	if got := countGrants(t, db, false, leaver.ID); got != 0 {
 		t.Errorf("grants after deleting the user = %d, want 0 (cascade)", got)
 	}
 
-	if _, err := users.ByID(ctx, everywhere.ID); err != nil {
-		t.Errorf("ByID(everywhere) after deleting another user error = %v, want nil", err)
+	if got := countGrants(t, db, false, stayer.ID); got != 1 {
+		t.Errorf("another user's grants = %d, want 1 left alone", got)
 	}
 }
 
 func TestUserStoreSetAccess(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	db, users := openScopeDB(t)
 	ctx := context.Background()
-	users := NewUserStore(db)
 
-	created, err := users.Create(ctx, model.User{
-		Username: "dev", PasswordHash: "hash", Role: model.RoleViewer, AllServices: true,
-	}, testGranter)
-	if err != nil {
-		t.Fatalf("Create() error = %v, want nil", err)
-	}
+	created := createUser(t, users, model.User{Username: testScopedName, Role: model.RoleViewer, AllServices: true})
 
 	services, err := users.SetAccess(ctx, created.ID, model.UserAccess{
 		Role: model.RoleViewer, Services: []string{testfixture.GenericGranted},
@@ -171,10 +217,28 @@ func TestUserStoreSetAccess(t *testing.T) {
 		t.Errorf("new grant granted_by = %q, want second-admin", got)
 	}
 
-	// Back to all services: every grant goes.
+	if _, err := users.SetAccess(ctx, created.ID+99, model.UserAccess{
+		Role: model.RoleViewer, AllServices: true,
+	}, testGranter); !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("SetAccess(unknown user) error = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestUserStoreSetAccessAllServicesClearsGrants(t *testing.T) {
+	t.Parallel()
+
+	db, users := openScopeDB(t)
+	ctx := context.Background()
+
+	created := createUser(t, users, model.User{
+		Username: testScopedName, Role: model.RoleViewer,
+		Services: []string{testfixture.GenericGranted, testfixture.GenericOther},
+	})
+
+	// A list sent along with all services is ignored, not stored.
 	if _, err := users.SetAccess(ctx, created.ID, model.UserAccess{
 		Role: model.RoleAdmin, AllServices: true, Services: []string{testfixture.GenericGranted},
-	}, "second-admin"); err != nil {
+	}, testGranter); err != nil {
 		t.Fatalf("SetAccess(admin, all) error = %v, want nil", err)
 	}
 
@@ -187,63 +251,51 @@ func TestUserStoreSetAccess(t *testing.T) {
 		t.Errorf("ByID() = %+v, want an all-services admin", got)
 	}
 
-	if count := countGrants(t, db, "user_id", created.ID); count != 0 {
+	if count := countGrants(t, db, false, created.ID); count != 0 {
 		t.Errorf("grants after all services = %d, want 0", count)
-	}
-
-	if _, err := users.SetAccess(ctx, created.ID+99, model.UserAccess{
-		Role: model.RoleViewer, AllServices: true,
-	}, testGranter); !errors.Is(err, ErrUserNotFound) {
-		t.Errorf("SetAccess(unknown user) error = %v, want ErrUserNotFound", err)
 	}
 }
 
 func TestUserStoreSchemaRefusesBadAccess(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	_, users := openScopeDB(t)
 	ctx := context.Background()
-	users := NewUserStore(db)
 
-	if _, err := users.Create(ctx, model.User{
-		Username: "scoped-admin", PasswordHash: "hash", Role: model.RoleAdmin,
-	}, testGranter); err == nil {
-		t.Error("Create(scoped admin) error = nil, want the CHECK to refuse it")
+	refused := []model.User{
+		{Username: "scoped-admin", Role: model.RoleAdmin},
+		{Username: "owner", Role: model.Role("owner"), AllServices: true},
+		{Username: "ghost", Role: model.RoleViewer, Services: []string{testNoService}},
+		{Username: "both", Role: model.RoleViewer, AllServices: true, Services: []string{testfixture.GenericGranted}},
 	}
 
-	if _, err := users.Create(ctx, model.User{
-		Username: "owner", PasswordHash: "hash", Role: model.Role("owner"), AllServices: true,
-	}, testGranter); err == nil {
-		t.Error("Create(unknown role) error = nil, want the CHECK to refuse it")
+	for _, user := range refused {
+		user.PasswordHash = testHash
+
+		if _, err := users.Create(ctx, user, testGranter); err == nil {
+			t.Errorf("Create(%s) error = nil, want a refusal", user.Username)
+		}
+
+		// A refused create leaves nothing behind, grants included.
+		if _, err := users.ByUsername(ctx, user.Username); !errors.Is(err, ErrUserNotFound) {
+			t.Errorf("ByUsername(%s) error = %v, want the failed create rolled back", user.Username, err)
+		}
 	}
 
 	// The schema already admits the reserved role; the service layer is
 	// what keeps it from being assigned.
-	if _, err := users.Create(ctx, model.User{
-		Username: "reserved", PasswordHash: "hash", Role: model.RoleDeveloper, AllServices: true,
-	}, testGranter); err != nil {
-		t.Errorf("Create(developer) error = %v, want the schema to admit it", err)
-	}
+	createUser(t, users, model.User{Username: "reserved", Role: model.RoleDeveloper, AllServices: true})
+}
 
-	if _, err := users.Create(ctx, model.User{
-		Username: "ghost", PasswordHash: "hash", Role: model.RoleViewer, Services: []string{"no-such-service"},
-	}, testGranter); err == nil {
-		t.Error("Create(grant on an unknown service) error = nil, want the foreign key to refuse it")
-	}
+func TestUserStoreSchemaRefusesAScopedAdmin(t *testing.T) {
+	t.Parallel()
 
-	if _, err := users.ByUsername(ctx, "ghost"); !errors.Is(err, ErrUserNotFound) {
-		t.Errorf("ByUsername(ghost) error = %v, want the failed create rolled back", err)
-	}
+	_, users := openScopeDB(t)
+	ctx := context.Background()
 
-	viewer, err := users.Create(ctx, model.User{
-		Username: "viewer", PasswordHash: "hash", Role: model.RoleViewer,
-		Services: []string{testfixture.GenericGranted},
-	}, testGranter)
-	if err != nil {
-		t.Fatalf("Create(viewer) error = %v, want nil", err)
-	}
+	viewer := createUser(t, users, model.User{
+		Username: testScopedName, Role: model.RoleViewer, Services: []string{testfixture.GenericGranted},
+	})
 
 	if _, err := users.SetAccess(ctx, viewer.ID, model.UserAccess{
 		Role: model.RoleAdmin, Services: []string{testfixture.GenericGranted},
@@ -264,19 +316,16 @@ func TestUserStoreSchemaRefusesBadAccess(t *testing.T) {
 func TestUserStoreMissingServices(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
-	users := NewUserStore(db)
+	_, users := openScopeDB(t)
 
 	missing, err := users.MissingServices(context.Background(),
-		[]string{testfixture.GenericGranted, "nope", testfixture.GenericOther, "gone", "nope"})
+		[]string{testfixture.GenericGranted, testNoService, testfixture.GenericOther, "gone", testNoService})
 	if err != nil {
 		t.Fatalf("MissingServices() error = %v, want nil", err)
 	}
 
-	if !slices.Equal(missing, []string{"nope", "gone"}) {
-		t.Errorf("MissingServices() = %v, want [nope gone]", missing)
+	if !slices.Equal(missing, []string{testNoService, "gone"}) {
+		t.Errorf("MissingServices() = %v, want [%s gone]", missing, testNoService)
 	}
 
 	none, err := users.MissingServices(context.Background(), []string{})
@@ -288,20 +337,14 @@ func TestUserStoreMissingServices(t *testing.T) {
 func TestServiceDeleteClearsGrants(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	db, users := openScopeDB(t)
 	ctx := context.Background()
-	users := NewUserStore(db)
 	services := NewServiceStore(db)
 
-	created, err := users.Create(ctx, model.User{
-		Username: "dev", PasswordHash: "hash", Role: model.RoleViewer,
+	created := createUser(t, users, model.User{
+		Username: testScopedName, Role: model.RoleViewer,
 		Services: []string{testfixture.GenericGranted, testfixture.GenericOther},
-	}, testGranter)
-	if err != nil {
-		t.Fatalf("Create() error = %v, want nil", err)
-	}
+	})
 
 	if err := services.Delete(ctx, testfixture.GenericOther); err != nil {
 		t.Fatalf("Delete(service) error = %v, want nil", err)
@@ -317,30 +360,36 @@ func TestServiceDeleteClearsGrants(t *testing.T) {
 	}
 
 	// A service re-created under the same id must not inherit grants.
+	seedOneGenericService(t, services, testfixture.GenericOther)
+
+	if count := countGrants(t, db, true, testfixture.GenericOther); count != 0 {
+		t.Errorf("grants on the re-created service = %d, want 0", count)
+	}
+}
+
+// seedOneGenericService re-creates one of the generic services.
+func seedOneGenericService(t *testing.T, services *ServiceStore, id string) {
+	t.Helper()
+
 	for _, service := range testfixture.GenericServices() {
-		if service.ID != testfixture.GenericOther {
+		if service.ID != id {
 			continue
 		}
 
-		if err := services.Create(ctx, service); err != nil {
-			t.Fatalf("re-Create(%s) error = %v, want nil", service.ID, err)
+		if err := services.Create(context.Background(), service); err != nil {
+			t.Fatalf("Create(%s) error = %v, want nil", service.ID, err)
 		}
-	}
-
-	if count := countGrants(t, db, "service_id", testfixture.GenericOther); count != 0 {
-		t.Errorf("grants on the re-created service = %d, want 0", count)
 	}
 }
 
 func TestServiceByIDs(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	db, _ := openScopeDB(t)
 	services := NewServiceStore(db)
 
-	got, err := services.ByIDs(context.Background(), []string{testfixture.GenericOther, "nope", testfixture.GenericGranted})
+	got, err := services.ByIDs(context.Background(),
+		[]string{testfixture.GenericOther, testNoService, testfixture.GenericGranted})
 	if err != nil {
 		t.Fatalf("ByIDs() error = %v, want nil", err)
 	}

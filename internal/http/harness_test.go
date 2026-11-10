@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
@@ -379,4 +380,16 @@ func loginCookie(t *testing.T, server *Server, body string) *nethttp.Cookie {
 	}
 
 	return cookies[0]
+}
+
+// newTestRequest builds a request bound to the test's context.
+func newTestRequest(t *testing.T, method, target string, body io.Reader) *nethttp.Request {
+	t.Helper()
+
+	return httptest.NewRequestWithContext(t.Context(), method, target, body)
+}
+
+// newRecorder returns a response recorder.
+func newRecorder() *httptest.ResponseRecorder {
+	return httptest.NewRecorder()
 }

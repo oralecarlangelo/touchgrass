@@ -312,26 +312,9 @@ type userGrant struct {
 // replaceGrants makes a user's grants exactly wanted, touching only the
 // rows that differ.
 func replaceGrants(ctx context.Context, tx *sql.Tx, userID int64, wanted []string, grantedBy string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT service_id FROM user_services WHERE user_id = ?`, userID)
+	existing, err := grantedServices(ctx, tx, userID)
 	if err != nil {
-		return fmt.Errorf("querying user services: %w", err)
-	}
-
-	existing := []string{}
-
-	for rows.Next() {
-		serviceID, err := scanServiceID(rows)
-		if err != nil {
-			_ = rows.Close()
-
-			return err
-		}
-
-		existing = append(existing, serviceID)
-	}
-
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return fmt.Errorf("iterating user services: %w", err)
+		return err
 	}
 
 	for _, serviceID := range existing {
@@ -357,6 +340,35 @@ func replaceGrants(ctx context.Context, tx *sql.Tx, userID int64, wanted []strin
 	}
 
 	return nil
+}
+
+// grantedServices reads a user's grants inside a transaction.
+func grantedServices(ctx context.Context, tx *sql.Tx, userID int64) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT service_id FROM user_services WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("querying user services: %w", err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	existing := []string{}
+
+	for rows.Next() {
+		serviceID, err := scanServiceID(rows)
+		if err != nil {
+			return nil, err
+		}
+
+		existing = append(existing, serviceID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating user services: %w", err)
+	}
+
+	return existing, nil
 }
 
 // insertGrant stores one grant.

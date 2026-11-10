@@ -18,8 +18,8 @@ func seedOwnedRows(t *testing.T, db *DB, serviceID string) map[model.ResourceKin
 	ctx := context.Background()
 	ids := map[model.ResourceKind]int64{}
 
-	occurrence, err := NewIssueStore(db).GroupOccurrence(ctx, serviceID, "fp-"+serviceID, "boom", "v1",
-		model.Occurrence{ServiceID: serviceID, Type: "Error", Message: "boom", CreatedAt: time.Now()})
+	occurrence, err := NewIssueStore(db).GroupOccurrence(ctx, serviceID, "fp-"+serviceID, "failure", "v1",
+		model.Occurrence{ServiceID: serviceID, Type: "Error", Message: "failure", CreatedAt: time.Now()})
 	if err != nil {
 		t.Fatalf("GroupOccurrence(%s) error = %v, want nil", serviceID, err)
 	}
@@ -103,9 +103,7 @@ func (s *int64Setter) Scan(value any) error {
 func TestOwnerStoreServiceOf(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	db, _ := openScopeDB(t)
 	owners := NewOwnerStore(db)
 	ctx := context.Background()
 
@@ -148,57 +146,79 @@ func TestOwnerStoreServiceOf(t *testing.T) {
 	}
 }
 
-func TestScopedLists(t *testing.T) {
+func TestAuditListForServices(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	db, _ := openScopeDB(t)
 	ctx := context.Background()
 	audits := NewAuditStore(db)
-	notifications := NewNotificationStore(db)
-
 	granted, other := testfixture.GenericGranted, testfixture.GenericOther
 
 	for _, entry := range []model.Audit{
-		{ServiceID: &granted, Actor: "root", Action: model.AuditDeploy, Result: model.AuditSuccess, Detail: "granted deploy"},
-		{ServiceID: &other, Actor: "root", Action: model.AuditDeploy, Result: model.AuditSuccess, Detail: "other deploy"},
-		{Actor: "root", Action: model.AuditLogin, Result: model.AuditSuccess, Detail: "login from 10.0.0.9"},
+		{ServiceID: &granted, Actor: testGranter, Action: model.AuditDeploy, Result: model.AuditSuccess, Detail: "granted deploy"},
+		{ServiceID: &other, Actor: testGranter, Action: model.AuditDeploy, Result: model.AuditSuccess, Detail: "other deploy"},
+		{Actor: testGranter, Action: model.AuditLogin, Result: model.AuditSuccess, Detail: "login from 10.0.0.9"},
 	} {
 		if _, err := audits.Insert(ctx, entry); err != nil {
 			t.Fatalf("Insert(audit) error = %v, want nil", err)
 		}
 	}
 
-	scopedAudit, err := audits.ListForServices(ctx, []string{granted}, 10)
+	scoped, err := audits.ListForServices(ctx, []string{granted}, 10)
 	if err != nil {
 		t.Fatalf("ListForServices() error = %v, want nil", err)
 	}
 
-	if len(scopedAudit) != 1 || scopedAudit[0].Detail != "granted deploy" {
-		t.Errorf("ListForServices() = %+v, want only the granted service's row", scopedAudit)
+	if len(scoped) != 1 || scoped[0].Detail != "granted deploy" {
+		t.Errorf("ListForServices() = %+v, want only the granted service's row", scoped)
 	}
 
 	if none, err := audits.ListForServices(ctx, []string{}, 10); err != nil || len(none) != 0 {
 		t.Errorf("ListForServices(no services) = %+v, %v, want nothing", none, err)
 	}
 
-	for _, serviceID := range []string{granted, granted, other, ""} {
-		if _, err := notifications.Insert(ctx, serviceID, "alert", "title", "for "+serviceID); err != nil {
+	if everything, err := audits.List(ctx, "", 10); err != nil || len(everything) != 3 {
+		t.Errorf("List(all) = %+v, %v, want all 3 rows, the global one included", everything, err)
+	}
+}
+
+// seedScopedNotifications stores two rows for the granted service, one
+// for the other, and one that belongs to no service.
+func seedScopedNotifications(t *testing.T, notifications *NotificationStore) {
+	t.Helper()
+
+	for _, serviceID := range []string{testfixture.GenericGranted, testfixture.GenericGranted, testfixture.GenericOther, ""} {
+		if _, err := notifications.Insert(context.Background(), serviceID, "alert", "title", "for "+serviceID); err != nil {
 			t.Fatalf("Insert(notification) error = %v, want nil", err)
 		}
 	}
+}
 
-	scoped, err := notifications.ListForServices(ctx, []string{granted}, 1)
+func TestNotificationListForServices(t *testing.T) {
+	t.Parallel()
+
+	db, _ := openScopeDB(t)
+	ctx := context.Background()
+	notifications := NewNotificationStore(db)
+
+	seedScopedNotifications(t, notifications)
+
+	// The limit applies inside the scope, so a scoped page is never
+	// short because foreign rows used it up.
+	scoped, err := notifications.ListForServices(ctx, []string{testfixture.GenericGranted}, 1)
 	if err != nil {
 		t.Fatalf("ListForServices() error = %v, want nil", err)
 	}
 
-	if len(scoped) != 1 || scoped[0].ServiceID != granted {
+	if len(scoped) != 1 || scoped[0].ServiceID != testfixture.GenericGranted {
 		t.Errorf("ListForServices(limit 1) = %+v, want one row of the granted service", scoped)
 	}
 
-	unread, err := notifications.CountUnreadForServices(ctx, []string{granted})
+	if none, err := notifications.ListForServices(ctx, []string{}, 10); err != nil || len(none) != 0 {
+		t.Errorf("ListForServices(no services) = %+v, %v, want nothing", none, err)
+	}
+
+	unread, err := notifications.CountUnreadForServices(ctx, []string{testfixture.GenericGranted})
 	if err != nil || unread != 2 {
 		t.Errorf("CountUnreadForServices() = %d, %v, want 2", unread, err)
 	}
@@ -206,14 +226,24 @@ func TestScopedLists(t *testing.T) {
 	if count, err := notifications.CountUnreadForServices(ctx, []string{}); err != nil || count != 0 {
 		t.Errorf("CountUnreadForServices(no services) = %d, %v, want 0", count, err)
 	}
+}
 
-	marked, err := notifications.MarkAllReadForServices(ctx, []string{granted})
-	if err != nil || marked != 2 {
-		t.Errorf("MarkAllReadForServices() = %d, %v, want 2", marked, err)
-	}
+func TestNotificationMarkAllReadForServices(t *testing.T) {
+	t.Parallel()
+
+	db, _ := openScopeDB(t)
+	ctx := context.Background()
+	notifications := NewNotificationStore(db)
+
+	seedScopedNotifications(t, notifications)
 
 	if marked, err := notifications.MarkAllReadForServices(ctx, []string{}); err != nil || marked != 0 {
 		t.Errorf("MarkAllReadForServices(no services) = %d, %v, want 0", marked, err)
+	}
+
+	marked, err := notifications.MarkAllReadForServices(ctx, []string{testfixture.GenericGranted})
+	if err != nil || marked != 2 {
+		t.Errorf("MarkAllReadForServices() = %d, %v, want 2", marked, err)
 	}
 
 	// The other service's row and the global row are still unread.

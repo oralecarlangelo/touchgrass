@@ -12,6 +12,13 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
+const (
+	// testDevUsername is a managed non-admin fixture account.
+	testDevUsername = "dev"
+	// testShortPassword is below the minimum length.
+	testShortPassword = "short"
+)
+
 // openUsers wires a Users service on a migrated memory database.
 func openUsers(t *testing.T) (*Users, *store.DB) {
 	t.Helper()
@@ -69,7 +76,7 @@ func TestUsersCreateRejects(t *testing.T) {
 		{name: "long username", input: CreateUserInput{Username: strings.Repeat("a", 65), Password: testUserPassword, Role: model.RoleViewer, AllServices: true}, actor: testAdminActor, wantErr: ErrInvalidInput, wantText: "username"},
 		{name: "duplicate username", input: CreateUserInput{Username: "amy", Password: testUserPassword, Role: model.RoleViewer, AllServices: true}, actor: testAdminActor, wantErr: ErrConflict, wantText: "already exists"},
 		{name: "unknown role", input: CreateUserInput{Username: "zed", Password: testUserPassword, Role: model.RoleUnknown}, actor: testAdminActor, wantErr: ErrInvalidInput, wantText: "role"},
-		{name: "short password", input: CreateUserInput{Username: "zed", Password: "short", Role: model.RoleViewer, AllServices: true}, actor: testAdminActor, wantErr: ErrInvalidInput, wantText: "too short"},
+		{name: "short password", input: CreateUserInput{Username: "zed", Password: testShortPassword, Role: model.RoleViewer, AllServices: true}, actor: testAdminActor, wantErr: ErrInvalidInput, wantText: "too short"},
 		{name: "long password", input: CreateUserInput{Username: "zed", Password: strings.Repeat("a", 73), Role: model.RoleViewer, AllServices: true}, actor: testAdminActor, wantErr: ErrInvalidInput, wantText: "too long"},
 	}
 
@@ -198,7 +205,7 @@ func TestUsersSetPassword(t *testing.T) {
 		t.Errorf("Verify(old) error = %v, want ErrUnauthorized", err)
 	}
 
-	if _, err := users.SetPassword(ctx, created.ID, "short", testAdminActor); !errors.Is(err, ErrInvalidInput) {
+	if _, err := users.SetPassword(ctx, created.ID, testShortPassword, testAdminActor); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("SetPassword(short) error = %v, want ErrInvalidInput", err)
 	}
 
@@ -391,7 +398,7 @@ func TestUsersEnsureAdminRejectsShortConfiguredPassword(t *testing.T) {
 
 	users, path := openUsersWithFile(t)
 
-	if _, err := users.EnsureAdmin(context.Background(), "short"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := users.EnsureAdmin(context.Background(), testShortPassword); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("EnsureAdmin(short) error = %v, want ErrInvalidInput", err)
 	}
 
@@ -442,7 +449,7 @@ func TestUsersChangeOwnPassword(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := users.Create(ctx, CreateUserInput{
-		Username: "dev", Password: testUserPassword, Role: model.RoleViewer, AllServices: true,
+		Username: testDevUsername, Password: testUserPassword, Role: model.RoleViewer, AllServices: true,
 	}, testAdminActor); err != nil {
 		t.Fatalf("Create(dev) error = %v, want nil", err)
 	}
@@ -455,29 +462,29 @@ func TestUsersChangeOwnPassword(t *testing.T) {
 	}{
 		{name: "wrong current", current: "not-the-password", next: "a-fine-new-password", want: ErrUnauthorized},
 		{name: "same as current", current: testUserPassword, next: testUserPassword, want: ErrInvalidInput},
-		{name: "too short", current: testUserPassword, next: "short", want: ErrInvalidInput},
+		{name: "too short", current: testUserPassword, next: testShortPassword, want: ErrInvalidInput},
 		{name: "too long", current: testUserPassword, next: strings.Repeat("x", 73), want: ErrInvalidInput},
 	}
 
 	for _, tt := range tests {
-		if err := users.ChangeOwnPassword(ctx, "dev", tt.current, tt.next); !errors.Is(err, tt.want) {
+		if err := users.ChangeOwnPassword(ctx, testDevUsername, tt.current, tt.next); !errors.Is(err, tt.want) {
 			t.Errorf("ChangeOwnPassword(%s) error = %v, want %v", tt.name, err, tt.want)
 		}
 	}
 
-	if _, err := users.Verify(ctx, "dev", testUserPassword); err != nil {
+	if _, err := users.Verify(ctx, testDevUsername, testUserPassword); err != nil {
 		t.Fatalf("Verify(original) after refusals error = %v, want the password unchanged", err)
 	}
 
-	if err := users.ChangeOwnPassword(ctx, "dev", testUserPassword, "a-fine-new-password"); err != nil {
+	if err := users.ChangeOwnPassword(ctx, testDevUsername, testUserPassword, "a-fine-new-password"); err != nil {
 		t.Fatalf("ChangeOwnPassword() error = %v, want nil", err)
 	}
 
-	if _, err := users.Verify(ctx, "dev", "a-fine-new-password"); err != nil {
+	if _, err := users.Verify(ctx, testDevUsername, "a-fine-new-password"); err != nil {
 		t.Errorf("Verify(new) error = %v, want nil", err)
 	}
 
-	if _, err := users.Verify(ctx, "dev", testUserPassword); !errors.Is(err, ErrUnauthorized) {
+	if _, err := users.Verify(ctx, testDevUsername, testUserPassword); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("Verify(old) error = %v, want ErrUnauthorized", err)
 	}
 
@@ -589,7 +596,7 @@ func TestUsersResetWithOneTimePasswordRefusesDisabled(t *testing.T) {
 	}
 
 	dev, err := users.Create(ctx, CreateUserInput{
-		Username: "dev", Password: testUserPassword, Role: model.RoleViewer, AllServices: true,
+		Username: testDevUsername, Password: testUserPassword, Role: model.RoleViewer, AllServices: true,
 	}, testAdminActor)
 	if err != nil {
 		t.Fatalf("Create(dev) error = %v, want nil", err)
@@ -599,7 +606,7 @@ func TestUsersResetWithOneTimePasswordRefusesDisabled(t *testing.T) {
 		t.Fatalf("SetDisabled(dev) error = %v, want nil", err)
 	}
 
-	if _, err := users.ResetWithOneTimePassword(ctx, "dev", "cli:root"); !errors.Is(err, ErrConflict) {
+	if _, err := users.ResetWithOneTimePassword(ctx, testDevUsername, "cli:root"); !errors.Is(err, ErrConflict) {
 		t.Errorf("ResetWithOneTimePassword(disabled) error = %v, want ErrConflict", err)
 	}
 }

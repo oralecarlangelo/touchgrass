@@ -9,6 +9,12 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/testfixture"
 )
 
+// Accounts an older release left behind.
+const (
+	testOwnerName  = "owner"
+	testReaderName = "reader"
+)
+
 // openMigratedThrough opens a file database with migrations applied up
 // to and including version last, as an older release left it.
 func openMigratedThrough(t *testing.T, last string) *DB {
@@ -54,17 +60,17 @@ func execAll(t *testing.T, db *DB, statements ...string) {
 	}
 }
 
-// A v0.4.0 database stops at 0021: users has no must_change_password
-// and no scope. Migrating it must keep every account as it was.
-func TestMigrateUserAccessFromV040(t *testing.T) {
-	t.Parallel()
+// migrateFromV040 builds a v0.4.0 database (migrations through 0021:
+// users has neither must_change_password nor a scope) holding an
+// admin, a disabled viewer and one deleted account, then migrates it.
+func migrateFromV040(t *testing.T) *UserStore {
+	t.Helper()
 
 	db := openMigratedThrough(t, "0021")
-	ctx := context.Background()
 
 	execAll(t, db,
 		`INSERT INTO users (username, password_hash, role, created_at)
-		 VALUES ('admin', 'hash-admin', 'admin', '2026-01-02T03:04:05.000Z')`,
+		 VALUES ('owner', 'hash-owner', 'admin', '2026-01-02T03:04:05.000Z')`,
 		`INSERT INTO users (username, password_hash, role, disabled_at, created_at)
 		 VALUES ('reader', 'hash-reader', 'viewer', '2026-02-03T04:05:06.000Z', '2026-01-03T03:04:05.000Z')`,
 		`INSERT INTO users (username, password_hash, role, created_at)
@@ -72,7 +78,7 @@ func TestMigrateUserAccessFromV040(t *testing.T) {
 		`DELETE FROM users WHERE username = 'leaver'`,
 	)
 
-	applied, err := db.MigrateUp(ctx)
+	applied, err := db.MigrateUp(context.Background())
 	if err != nil {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
@@ -81,9 +87,44 @@ func TestMigrateUserAccessFromV040(t *testing.T) {
 		t.Fatalf("MigrateUp() applied = %v, want [0022 0023]", applied)
 	}
 
-	users := NewUserStore(db)
+	return NewUserStore(db)
+}
 
-	listed, err := users.List(ctx, 10)
+func TestMigrateUserAccessKeepsEveryAccount(t *testing.T) {
+	t.Parallel()
+
+	users := migrateFromV040(t)
+	ctx := context.Background()
+
+	owner, err := users.ByUsername(ctx, testOwnerName)
+	if err != nil {
+		t.Fatalf("ByUsername(owner) error = %v, want nil", err)
+	}
+
+	if owner.ID != 1 || owner.Role != model.RoleAdmin || owner.PasswordHash != "hash-owner" || owner.Disabled() {
+		t.Errorf("owner = %+v, want the same enabled admin with id 1", owner)
+	}
+
+	if got := owner.CreatedAt.UTC().Format("2006-01-02T15:04:05"); got != "2026-01-02T03:04:05" {
+		t.Errorf("owner created_at = %s, want it carried over", got)
+	}
+
+	reader, err := users.ByUsername(ctx, testReaderName)
+	if err != nil {
+		t.Fatalf("ByUsername(reader) error = %v, want nil", err)
+	}
+
+	if reader.ID != 2 || reader.Role != model.RoleViewer || reader.PasswordHash != "hash-reader" || !reader.Disabled() {
+		t.Errorf("reader = %+v, want the same disabled viewer with id 2", reader)
+	}
+}
+
+func TestMigrateUserAccessGivesEveryoneAllServices(t *testing.T) {
+	t.Parallel()
+
+	users := migrateFromV040(t)
+
+	listed, err := users.List(context.Background(), 10)
 	if err != nil {
 		t.Fatalf("List() error = %v, want nil", err)
 	}
@@ -92,38 +133,22 @@ func TestMigrateUserAccessFromV040(t *testing.T) {
 		t.Fatalf("List() = %+v, want the two surviving accounts", listed)
 	}
 
-	admin, reader := listed[0], listed[1]
-
-	if admin.ID != 1 || admin.Username != "admin" || admin.Role != model.RoleAdmin ||
-		admin.PasswordHash != "hash-admin" || admin.Disabled() {
-		t.Errorf("admin = %+v, want the same enabled admin", admin)
-	}
-
-	if reader.ID != 2 || reader.Role != model.RoleViewer || !reader.Disabled() ||
-		reader.PasswordHash != "hash-reader" {
-		t.Errorf("reader = %+v, want the same disabled viewer", reader)
-	}
-
 	for _, user := range listed {
 		if !user.AllServices || len(user.Services) != 0 || user.MustChangePassword {
 			t.Errorf("%s = %+v, want all services, no grants, no forced change", user.Username, user)
 		}
 	}
+}
 
-	if got := admin.CreatedAt.UTC().Format("2006-01-02T15:04:05"); got != "2026-01-02T03:04:05" {
-		t.Errorf("admin created_at = %s, want it carried over", got)
-	}
+func TestMigrateUserAccessNeverReusesADeletedID(t *testing.T) {
+	t.Parallel()
+
+	users := migrateFromV040(t)
 
 	// Id 3 belonged to the deleted account and must not come back.
-	created, err := users.Create(ctx, model.User{
-		Username: "newcomer", PasswordHash: "hash", Role: model.RoleViewer, AllServices: true,
-	}, testGranter)
-	if err != nil {
-		t.Fatalf("Create() after migrating error = %v, want nil", err)
-	}
-
+	created := createUser(t, users, model.User{Username: "newcomer", Role: model.RoleViewer, AllServices: true})
 	if created.ID != 4 {
-		t.Errorf("first id after migrating = %d, want 4 (a deleted user's id is never reused)", created.ID)
+		t.Errorf("first id after migrating = %d, want 4", created.ID)
 	}
 }
 
@@ -137,7 +162,7 @@ func TestMigrateUserAccessKeepsMustChangePassword(t *testing.T) {
 
 	execAll(t, db,
 		`INSERT INTO users (username, password_hash, role, must_change_password)
-		 VALUES ('admin', 'hash-admin', 'admin', 1)`,
+		 VALUES ('owner', 'hash-owner', 'admin', 1)`,
 		`INSERT INTO users (username, password_hash, role, must_change_password)
 		 VALUES ('reader', 'hash-reader', 'viewer', 0)`,
 	)
@@ -148,16 +173,16 @@ func TestMigrateUserAccessKeepsMustChangePassword(t *testing.T) {
 
 	users := NewUserStore(db)
 
-	admin, err := users.ByUsername(ctx, "admin")
+	owner, err := users.ByUsername(ctx, testOwnerName)
 	if err != nil {
-		t.Fatalf("ByUsername(admin) error = %v, want nil", err)
+		t.Fatalf("ByUsername(owner) error = %v, want nil", err)
 	}
 
-	if !admin.MustChangePassword || !admin.AllServices {
-		t.Errorf("admin = %+v, want the pending one-time password and all services", admin)
+	if !owner.MustChangePassword || !owner.AllServices {
+		t.Errorf("owner = %+v, want the pending one-time password and all services", owner)
 	}
 
-	reader, err := users.ByUsername(ctx, "reader")
+	reader, err := users.ByUsername(ctx, testReaderName)
 	if err != nil {
 		t.Fatalf("ByUsername(reader) error = %v, want nil", err)
 	}
@@ -171,9 +196,7 @@ func TestMigrateUserAccessKeepsMustChangePassword(t *testing.T) {
 func TestMigrateUserAccessEnforcesForeignKeys(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
-	seedGenericServices(t, db)
-
+	db, users := openScopeDB(t)
 	ctx := context.Background()
 
 	if _, err := db.sql.ExecContext(ctx,
@@ -183,13 +206,9 @@ func TestMigrateUserAccessEnforcesForeignKeys(t *testing.T) {
 		t.Error("grant for an unknown user error = nil, want a foreign key failure")
 	}
 
-	created, err := NewUserStore(db).Create(ctx, model.User{
-		Username: "dev", PasswordHash: "hash", Role: model.RoleViewer,
-		Services: []string{testfixture.GenericGranted},
-	}, testGranter)
-	if err != nil {
-		t.Fatalf("Create() error = %v, want nil", err)
-	}
+	created := createUser(t, users, model.User{
+		Username: testScopedName, Role: model.RoleViewer, Services: []string{testfixture.GenericGranted},
+	})
 
 	// A service that still has a grant cannot be removed behind the
 	// store's back; ServiceStore.Delete clears the grant first.
@@ -197,7 +216,7 @@ func TestMigrateUserAccessEnforcesForeignKeys(t *testing.T) {
 		t.Error("raw delete of a granted service error = nil, want a foreign key failure")
 	}
 
-	if got := countGrants(t, db, "user_id", created.ID); got != 1 {
+	if got := countGrants(t, db, false, created.ID); got != 1 {
 		t.Errorf("grants = %d, want 1", got)
 	}
 }

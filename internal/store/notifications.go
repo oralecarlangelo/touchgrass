@@ -9,6 +9,9 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
 
+// notificationsWhat names the rows in query errors.
+const notificationsWhat = "notifications"
+
 // NotificationStore persists in-app notifications.
 type NotificationStore struct {
 	db *DB
@@ -68,7 +71,7 @@ func (s *NotificationStore) List(
 	}
 
 	return queryRows(ctx, s.db.sql, rowQuery[model.Notification]{
-		what: "notifications", query: query, args: args, scan: scanNotification,
+		what: notificationsWhat, query: query, args: args, scan: scanNotification,
 	})
 }
 
@@ -87,7 +90,7 @@ func (s *NotificationStore) ListForServices(
 	clause, args := inClause(serviceIDs)
 
 	return queryRows(ctx, s.db.sql, rowQuery[model.Notification]{
-		what: "notifications",
+		what: notificationsWhat,
 		query: `SELECT id, service_id, kind, title, body, created_at, read_at
 		 FROM notifications WHERE service_id IN ` + clause + ` ORDER BY id DESC LIMIT ?`,
 		args: append(args, limit),
@@ -198,10 +201,10 @@ func (s *NotificationStore) MarkAllReadForServices(ctx context.Context, serviceI
 
 	clause, args := inClause(serviceIDs)
 
-	res, err := s.db.sql.ExecContext(ctx,
-		"UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND service_id IN "+clause,
-		append([]any{formatTime(time.Now())}, args...)...,
-	)
+	//nolint:gosec // G202: clause is only "(?, ?, …)" placeholders; the ids are bound arguments.
+	query := "UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND service_id IN " + clause
+
+	res, err := s.db.sql.ExecContext(ctx, query, append([]any{formatTime(time.Now())}, args...)...)
 	if err != nil {
 		return 0, fmt.Errorf("marking notifications read: %w", err)
 	}
@@ -223,11 +226,12 @@ func (s *NotificationStore) CountUnreadForServices(ctx context.Context, serviceI
 
 	clause, args := inClause(serviceIDs)
 
+	// clause is only "(?, ?, …)" placeholders; the ids are bound arguments.
+	query := "SELECT COUNT(*) FROM notifications WHERE read_at IS NULL AND service_id IN " + clause
+
 	var count int64
 
-	if err := s.db.sql.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM notifications WHERE read_at IS NULL AND service_id IN "+clause, args...,
-	).Scan(&count); err != nil {
+	if err := s.db.sql.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("counting unread notifications: %w", err)
 	}
 

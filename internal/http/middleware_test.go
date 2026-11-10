@@ -45,6 +45,17 @@ func TestWithSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestStatusWriterUnwrap(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+	writer := &statusWriter{ResponseWriter: rec, status: nethttp.StatusOK}
+
+	if got := writer.Unwrap(); got != nethttp.ResponseWriter(rec) {
+		t.Errorf("Unwrap() = %v, want the wrapped recorder", got)
+	}
+}
+
 func TestStatusWriterFlush(t *testing.T) {
 	t.Parallel()
 

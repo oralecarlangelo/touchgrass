@@ -73,6 +73,7 @@ type Server struct {
 	fleetInventory *service.FleetInventory
 	security       *service.Security
 	env            *service.Env
+	eventHeartbeat time.Duration
 	owners         *service.Owners
 	handler        nethttp.Handler
 }
@@ -102,6 +103,7 @@ func New(cfg Config) *Server {
 		fleetInventory: cfg.FleetInventory,
 		security:       cfg.Security,
 		env:            cfg.Env,
+		eventHeartbeat: eventHeartbeat,
 		owners:         cfg.Owners,
 	}
 

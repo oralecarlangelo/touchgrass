@@ -6,6 +6,7 @@ import (
 
 	nethttp "net/http"
 
+	"github.com/oralecarlangelo/touchgrass/internal/authz"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
 
@@ -92,7 +93,7 @@ func (s *Server) handleNotifications(w nethttp.ResponseWriter, r *nethttp.Reques
 		return
 	}
 
-	notifications, unread, err := s.sampler.Notifications(r.Context(), r.URL.Query().Get("service_id"), limit)
+	notifications, unread, err := s.notifications(r, limit)
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to load notifications")
 
@@ -100,6 +101,24 @@ func (s *Server) handleNotifications(w nethttp.ResponseWriter, r *nethttp.Reques
 	}
 
 	writeJSON(w, s.logger, nethttp.StatusOK, notificationsResponse{Notifications: notifications, Unread: unread})
+}
+
+// notifications loads the notifications the caller asked for and may
+// see, with the unread count over the same rows. Without service_id a
+// scoped caller gets their services only, and never the rows that
+// belong to no service.
+func (s *Server) notifications(r *nethttp.Request, limit int) ([]model.Notification, int64, error) {
+	serviceID := r.URL.Query().Get(serviceIDParam)
+	if serviceID != "" {
+		return s.sampler.Notifications(r.Context(), serviceID, limit)
+	}
+
+	all, serviceIDs := listScope(r, authz.AlertsRead)
+	if all {
+		return s.sampler.Notifications(r.Context(), "", limit)
+	}
+
+	return s.sampler.NotificationsForServices(r.Context(), serviceIDs, limit)
 }
 
 // handleMarkNotificationRead stamps one notification read.
@@ -122,7 +141,7 @@ func (s *Server) handleMarkNotificationRead(w nethttp.ResponseWriter, r *nethttp
 
 // handleMarkNotificationsRead stamps every unread notification read in scope.
 func (s *Server) handleMarkNotificationsRead(w nethttp.ResponseWriter, r *nethttp.Request) {
-	marked, err := s.sampler.MarkNotificationsRead(r.Context(), r.URL.Query().Get("service_id"))
+	marked, err := s.markNotificationsRead(r)
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to mark notifications read")
 
@@ -130,4 +149,20 @@ func (s *Server) handleMarkNotificationsRead(w nethttp.ResponseWriter, r *nethtt
 	}
 
 	writeJSON(w, s.logger, nethttp.StatusOK, markedResponse{Marked: marked})
+}
+
+// markNotificationsRead marks read what the caller asked for and may
+// touch: one service, everything, or only the services in their scope.
+func (s *Server) markNotificationsRead(r *nethttp.Request) (int64, error) {
+	serviceID := r.URL.Query().Get(serviceIDParam)
+	if serviceID != "" {
+		return s.sampler.MarkNotificationsRead(r.Context(), serviceID)
+	}
+
+	all, serviceIDs := listScope(r, authz.NotificationsAck)
+	if all {
+		return s.sampler.MarkNotificationsRead(r.Context(), "")
+	}
+
+	return s.sampler.MarkNotificationsReadForServices(r.Context(), serviceIDs)
 }

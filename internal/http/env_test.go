@@ -798,7 +798,7 @@ func TestEnvSSEEventShape(t *testing.T) {
 	server, _ := envTestServer(t, testServerOptions{})
 	stageEntry(t, server, "PORT", testEnvPlainBody)
 
-	events, cancel := server.events.Subscribe()
+	events, cancel := server.events.Subscribe(testAdminSubject())
 	defer cancel()
 
 	runID, _ := startApply(t, server, testEnvApplyBody)

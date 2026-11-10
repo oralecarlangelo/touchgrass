@@ -1,0 +1,33 @@
+# The access matrix, checked in so a policy change shows up in review.
+# Columns: capability, scope class, viewer, developer, admin.
+# "developer" is reserved and holds nothing until its rules are built.
+session.self	self	yes	no	yes
+service.read	service	yes	no	yes
+metrics.read	service	yes	no	yes
+deploy.read	service	yes	no	yes
+deploy.trigger	service	no	no	yes
+deploy.record	service	no	no	yes
+logs.read	service	yes	no	yes
+issues.read	service	yes	no	yes
+alerts.read	service	yes	no	yes
+alerts.manage	service	no	no	yes
+notifications.ack	service	no	no	yes
+env.read_keys	service	yes	no	yes
+env.stage	service	no	no	yes
+env.discard	service	no	no	yes
+env.import	service	no	no	yes
+env.apply	service	no	no	yes
+env.reveal	service	no	no	yes
+keys.read	service	yes	no	yes
+keys.manage	service	no	no	yes
+audit.read	service	yes	no	yes
+audit.read_all	fleet	yes	no	yes
+host.read	fleet	yes	no	yes
+host.manage	fleet	no	no	yes
+security.read	fleet	yes	no	yes
+security.manage	fleet	no	no	yes
+databases.read	fleet	yes	no	yes
+databases.backup	fleet	no	no	yes
+databases.restore	fleet	no	no	yes
+services.manage	fleet	no	no	yes
+users.manage	fleet	no	no	yes

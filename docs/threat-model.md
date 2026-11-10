@@ -20,7 +20,8 @@ container security monitoring.
 ## Authentication and sessions
 
 - Managed users in SQLite (`users` table): username, bcrypt hash
-  (`DefaultCost`), role (`admin` or `viewer`), disabled flag.
+  (`DefaultCost`), role (`admin` or `viewer`), scope (all services,
+  or the rows of `user_services`), disabled flag.
   The bootstrap admin is seeded on first boot only. With
   `TOUCHGRASS_ADMIN_PASSWORD` set (optional, env-only) it is seeded
   from the env; later rotations happen through user management, and
@@ -38,15 +39,18 @@ container security monitoring.
   ends the caller's other sessions. `touchgrass users
   reset-password` on the host issues a one-time password for a
   lost one; host access already implies control of the database.
-- Roles: admins hold full power; viewers are read-only (every
-  `GET` plus login/logout; every mutating route answers 403
-  `forbidden`). UI controls hide for viewers, but enforcement is
-  server-side per route — a raw HTTP client gains nothing.
-- Sessions are server-side random tokens bound to a username; role
-  and disabled state re-resolve from the store on every request,
-  so disables and role changes bite immediately. An admin's
-  password reset in Users does not kill existing sessions —
-  disable first to lock out; a user's own password change does.
+- Roles and scope (ADR-0014): a role decides what a user may do,
+  a scope decides on which services. Admins hold full power on
+  every service. Viewers are read-only (every mutating route
+  answers 403 `forbidden`), on every service or only on the ones an
+  admin granted. See "Access control" below.
+- Sessions are server-side random tokens bound to a username; role,
+  scope, and disabled state re-resolve from the store on every
+  request, so disables and access changes bite immediately. An
+  admin's password reset in Users ends that user's sessions and
+  live streams and leaves a temporary password they must replace at
+  the next login; a user's own password change ends their other
+  sessions. A new account also starts on a temporary password.
 - Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` behind
   `TOUCHGRASS_COOKIE_SECURE=true` (set it whenever TLS terminates in
   front). Logout destroys the token. Per-IP login rate limiting
@@ -56,7 +60,55 @@ container security monitoring.
   requires the session. The last-enabled-admin guard rejects
   demotes, disables, and deletes that would orphan management.
 - User management (`user_create`, `user_update`, `user_delete`)
-  is admin-only and audited with the acting username.
+  is admin-only and audited with the acting username. Access
+  changes are `user_update` rows that record the new role and
+  scope. The self-service password route takes the two passwords
+  and nothing else; no field in it can change a role or a scope.
+
+## Access control
+
+- **One policy table.** `internal/authz` maps each role to named
+  capabilities, each with a scope class: `self`, `service` (the
+  service must be in the user's scope) or `fleet` (the scope must be
+  all services). A checked-in matrix and a table-driven test cover
+  every role, capability and scope combination.
+- **Deny by default.** Every `/api/` route is declared in one route
+  table with its capability and how its service is found. The server
+  registers routes only from that table; tests fail on a route
+  registered elsewhere, on a route that answers a role holding
+  nothing, and on a table that disagrees with the OpenAPI document.
+- **A scoped user sees their services and nothing else.** A service
+  out of scope answers 403 before any lookup, with the same body
+  whether or not the id exists. A route keyed by a resource id (an
+  issue, a log line) answers the same 404 for a missing id and for
+  one owned by a service out of scope. Lists (services,
+  notifications, audit) are bounded in the SQL query.
+- **Host-level data is fleet-only.** System and container inventory,
+  images, security findings and policies, database health and
+  backups, fleet-wide performance, and audit rows that belong to no
+  service (logins with client addresses, user management) are refused
+  to anyone limited to a list of services.
+- **The event stream is filtered per event** by the subscriber's
+  role and scope: deploy output for a service reaches only users who
+  may read that service's deploys. A user's streams are closed when
+  their role, scope, password or disabled state changes. An event
+  type with no declared capability reaches nobody.
+- **Escalation paths closed in S31.** Only admins reach any user or
+  access route. The last enabled admin cannot lose the admin role by
+  any route or to any role, and the schema refuses a scoped admin.
+  The reserved `developer` role cannot be assigned and holds nothing.
+- **What a grant gives away.** Granting a service grants its logs,
+  occurrences and non-secret env values as they are: touchgrass does
+  not redact log content, and the env import guesses which keys are
+  secret. Review a service's secret flags before granting it. SDK key
+  prefixes of a granted service are readable too.
+- **Not covered.** A developer who ships code to a service can make
+  that service print its own environment. touchgrass cannot hide a
+  service's secrets from the people who write its code; the goal is
+  that touchgrass itself does not hand them over.
+- **Denied requests** are written to the structured log (`access
+  denied`, with user, role, capability, service and route), not to
+  the audit table.
 
 ## SDK keys
 
@@ -197,20 +249,23 @@ session plus confirm-gating in the UI, with an audit entry per run:
   pulled images may need re-pulling.
 - **Onboarding suggest** probes the candidate container's own
   published localhost ports for a health URL (short timeouts,
-  first 2xx wins). Admin-gated; it never probes arbitrary hosts.
+  first 2xx wins). Admin-gated (enforced since S31; before that
+  the route was open to any session); it never probes arbitrary
+  hosts.
 - **Fleet/system views** expose every container on the daemon,
-  including other teams' stacks. Viewers can read them too, so
-  treat fleet visibility as team-wide — that is the point of the
-  reader role, but don't be surprised by it.
+  including other teams' stacks. All-services viewers can read
+  them, so treat that scope as team-wide. A viewer limited to
+  selected services cannot open them at all.
 - **User management** creates admins, who are root-equivalent via
   the deploy engine. Only trust operators with admin; hand devs
-  the viewer role.
+  the viewer role, limited to the services they work on.
 
 ## What v1 deliberately lacks
 
 - No TLS listener (terminate in nginx/Caddy/ALB in front).
-- No per-service scoping, no operator/deployer role, no SSO — two
-  global roles (admin/viewer) only.
+- No operator/deployer role, no custom roles, no groups, no API
+  tokens, no SSO: two roles (admin/viewer), each with a scope of all
+  services or a list (ADR-0014). A scoped account is read-only.
 - No password rotation expiry and no session persistence across
   restarts (restart logs everyone out, same as before).
 - No webhook/email egress — alerts stay in-app, so a compromised box

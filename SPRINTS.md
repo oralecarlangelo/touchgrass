@@ -1192,6 +1192,74 @@ SCOPE GUARD: no forced change after an admin's reset in Users, no
 password history, no invitation flow, no extra roles — the
 roles-and-access plan picks those up (S31+).
 
+### S31 — Service-scoped access: authorization core + scoped read-only users (2026-11-10)
+
+**Status**: IMPLEMENTED on `claude/roles-s31-scoped-access-aea3ac`; PR open.
+**Goal**: an admin can create a read-only account limited to chosen
+services; that account sees nothing else, on any route, list or
+stream. Existing admin and viewer accounts behave as before
+(ADR-0014). First of four sprints in the roles-and-access plan.
+
+- S31.1 Policy table (1pd) [FR-P1, NFR-5]
+  Acceptance: `internal/authz` holds 30 capabilities with a scope
+  class (self / service / fleet), one role-to-capability table
+  (viewer and admin; `developer` reserved and empty) and `Subject`;
+  a table-driven test covers every role, capability and scope
+  combination against the checked-in `testdata/matrix.tsv`.
+- S31.2 Store + migration (1pd) [NFR-2, NFR-5]
+  Acceptance: migration 0023 rebuilds `users` (three-role CHECK,
+  `all_services`, CHECK that an admin is never scoped) before
+  creating `user_services`; a v0.4.0 database keeps every user, gets
+  `all_services = 1`, keeps `must_change_password` and never reuses a
+  deleted id; service delete clears grants; the last-admin guard
+  covers any change away from admin; `EnsureAdmin` resets scope.
+- S31.3 Route guards + scope enforcement (2pd) [FR-P1, NFR-5]
+  Acceptance: `requireAdmin` is gone; all 93 routes are rows of one
+  table (capability + how the service is found); a service out of
+  scope → 403 before any lookup, a foreign or missing resource id →
+  the same 404; services, notifications and audit are bounded in the
+  query; the SSE hub filters per event and closes a user's streams
+  on any change to the account; `me` reports scope and capabilities;
+  onboarding suggest is admin-only (D-11). Tests fail on a route
+  registered outside the table and on one that answers a role
+  holding nothing.
+- S31.4 Access management API + first login (0.5pd) [FR-P1]
+  Acceptance: `PUT /api/users/{id}/access`; scope on create and
+  list; new accounts and admin resets leave a temporary password and
+  a reset ends the user's sessions (D-13); audit rows carry the role
+  and scope; a non-admin gets 403 on every access route.
+- S31.5 UI + docs (1.5pd) [NFR-6]
+  Acceptance: `can(capability, serviceId?)` built from `me` replaces
+  the `isAdmin` boolean at its source; nav entries a user cannot open
+  are hidden; one access-denied state and a no-services state; scope
+  picker, Access column and narrowing confirmation on Users; real
+  role and scope in the header; ADR-0014, threat model,
+  ARCHITECTURE, `docs-site/access.md`, OpenAPI with
+  `x-touchgrass-capability` / `x-touchgrass-scope` on every
+  operation and a parity test against the route table.
+- Standards in play: `golang-security` (deny by default, no
+  existence oracle, role checked before a body is read),
+  `golang-database` (transactional access change, cascade trap
+  documented in the migration), `golang-concurrency` (hub closes
+  streams under its mutex), `golang-testing` (matrices derived from
+  the route table; generic non-dogfood fixtures).
+- Validation: `go build`/`vet`/`test` green (also `-race` on
+  `internal/http`), lint 0 new issues, web `verify` + vitest green,
+  docs build + redocly lint clean. Exercised end to end against a
+  real binary on a loopback port with a throwaway database and two
+  generic services: 248 raw-HTTP checks as a viewer scoped to one
+  service, an all-services viewer and an admin (every fleet route
+  403, every route of the other service 403, foreign and missing
+  resource ids 404, lists and the live stream carrying only the
+  granted service, a stream closed within a second of an access
+  change, admin reset ending sessions), then the Users screen and a
+  scoped viewer's session in a browser with no refused request.
+  Not yet exercised on a host behind a reverse proxy.
+
+SCOPE GUARD: the `developer` role is not enabled, no deploy or env
+write rights for non-admins, no custom roles, no groups, no API
+tokens — S32–S34 of the plan pick those up.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

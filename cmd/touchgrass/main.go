@@ -205,6 +205,7 @@ type serveServices struct {
 	fleet       *service.FleetInventory
 	security    *service.Security
 	env         *service.Env
+	owners      *service.Owners
 }
 
 // newServeServer builds the HTTP server for the embedded UI or dev proxy.
@@ -251,6 +252,7 @@ func newServeServer(
 		FleetInventory: services.fleet,
 		Security:       services.security,
 		Env:            services.env,
+		Owners:         services.owners,
 		Dist:           dist,
 		Docs:           docs,
 		DevProxy:       devProxy,
@@ -428,6 +430,7 @@ func runServe(args []string) error {
 		fleet:    fleetInventory,
 		security: securityService,
 		env:      envService,
+		owners:   service.NewOwners(store.NewOwnerStore(db)),
 	}, version)
 	if err != nil {
 		return err

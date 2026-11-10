@@ -107,6 +107,11 @@ const helpFaqs: HelpFaq[] = [
     answer: 'Read-only users can inspect services, fleet state, metrics, logs, issues, notifications, security evidence, and audit history. They cannot change policies, infrastructure, users, keys, or finding workflow state.',
   },
   {
+    category: 'Access',
+    question: 'Why can I only see some services?',
+    answer: 'An admin can limit an account to selected services. A limited account sees those services only: their logs, issues, metrics, deploy history, environment keys, notifications, and audit rows. The host screens (Fleet, Security, Databases, Images, API keys) and every other service are hidden and refused by the API. Your role and scope are shown next to the touchgrass name in the header. Ask an admin to change them under Users.',
+  },
+  {
     category: 'Fleet',
     question: 'Why is a container missing from Fleet?',
     answer: 'Fleet reconciles Docker lifecycle states every 30 seconds. Check Fleet freshness, Docker socket permissions, and whether the container existed long enough to be observed. An incomplete reconciliation preserves the last complete inventory rather than marking containers absent.',

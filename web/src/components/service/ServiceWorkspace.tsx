@@ -12,6 +12,7 @@ import EnvironmentTab from './EnvironmentTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
 import OverviewTab from './OverviewTab.tsx';
 import PerformanceTab from './PerformanceTab.tsx';
+import type { Can } from '@/lib/access.ts';
 import type { ServiceView } from '@/lib/api.ts';
 
 export type ServiceTab =
@@ -30,7 +31,7 @@ export default function ServiceWorkspace({
   onBack,
   onServiceChanged,
   onUnauthorized,
-  isAdmin,
+  can,
   initialTab = 'overview',
   onTabChange,
 }: {
@@ -38,7 +39,7 @@ export default function ServiceWorkspace({
   onBack: () => void;
   onServiceChanged: () => void;
   onUnauthorized: () => void;
-  isAdmin: boolean;
+  can: Can;
   initialTab?: ServiceTab;
   onTabChange?: (tab: ServiceTab) => void;
 }) {
@@ -102,13 +103,17 @@ export default function ServiceWorkspace({
               service={service}
               onServiceChanged={onServiceChanged}
               onUnauthorized={onUnauthorized}
-              isAdmin={isAdmin}
+              isAdmin={can('deploy.trigger', service.id)}
             />
           )}
         </TabsContent>
         <TabsContent value="environment">
           {tab === 'environment' && (
-            <EnvironmentTab service={service} isAdmin={isAdmin} onUnauthorized={onUnauthorized} />
+            <EnvironmentTab
+              service={service}
+              isAdmin={can('env.apply', service.id)}
+              onUnauthorized={onUnauthorized}
+            />
           )}
         </TabsContent>
         <TabsContent value="performance">
@@ -131,7 +136,11 @@ export default function ServiceWorkspace({
         </TabsContent>
         <TabsContent value="alerts">
           {tab === 'alerts' && (
-            <AlertsTab serviceId={service.id} onUnauthorized={onUnauthorized} isAdmin={isAdmin} />
+            <AlertsTab
+              serviceId={service.id}
+              onUnauthorized={onUnauthorized}
+              isAdmin={can('alerts.manage', service.id)}
+            />
           )}
         </TabsContent>
         <TabsContent value="audit">

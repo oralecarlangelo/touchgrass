@@ -38,6 +38,7 @@ touchgrass/
 │   ├── probe/                 # health probing + downtime-stat computation.
 │   ├── notify/                # webhook + email senders.
 │   ├── secret/                # AES-256-GCM sealing for env values (key from env, 0600 file).
+│   ├── authz/                 # access policy: capabilities, role table, Subject (ADR-0014).
 │   └── config/                # env parsing + validation. Single Config struct.
 │
 ├── web/                       # React + Vite + Tailwind SPA source
@@ -81,6 +82,7 @@ starts in Phase 0.)
 | `internal/notify` | webhook/email senders | services (service decides when) |
 | `internal/config` | env parsing into `Config` | everything else |
 | `internal/secret` | key loading, seal/open, key ids | store, service, HTTP (pure crypto helper) |
+| `internal/authz` | capabilities, the role-to-capability table, `Subject` | store, service, HTTP (pure policy; `model` types only) |
 
 ## Placement rules (with examples)
 

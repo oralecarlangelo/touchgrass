@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/oralecarlangelo/touchgrass/internal/authz"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
@@ -28,15 +31,18 @@ const (
 // usernamePattern constrains managed usernames to the service-id shape.
 var usernamePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-// CreateUserInput carries new-account fields.
+// CreateUserInput carries new-account fields. The scope is explicit:
+// AllServices, or the listed Services.
 type CreateUserInput struct {
-	Username string
-	Password string
-	Role     model.Role
+	Username    string
+	Password    string
+	Role        model.Role
+	AllServices bool
+	Services    []string
 }
 
-// Users manages login accounts: validation, bcrypt hashing, the
-// last-admin guard, and auditing. Callers never see password hashes
+// Users manages login accounts: validation, bcrypt hashing, roles and
+// service scope, the last-admin guard, and auditing. Callers never see password hashes
 // except Verify and Lookup, which need them for comparison.
 type Users struct {
 	users *store.UserStore
@@ -75,7 +81,8 @@ type AdminBootstrap struct {
 	PasswordFile string
 }
 
-// Create validates and stores one user.
+// Create validates and stores one user with its role and scope. The
+// password is temporary: the account must replace it at first login.
 func (u *Users) Create(
 	ctx context.Context,
 	input CreateUserInput,
@@ -85,21 +92,29 @@ func (u *Users) Create(
 		return model.User{}, err
 	}
 
+	access, err := u.checkAccess(ctx, model.UserAccess{
+		Role: input.Role, AllServices: input.AllServices, Services: input.Services,
+	})
+	if err != nil {
+		return model.User{}, err
+	}
+
 	hash, err := hashPassword(input.Password)
 	if err != nil {
 		return model.User{}, err
 	}
 
 	created, err := u.users.Create(ctx, model.User{
-		Username: input.Username, PasswordHash: hash, Role: input.Role,
-	})
+		Username: input.Username, PasswordHash: hash, Role: access.Role,
+		AllServices: access.AllServices, Services: access.Services, MustChangePassword: true,
+	}, actor)
 	if err != nil {
 		return model.User{}, fmt.Errorf("creating user %q: %w", input.Username, err)
 	}
 
 	if _, err := u.audit.Record(ctx, model.AuditRecord{
 		Actor: actor, Action: model.AuditUserCreate, Result: model.AuditSuccess,
-		Detail: "created user " + created.Username + " (" + string(created.Role) + ")",
+		Detail: "created user " + created.Username + " (" + describeAccess(access) + ")",
 	}); err != nil {
 		return model.User{}, fmt.Errorf("auditing user create: %w", err)
 	}
@@ -156,7 +171,8 @@ func (u *Users) Lookup(ctx context.Context, username string) (model.User, error)
 	return user, nil
 }
 
-// SetRole changes one user's role.
+// SetRole changes one user's role and keeps their scope, except that a
+// user promoted to admin always gets every service.
 func (u *Users) SetRole(
 	ctx context.Context,
 	id int64,
@@ -167,8 +183,8 @@ func (u *Users) SetRole(
 		return model.User{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
 	}
 
-	if role != model.RoleAdmin && role != model.RoleViewer {
-		return model.User{}, fmt.Errorf("%w: role %q (want admin or viewer)", ErrInvalidInput, role)
+	if err := checkRole(role); err != nil {
+		return model.User{}, err
 	}
 
 	user, err := u.users.ByID(ctx, id)
@@ -176,21 +192,72 @@ func (u *Users) SetRole(
 		return model.User{}, err
 	}
 
-	if user.Role == model.RoleAdmin && role == model.RoleViewer {
+	access := model.UserAccess{Role: role, AllServices: user.AllServices, Services: user.Services}
+	if role == model.RoleAdmin {
+		access.AllServices = true
+		access.Services = []string{}
+	}
+
+	detail := "changed role of user " + user.Username + " to " + string(role)
+	if role == model.RoleAdmin && !user.AllServices {
+		detail += " (scope widened to all services)"
+	}
+
+	return u.applyAccess(ctx, user, access, actor, detail)
+}
+
+// SetAccess replaces one user's role and scope together. An unknown
+// role or service is invalid input; scoping an admin, or taking the
+// admin role from the last enabled admin, is a conflict.
+func (u *Users) SetAccess(
+	ctx context.Context,
+	id int64,
+	access model.UserAccess,
+	actor string,
+) (model.User, error) {
+	if actor == "" {
+		return model.User{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	checked, err := u.checkAccess(ctx, access)
+	if err != nil {
+		return model.User{}, err
+	}
+
+	user, err := u.users.ByID(ctx, id)
+	if err != nil {
+		return model.User{}, err
+	}
+
+	return u.applyAccess(ctx, user, checked, actor,
+		"set access of user "+user.Username+": "+describeAccess(checked))
+}
+
+// applyAccess stores a validated role and scope behind the last-admin
+// guard and audits it.
+func (u *Users) applyAccess(
+	ctx context.Context,
+	user model.User,
+	access model.UserAccess,
+	actor, detail string,
+) (model.User, error) {
+	if user.Role == model.RoleAdmin && access.Role != model.RoleAdmin {
 		if err := u.requireAnotherAdmin(ctx, user); err != nil {
 			return model.User{}, err
 		}
 	}
 
-	user.Role = role
-
-	if err := u.users.Update(ctx, user); err != nil {
+	services, err := u.users.SetAccess(ctx, user.ID, access, actor)
+	if err != nil {
 		return model.User{}, err
 	}
 
+	user.Role = access.Role
+	user.AllServices = access.AllServices
+	user.Services = services
+
 	if _, err := u.audit.Record(ctx, model.AuditRecord{
-		Actor: actor, Action: model.AuditUserUpdate, Result: model.AuditSuccess,
-		Detail: "changed role of user " + user.Username + " to " + string(role),
+		Actor: actor, Action: model.AuditUserUpdate, Result: model.AuditSuccess, Detail: detail,
 	}); err != nil {
 		return model.User{}, fmt.Errorf("auditing user update: %w", err)
 	}
@@ -198,47 +265,86 @@ func (u *Users) SetRole(
 	return user, nil
 }
 
-// SetPassword resets one user's password.
+// checkAccess validates a role and scope and returns it normalized:
+// services sorted and de-duplicated, and empty for an all-services
+// scope.
+func (u *Users) checkAccess(ctx context.Context, access model.UserAccess) (model.UserAccess, error) {
+	if err := checkRole(access.Role); err != nil {
+		return model.UserAccess{}, err
+	}
+
+	if access.AllServices && len(access.Services) > 0 {
+		return model.UserAccess{}, fmt.Errorf(
+			"%w: choose all services or a list of services, not both", ErrInvalidInput)
+	}
+
+	if access.Role == model.RoleAdmin && !access.AllServices {
+		return model.UserAccess{}, fmt.Errorf("%w: an admin always has every service", ErrConflict)
+	}
+
+	services := slices.Clone(access.Services)
+	if services == nil {
+		services = []string{}
+	}
+
+	slices.Sort(services)
+	services = slices.Compact(services)
+
+	missing, err := u.users.MissingServices(ctx, services)
+	if err != nil {
+		return model.UserAccess{}, fmt.Errorf("checking services: %w", err)
+	}
+
+	if len(missing) > 0 {
+		return model.UserAccess{}, fmt.Errorf("%w: unknown service %q", ErrInvalidInput, missing[0])
+	}
+
+	return model.UserAccess{Role: access.Role, AllServices: access.AllServices, Services: services}, nil
+}
+
+// SetPassword resets one user's password to a temporary one chosen by
+// an admin: the account must replace it at its next login. It returns
+// the user so the caller can end that user's sessions.
 func (u *Users) SetPassword(
 	ctx context.Context,
 	id int64,
 	password, actor string,
-) error {
+) (model.User, error) {
 	if actor == "" {
-		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
+		return model.User{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
 	}
 
 	if err := checkPassword(password); err != nil {
-		return err
+		return model.User{}, err
 	}
 
 	user, err := u.users.ByID(ctx, id)
 	if err != nil {
-		return err
+		return model.User{}, err
 	}
 
 	hash, err := hashPassword(password)
 	if err != nil {
-		return err
+		return model.User{}, err
 	}
 
 	user.PasswordHash = hash
-	user.MustChangePassword = false
+	user.MustChangePassword = true
 
 	if err := u.users.Update(ctx, user); err != nil {
-		return err
+		return model.User{}, err
 	}
 
 	u.discardInitialPassword(user.Username)
 
 	if _, err := u.audit.Record(ctx, model.AuditRecord{
 		Actor: actor, Action: model.AuditUserUpdate, Result: model.AuditSuccess,
-		Detail: "reset password of user " + user.Username,
+		Detail: "reset password of user " + user.Username + " to a temporary one",
 	}); err != nil {
-		return fmt.Errorf("auditing user update: %w", err)
+		return model.User{}, fmt.Errorf("auditing user update: %w", err)
 	}
 
-	return nil
+	return user, nil
 }
 
 // ChangeOwnPassword replaces the caller's own password after proving
@@ -378,33 +484,34 @@ func (u *Users) SetDisabled(
 	return user, nil
 }
 
-// Delete removes one user. Audit history keeps the username as text.
-func (u *Users) Delete(ctx context.Context, id int64, actor string) error {
+// Delete removes one user and returns the removed account. Audit
+// history keeps the username as text.
+func (u *Users) Delete(ctx context.Context, id int64, actor string) (model.User, error) {
 	if actor == "" {
-		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
+		return model.User{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
 	}
 
 	user, err := u.users.ByID(ctx, id)
 	if err != nil {
-		return err
+		return model.User{}, err
 	}
 
 	if err := u.requireAnotherAdmin(ctx, user); err != nil {
-		return err
+		return model.User{}, err
 	}
 
 	if err := u.users.Delete(ctx, id); err != nil {
-		return err
+		return model.User{}, err
 	}
 
 	if _, err := u.audit.Record(ctx, model.AuditRecord{
 		Actor: actor, Action: model.AuditUserDelete, Result: model.AuditSuccess,
 		Detail: "deleted user " + user.Username,
 	}); err != nil {
-		return fmt.Errorf("auditing user delete: %w", err)
+		return model.User{}, fmt.Errorf("auditing user delete: %w", err)
 	}
 
-	return nil
+	return user, nil
 }
 
 // EnsureAdmin guarantees a usable admin account. When no enabled admin
@@ -466,7 +573,9 @@ func (u *Users) seedGeneratedAdmin(ctx context.Context) (AdminBootstrap, error) 
 }
 
 // seedAdmin creates the bootstrap admin, or repairs an existing row of
-// that name into an enabled admin, with the given password.
+// that name into an enabled admin with every service, with the given
+// password. The scope is reset first: a row that was a scoped viewer
+// cannot become an admin while it is still scoped.
 func (u *Users) seedAdmin(ctx context.Context, password string, mustChange bool) error {
 	hash, err := hashPassword(password)
 	if err != nil {
@@ -476,8 +585,9 @@ func (u *Users) seedAdmin(ctx context.Context, password string, mustChange bool)
 	existing, err := u.users.ByUsername(ctx, bootstrapAdmin)
 	if errors.Is(err, store.ErrUserNotFound) {
 		if _, err := u.users.Create(ctx, model.User{
-			Username: bootstrapAdmin, PasswordHash: hash, Role: model.RoleAdmin, MustChangePassword: mustChange,
-		}); err != nil {
+			Username: bootstrapAdmin, PasswordHash: hash, Role: model.RoleAdmin,
+			AllServices: true, MustChangePassword: mustChange,
+		}, bootstrapAdmin); err != nil {
 			return fmt.Errorf("seeding admin: %w", err)
 		}
 
@@ -488,8 +598,13 @@ func (u *Users) seedAdmin(ctx context.Context, password string, mustChange bool)
 		return fmt.Errorf("looking up admin: %w", err)
 	}
 
+	if _, err := u.users.SetAccess(ctx, existing.ID, model.UserAccess{
+		Role: model.RoleAdmin, AllServices: true, Services: []string{},
+	}, bootstrapAdmin); err != nil {
+		return fmt.Errorf("repairing admin access: %w", err)
+	}
+
 	existing.PasswordHash = hash
-	existing.Role = model.RoleAdmin
 	existing.MustChangePassword = mustChange
 	existing.DisabledAt = nil
 
@@ -593,11 +708,30 @@ func checkUserInput(
 		return fmt.Errorf("checking username: %w", err)
 	}
 
-	if input.Role != model.RoleAdmin && input.Role != model.RoleViewer {
-		return fmt.Errorf("%w: role %q (want admin or viewer)", ErrInvalidInput, input.Role)
+	if err := checkRole(input.Role); err != nil {
+		return err
 	}
 
 	return checkPassword(input.Password)
+}
+
+// checkRole rejects a role no account may be given. The reserved
+// developer role is rejected here until its rules exist.
+func checkRole(role model.Role) error {
+	if !authz.Assignable(role) {
+		return fmt.Errorf("%w: role %q (want admin or viewer)", ErrInvalidInput, role)
+	}
+
+	return nil
+}
+
+// describeAccess renders a role and scope for audit details.
+func describeAccess(access model.UserAccess) string {
+	if access.AllServices {
+		return "role " + string(access.Role) + ", all services"
+	}
+
+	return "role " + string(access.Role) + ", services [" + strings.Join(access.Services, ", ") + "]"
 }
 
 // checkPassword enforces the managed-account password policy.

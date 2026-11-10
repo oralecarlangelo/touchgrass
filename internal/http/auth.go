@@ -14,6 +14,7 @@ import (
 
 	nethttp "net/http"
 
+	"github.com/oralecarlangelo/touchgrass/internal/authz"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 )
@@ -34,8 +35,10 @@ const (
 	// defaultLoginUsername keeps password-only logins working: an
 	// empty username means the bootstrap admin.
 	defaultLoginUsername = "admin"
-	// errForbiddenMessage reports a valid session without the role.
-	errForbiddenMessage = "admin role required"
+	// errForbiddenMessage reports a valid session that may not do what
+	// it asked. It names neither a role nor a service, so it reads the
+	// same whether the role or the scope said no.
+	errForbiddenMessage = "you do not have access to this"
 	// errPasswordChangeMessage reports a session still on a one-time
 	// password: it may only change that password.
 	errPasswordChangeMessage = "change your one-time password to continue"
@@ -49,7 +52,6 @@ const (
 // Auth errors, translated to user-safe envelopes at the boundary.
 var (
 	errAuthRequired           = errors.New("missing or expired session")
-	errForbidden              = errors.New("role lacks permission")
 	errPasswordChangeRequired = errors.New("one-time password not yet replaced")
 )
 
@@ -59,15 +61,20 @@ type Identity struct {
 	Role     model.Role
 	// MustChangePassword marks a session on a one-time password.
 	MustChangePassword bool
+	// AllServices and Services are the caller's scope.
+	AllServices bool
+	Services    []string
 }
 
-// Admin reports full-power access.
-func (i Identity) Admin() bool {
-	return i.Role == model.RoleAdmin
+// Subject is the caller as the authorization policy sees it.
+func (i Identity) Subject() authz.Subject {
+	return authz.Subject{
+		Username: i.Username, Role: i.Role, AllServices: i.AllServices, Services: i.Services,
+	}
 }
 
-// session binds a token to a username with an expiry. Role and
-// disabled state always re-resolve from the store, so role changes
+// session binds a token to a username with an expiry. Role, scope, and
+// disabled state always re-resolve from the store, so access changes
 // and disables bite on the very next request.
 type session struct {
 	username string
@@ -147,6 +154,7 @@ func (a *Authenticator) Authenticate(r *nethttp.Request) (Identity, bool) {
 
 	return Identity{
 		Username: user.Username, Role: user.Role, MustChangePassword: user.MustChangePassword,
+		AllServices: user.AllServices, Services: user.Services,
 	}, true
 }
 
@@ -161,6 +169,12 @@ func (a *Authenticator) DropOtherSessions(username, keep string) {
 			delete(a.sessions, token)
 		}
 	}
+}
+
+// DropSessions ends every session of username, so an admin's password
+// reset logs out whoever held the old password.
+func (a *Authenticator) DropSessions(username string) {
+	a.DropOtherSessions(username, "")
 }
 
 // Logout drops a session token.
@@ -254,22 +268,6 @@ func allowedOnOneTimePassword(path string) bool {
 	return path == "/api/auth/me" || path == "/api/auth/password" || path == "/api/auth/logout"
 }
 
-// requireAdmin rejects authenticated callers without the admin role.
-// It runs inside the auth middleware, so identity is always present.
-func (s *Server) requireAdmin(next nethttp.HandlerFunc) nethttp.HandlerFunc {
-	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
-		identity, _ := identityFrom(r)
-
-		if !identity.Admin() {
-			writeError(w, s.logger, errForbidden, errForbiddenMessage, "forbidden", nethttp.StatusForbidden)
-
-			return
-		}
-
-		next(w, r)
-	}
-}
-
 // identityKey carries the caller identity in request contexts.
 type identityKey struct{}
 
@@ -278,6 +276,15 @@ func identityFrom(r *nethttp.Request) (Identity, bool) {
 	identity, ok := r.Context().Value(identityKey{}).(Identity)
 
 	return identity, ok
+}
+
+// subjectFrom returns the authenticated caller as a policy subject. A
+// request that never passed auth yields the zero Subject, which holds
+// nothing.
+func subjectFrom(r *nethttp.Request) authz.Subject {
+	identity, _ := identityFrom(r)
+
+	return identity.Subject()
 }
 
 // requestActor returns the username for audit attribution.
@@ -311,12 +318,17 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
-// meResponse is the session probe payload.
+// meResponse is the session probe payload. Capabilities lists what the
+// caller holds: a fleet capability appears only for an all-services
+// caller, and a service capability applies to the services in scope.
 type meResponse struct {
-	Authenticated      bool   `json:"authenticated"`
-	Username           string `json:"username"`
-	Role               string `json:"role"`
-	MustChangePassword bool   `json:"must_change_password"`
+	Authenticated      bool               `json:"authenticated"`
+	Username           string             `json:"username"`
+	Role               string             `json:"role"`
+	MustChangePassword bool               `json:"must_change_password"`
+	AllServices        bool               `json:"all_services"`
+	Services           []string           `json:"services"`
+	Capabilities       []authz.Capability `json:"capabilities"`
 }
 
 // changePasswordRequest is the self-service password change body.
@@ -386,15 +398,25 @@ func (s *Server) handleLogout(w nethttp.ResponseWriter, r *nethttp.Request) {
 // handleMe reports the session state.
 func (s *Server) handleMe(w nethttp.ResponseWriter, r *nethttp.Request) {
 	identity, _ := identityFrom(r)
+	subject := identity.Subject()
+
+	services := []string{}
+	if !subject.AllServices {
+		_, services = subject.VisibleServices()
+	}
+
 	writeJSON(w, s.logger, nethttp.StatusOK, meResponse{
 		Authenticated: true, Username: identity.Username, Role: string(identity.Role),
 		MustChangePassword: identity.MustChangePassword,
+		AllServices:        subject.AllServices, Services: services, Capabilities: subject.Capabilities(),
 	})
 }
 
 // handleChangePassword replaces the caller's own password. A wrong
 // current password counts against the login rate limit, and success
-// ends the caller's other sessions.
+// ends the caller's other sessions and their open event streams. The
+// body carries the two passwords only: nothing in it can change a role
+// or a scope.
 func (s *Server) handleChangePassword(w nethttp.ResponseWriter, r *nethttp.Request) {
 	body, ok := decodeBody[changePasswordRequest](w, s.logger, r)
 	if !ok {
@@ -429,6 +451,10 @@ func (s *Server) handleChangePassword(w nethttp.ResponseWriter, r *nethttp.Reque
 	if cookie, err := r.Cookie(sessionCookie); err == nil {
 		s.auth.DropOtherSessions(identity.Username, cookie.Value)
 	}
+
+	// A stream outlives the session that opened it, so close them all;
+	// the caller's own browser reconnects on its surviving session.
+	s.events.Disconnect(identity.Username)
 
 	w.WriteHeader(nethttp.StatusNoContent)
 }

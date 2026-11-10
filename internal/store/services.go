@@ -54,6 +54,23 @@ func (s *ServiceStore) All(ctx context.Context) ([]model.Service, error) {
 	return services, nil
 }
 
+// ByIDs returns the services whose id is listed, ordered by id. Unknown
+// ids are skipped, and an empty list selects nothing.
+func (s *ServiceStore) ByIDs(ctx context.Context, ids []string) ([]model.Service, error) {
+	if len(ids) == 0 {
+		return []model.Service{}, nil
+	}
+
+	clause, args := inClause(ids)
+
+	return queryRows(ctx, s.db.sql, rowQuery[model.Service]{
+		what:  "services",
+		query: "SELECT id, name, strategy, compose_project, compose_dir, config FROM services WHERE id IN " + clause + " ORDER BY id",
+		args:  args,
+		scan:  scanService,
+	})
+}
+
 // Get returns the service with id.
 func (s *ServiceStore) Get(ctx context.Context, id string) (model.Service, error) {
 	row := s.db.sql.QueryRowContext(
@@ -130,6 +147,7 @@ var serviceChildren = []string{
 	"notifications",
 	"occurrences",
 	"sdk_logs",
+	"user_services", // a re-created id must not inherit old grants
 }
 
 // Delete removes the service definition and all of its touchgrass-side

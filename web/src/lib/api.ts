@@ -236,6 +236,20 @@ export function isUnauthorized(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;
 }
 
+// isForbidden reports a request the server refused for this user: the
+// role or the scope does not allow it.
+export function isForbidden(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 403 && error.code === 'forbidden';
+}
+
+// The app registers one listener for refused requests. Access can
+// change while a page is open, so a 403 is the cue to re-read it.
+let forbiddenListener: (() => void) | null = null;
+
+export function onForbidden(listener: (() => void) | null): void {
+  forbiddenListener = listener;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
 
@@ -271,7 +285,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // Fall through with the HTTP status.
     }
 
-    throw new ApiError(res.status, detail, code, parseRetryAfter(res.headers.get('Retry-After')));
+    const failure = new ApiError(res.status, detail, code, parseRetryAfter(res.headers.get('Retry-After')));
+
+    if (isForbidden(failure)) {
+      forbiddenListener?.();
+    }
+
+    throw failure;
   }
 
   return (await res.json()) as T;
@@ -465,6 +485,12 @@ export interface SessionInfo {
   // True while the account holds a one-time password: every other API
   // route answers 403 password_change_required until it is replaced.
   must_change_password?: boolean;
+  // The user's scope: every service, or the listed ids.
+  all_services?: boolean;
+  services?: string[];
+  // What the user may do (see lib/access.ts). A fleet capability is
+  // listed only for an all-services user.
+  capabilities?: string[];
 }
 
 export async function fetchSession(): Promise<SessionInfo> {
@@ -1114,8 +1140,19 @@ export interface ManagedUser {
   id: number;
   username: string;
   role: string;
+  all_services: boolean;
+  services: string[];
+  // True while the account is on a temporary password.
+  must_change_password: boolean;
   disabled: boolean;
   created_at: string;
+}
+
+// UserAccess is a role and scope, always set together.
+export interface UserAccess {
+  role: string;
+  all_services: boolean;
+  services: string[];
 }
 
 interface UsersResponse {
@@ -1128,12 +1165,17 @@ export async function fetchUsers(): Promise<ManagedUser[]> {
   return body.users ?? [];
 }
 
-export async function createUser(input: {
-  username: string;
-  password: string;
-  role: string;
-}): Promise<ManagedUser> {
+export async function createUser(
+  input: { username: string; password: string } & UserAccess,
+): Promise<ManagedUser> {
   return request<ManagedUser>('/api/users', jsonBody(input));
+}
+
+export async function setUserAccess(id: number, access: UserAccess): Promise<ManagedUser> {
+  return request<ManagedUser>(`/api/users/${id}/access`, {
+    ...jsonBody(access),
+    method: 'PUT',
+  });
 }
 
 export async function setUserRole(id: number, role: string): Promise<ManagedUser> {

@@ -9,6 +9,9 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
 
+// notificationsWhat names the rows in query errors.
+const notificationsWhat = "notifications"
+
 // NotificationStore persists in-app notifications.
 type NotificationStore struct {
 	db *DB
@@ -50,7 +53,8 @@ func (s *NotificationStore) Insert(
 }
 
 // List returns the newest notifications first, bounded by limit. An empty
-// serviceID selects every service; otherwise it selects one service.
+// serviceID selects every row, including the ones that belong to no
+// service; otherwise it selects one service.
 func (s *NotificationStore) List(
 	ctx context.Context,
 	serviceID string,
@@ -66,50 +70,62 @@ func (s *NotificationStore) List(
 		args = []any{serviceID, limit}
 	}
 
-	rows, err := s.db.sql.QueryContext(ctx, query, args...)
+	return queryRows(ctx, s.db.sql, rowQuery[model.Notification]{
+		what: notificationsWhat, query: query, args: args, scan: scanNotification,
+	})
+}
+
+// ListForServices returns the newest notifications of the listed
+// services first, bounded by limit. Rows that belong to no service are
+// never included, and an empty list selects nothing.
+func (s *NotificationStore) ListForServices(
+	ctx context.Context,
+	serviceIDs []string,
+	limit int,
+) ([]model.Notification, error) {
+	if len(serviceIDs) == 0 {
+		return []model.Notification{}, nil
+	}
+
+	clause, args := inClause(serviceIDs)
+
+	return queryRows(ctx, s.db.sql, rowQuery[model.Notification]{
+		what: notificationsWhat,
+		query: `SELECT id, service_id, kind, title, body, created_at, read_at
+		 FROM notifications WHERE service_id IN ` + clause + ` ORDER BY id DESC LIMIT ?`,
+		args: append(args, limit),
+		scan: scanNotification,
+	})
+}
+
+// scanNotification maps one notifications row.
+func scanNotification(row scanner) (model.Notification, error) {
+	var (
+		notification model.Notification
+		createdAt    string
+		readAt       sql.NullString
+	)
+
+	if err := row.Scan(
+		&notification.ID, &notification.ServiceID, &notification.Kind,
+		&notification.Title, &notification.Body, &createdAt, &readAt,
+	); err != nil {
+		return model.Notification{}, fmt.Errorf("scanning notification: %w", err)
+	}
+
+	parsedAt, err := parseTime(createdAt, "created_at")
 	if err != nil {
-		return nil, fmt.Errorf("querying notifications: %w", err)
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	notifications := []model.Notification{}
-
-	for rows.Next() {
-		var (
-			notification model.Notification
-			createdAt    string
-			readAt       sql.NullString
-		)
-
-		if err := rows.Scan(
-			&notification.ID, &notification.ServiceID, &notification.Kind,
-			&notification.Title, &notification.Body, &createdAt, &readAt,
-		); err != nil {
-			return nil, fmt.Errorf("scanning notification: %w", err)
-		}
-
-		parsedAt, err := parseTime(createdAt, "created_at")
-		if err != nil {
-			return nil, err
-		}
-
-		notification.CreatedAt = parsedAt
-
-		notification.ReadAt, err = parseNullTime(readAt, "read_at")
-		if err != nil {
-			return nil, err
-		}
-
-		notifications = append(notifications, notification)
+		return model.Notification{}, err
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating notifications: %w", err)
+	notification.CreatedAt = parsedAt
+
+	notification.ReadAt, err = parseNullTime(readAt, "read_at")
+	if err != nil {
+		return model.Notification{}, err
 	}
 
-	return notifications, nil
+	return notification, nil
 }
 
 func nullString(value string) any {
@@ -166,6 +182,52 @@ func (s *NotificationStore) CountUnread(ctx context.Context, serviceID string) (
 
 		args = append(args, serviceID)
 	}
+
+	var count int64
+
+	if err := s.db.sql.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("counting unread notifications: %w", err)
+	}
+
+	return count, nil
+}
+
+// MarkAllReadForServices stamps every unread notification of the listed
+// services read and reports the count. An empty list marks nothing.
+func (s *NotificationStore) MarkAllReadForServices(ctx context.Context, serviceIDs []string) (int64, error) {
+	if len(serviceIDs) == 0 {
+		return 0, nil
+	}
+
+	clause, args := inClause(serviceIDs)
+
+	//nolint:gosec // G202: clause is only "(?, ?, …)" placeholders; the ids are bound arguments.
+	query := "UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND service_id IN " + clause
+
+	res, err := s.db.sql.ExecContext(ctx, query, append([]any{formatTime(time.Now())}, args...)...)
+	if err != nil {
+		return 0, fmt.Errorf("marking notifications read: %w", err)
+	}
+
+	marked, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("counting read notifications: %w", err)
+	}
+
+	return marked, nil
+}
+
+// CountUnreadForServices counts the unread notifications of the listed
+// services. An empty list counts nothing.
+func (s *NotificationStore) CountUnreadForServices(ctx context.Context, serviceIDs []string) (int64, error) {
+	if len(serviceIDs) == 0 {
+		return 0, nil
+	}
+
+	clause, args := inClause(serviceIDs)
+
+	// clause is only "(?, ?, …)" placeholders; the ids are bound arguments.
+	query := "SELECT COUNT(*) FROM notifications WHERE read_at IS NULL AND service_id IN " + clause
 
 	var count int64
 

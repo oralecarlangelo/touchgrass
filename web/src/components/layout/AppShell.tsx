@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import type { ServiceView } from '@/lib/api.ts';
+import { accessLabel, canOpenView, isScoped, type Can } from '@/lib/access.ts';
+import type { ServiceView, SessionInfo } from '@/lib/api.ts';
 import { navGroups, type ViewId } from '@/lib/views.ts';
 import NotificationBell from './NotificationBell.tsx';
 import ServiceSwitcher from './ServiceSwitcher.tsx';
@@ -29,8 +30,8 @@ export default function AppShell({
   onSelectService,
   onLogout,
   onUnauthorized,
-  username,
-  isAdmin,
+  session,
+  can,
   children,
 }: {
   view: ViewId;
@@ -40,16 +41,21 @@ export default function AppShell({
   onSelectService: (id: string | null) => void;
   onLogout: () => void;
   onUnauthorized: () => void;
-  username: string;
-  isAdmin: boolean;
+  session: SessionInfo;
+  can: Can;
   children: ReactNode;
 }) {
+  // Entries the user cannot open are hidden, not disabled: they are
+  // never available to this account.
   const visibleGroups = navGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((tab) => tab.id !== 'users' || isAdmin),
+      items: group.items.filter((tab) => canOpenView(tab.id, session, can)),
     }))
     .filter((group) => group.items.length > 0);
+
+  // Admins are the unmarked case; everyone else sees their real access.
+  const limited = session.role !== 'admin' || isScoped(session);
 
   const activeGroup = (groupId: string): boolean =>
     visibleGroups.some((group) => group.id === groupId && group.items.some((tab) => tab.id === view));
@@ -60,9 +66,16 @@ export default function AppShell({
         <header className="border-border bg-card sticky top-0 z-40 border-b">
           <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
             <span className="text-sm font-semibold tracking-tight">touchgrass</span>
-            {!isAdmin && (
-              <Badge variant="secondary" title="Your account is read-only">
-                read-only
+            {limited && (
+              <Badge
+                variant="secondary"
+                title={
+                  isScoped(session)
+                    ? 'Your role, and the services an admin granted you'
+                    : 'Your role across every service'
+                }
+              >
+                {accessLabel(session)}
               </Badge>
             )}
             <Separator orientation="vertical" className="mx-1 hidden h-5 md:block" />
@@ -112,10 +125,10 @@ export default function AppShell({
               <NotificationBell
                 onViewAll={() => onView('notifications')}
                 onUnauthorized={onUnauthorized}
-                isAdmin={isAdmin}
+                isAdmin={can('notifications.ack')}
               />
               <ThemeToggle />
-              <UserMenu username={username} isAdmin={isAdmin} onLogout={onLogout} />
+              <UserMenu username={session.username} access={accessLabel(session)} onLogout={onLogout} />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" aria-label="Menu" className="lg:hidden">

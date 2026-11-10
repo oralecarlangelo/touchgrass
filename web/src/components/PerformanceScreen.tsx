@@ -85,12 +85,21 @@ function rejectedMessage(reason: unknown): string {
 export default function PerformanceScreen({
   services,
   onUnauthorized,
+  canFleet,
 }: {
   services: ServiceView[];
   onUnauthorized: () => void;
+  // Whether the user may see fleet-wide numbers and collector status.
+  // A user scoped to some services may not: they always look at one of
+  // their services, and the fleet calls are never made.
+  canFleet: boolean;
 }) {
   const [hours, setHours] = useState(1);
-  const [serviceId, setServiceId] = useState('all');
+  const [chosenServiceId, setServiceId] = useState('all');
+  const serviceId =
+    canFleet || services.some((service) => service.id === chosenServiceId)
+      ? chosenServiceId
+      : (services[0]?.id ?? '');
   const [data, setData] = useState<PerformanceData>(emptyData);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -105,6 +114,13 @@ export default function PerformanceScreen({
       }
       setFailures([]);
 
+      if (serviceId === '') {
+        // A scoped user whose service list has not loaded yet: keep
+        // the loading state until there is a service to ask about.
+        setRefreshing(false);
+        return;
+      }
+
       const filters = filtersFor(hours, serviceId);
       const results = await Promise.allSettled([
         fetchPerformanceSummary(filters),
@@ -112,7 +128,7 @@ export default function PerformanceScreen({
         fetchPerformanceRoutes(filters),
         fetchPerformancePostgres(filters),
         fetchPerformanceRedis(filters),
-        fetchCollectorStatuses(),
+        canFleet ? fetchCollectorStatuses() : Promise.resolve(null),
       ]);
 
       const unauthorized = results.some(
@@ -139,7 +155,7 @@ export default function PerformanceScreen({
       setLoading(false);
       setRefreshing(false);
     },
-    [hours, serviceId, onUnauthorized],
+    [hours, serviceId, onUnauthorized, canFleet],
   );
 
   useEffect(() => {
@@ -183,7 +199,7 @@ export default function PerformanceScreen({
               <SelectValue placeholder="All services" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All services</SelectItem>
+              {canFleet && <SelectItem value="all">All services</SelectItem>}
               {services.map((service) => (
                 <SelectItem key={service.id} value={service.id}>
                   {service.name}

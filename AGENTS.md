@@ -51,9 +51,11 @@ Beyond routing, these always apply to Go work here: `golang-project-layout`,
 ## Layout (summary)
 
 `cmd/touchgrass/` (thin mains) · `internal/{http,service,store,docker,
-probe,notify,config,model,secret}` · `web/` · `sdk/node/` · `migrations/` ·
+probe,notify,config,model,secret,authz}` · `web/` · `sdk/node/` · `migrations/` ·
 `docs/` · `scripts/`. `internal/secret` is the AES-GCM envelope for the
-env pillar (ADR-0012); plaintext never leaves request scope. Full standard: `docs/PROJECT_STRUCTURE.md`.
+env pillar (ADR-0012); plaintext never leaves request scope.
+`internal/authz` is the access policy (ADR-0014): every new `/api/`
+route is a row in `internal/http/routes.go` naming its capability. Full standard: `docs/PROJECT_STRUCTURE.md`.
 System design: `docs/ARCHITECTURE.md`.
 
 Rules: mains parse flags, wire deps, call `Run()` — no business logic.

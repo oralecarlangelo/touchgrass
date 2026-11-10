@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import AccessDenied from './components/AccessDenied.tsx';
 import EmptyState from './components/EmptyState.tsx';
 import ErrorState from './components/ErrorState.tsx';
 import Dashboard from './components/Dashboard.tsx';
@@ -14,6 +15,7 @@ import KeysScreen from './components/KeysScreen.tsx';
 import FirstLoginPassword from './components/account/FirstLoginPassword.tsx';
 import LoginForm from './components/LoginForm.tsx';
 import LogsScreen from './components/LogsScreen.tsx';
+import NoServicesAssigned from './components/NoServicesAssigned.tsx';
 import NotificationsScreen from './components/NotificationsScreen.tsx';
 import PerformanceScreen from './components/PerformanceScreen.tsx';
 import RulesScreen from './components/RulesScreen.tsx';
@@ -32,13 +34,36 @@ import {
   isUnauthorized,
   login,
   logout,
+  onForbidden,
   type ServiceView,
   type SessionInfo,
 } from './lib/api.ts';
-import type { ViewId } from './lib/views.ts';
+import {
+  canOpenView,
+  firstAllowedView,
+  hasNoServices,
+  isScoped,
+  makeCan,
+  needsAdmin,
+  scopeLabel,
+} from './lib/access.ts';
+import { navGroups, type ViewId } from './lib/views.ts';
 import { parseHash, writeHash } from './lib/hash.ts';
 
 const refreshIntervalMs = 30_000;
+
+// A refused request re-reads the session, but not more often than this.
+const accessRecheckMs = 2_000;
+
+function sameSession(a: SessionInfo | null, b: SessionInfo): boolean {
+  return a !== null && JSON.stringify(a) === JSON.stringify(b);
+}
+
+function viewLabel(view: ViewId): string {
+  const tab = navGroups.flatMap((group) => group.items).find((item) => item.id === view);
+
+  return tab === undefined ? 'this screen' : `the ${tab.label} screen`;
+}
 
 export default function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
@@ -53,6 +78,8 @@ export default function App() {
   const [selected, setSelected] = useState<ServiceView | null>(null);
   const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
   const [selectedSecurityFindingId, setSelectedSecurityFindingId] = useState<number | null>(null);
+  // A service the user asked for that is outside their scope.
+  const [deniedServiceId, setDeniedServiceId] = useState<string | null>(null);
   const [view, setView] = useState<ViewId>(() => parseHash(window.location.hash).view);
   const [serviceTab, setServiceTab] = useState<ServiceTab>(
     () => (parseHash(window.location.hash).tab as ServiceTab | null) ?? 'overview',
@@ -73,7 +100,11 @@ export default function App() {
     setSessionError(null);
 
     try {
-      setSession(await fetchSession());
+      const next = await fetchSession();
+
+      // Keep the same object when nothing changed, so a re-check does
+      // not restart every screen's polling.
+      setSession((current) => (sameSession(current, next) ? current : next));
     } catch (err) {
       setSessionError(err instanceof Error ? err.message : String(err));
     }
@@ -83,15 +114,39 @@ export default function App() {
     void refreshSession();
   }, [refreshSession]);
 
+  // Access can change while the page is open. Any refused request
+  // re-reads the session; the screens below then follow the new access.
+  useEffect(() => {
+    let lastCheck = 0;
+
+    onForbidden(() => {
+      const now = Date.now();
+
+      if (now - lastCheck < accessRecheckMs) {
+        return;
+      }
+
+      lastCheck = now;
+      void refreshSession();
+    });
+
+    return () => onForbidden(null);
+  }, [refreshSession]);
+
   const handleUnauthorized = useCallback(() => {
     setSession({ authenticated: false, username: '', role: '' });
     setServices(null);
     setSelected(null);
     setSelectedContainerId(null);
     setSelectedSecurityFindingId(null);
+    setDeniedServiceId(null);
     setView('dashboard');
     setLoginError('Session expired. Log in again to continue.');
   }, []);
+
+  const authed = session !== null && session.authenticated;
+  const can = useMemo(() => makeCan(session), [session]);
+  const scoped = isScoped(session);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -105,13 +160,32 @@ export default function App() {
 
       if (pending !== null) {
         pendingServiceRef.current = null;
-        setSelected(fetched.find((service) => service.id === pending) ?? null);
+
+        const linked = fetched.find((service) => service.id === pending) ?? null;
+        setSelected(linked);
+
+        // A scoped user's list is their whole world: a linked service
+        // that is not in it is one they may not open.
+        if (linked === null && scoped) {
+          setDeniedServiceId(pending);
+        }
       } else {
-        setSelected((current) =>
-          current === null
-            ? null
-            : (fetched.find((service) => service.id === current.id) ?? current),
-        );
+        setSelected((current) => {
+          if (current === null) {
+            return null;
+          }
+
+          const fresh = fetched.find((service) => service.id === current.id);
+
+          if (fresh === undefined && scoped) {
+            // The open service left the user's scope.
+            setDeniedServiceId(current.id);
+
+            return null;
+          }
+
+          return fresh ?? current;
+        });
       }
     } catch (err) {
       if (isUnauthorized(err)) {
@@ -123,18 +197,17 @@ export default function App() {
     } finally {
       setRefreshing(false);
     }
-  }, [handleUnauthorized]);
-
-  const authed = session !== null && session.authenticated;
-  const isAdmin = authed && session.role === 'admin';
+  }, [handleUnauthorized, scoped]);
 
   useEffect(() => {
-    if (!authed || session === null) {
+    // On a temporary password every route but the change answers 403,
+    // so nothing is loaded until it has been replaced.
+    if (!authed || session === null || session.must_change_password === true) {
       return;
     }
 
-    // Viewers live in the logs; land them there unless a deep link says otherwise.
-    if (session.role !== 'admin' && sessionStorage.getItem('tg-landed') === null) {
+    // Read-only users live in the logs; land them there unless a deep link says otherwise.
+    if (!can('services.manage') && can('logs.read') && sessionStorage.getItem('tg-landed') === null) {
       sessionStorage.setItem('tg-landed', '1');
 
       if (window.location.hash === '' || window.location.hash === '#/dashboard') {
@@ -146,7 +219,7 @@ export default function App() {
     const timer = setInterval(() => void load(), refreshIntervalMs);
 
     return () => clearInterval(timer);
-  }, [authed, session, load]);
+  }, [authed, session, can, load]);
 
   const handleLogin = useCallback(async () => {
     setLoggingIn(true);
@@ -186,6 +259,7 @@ export default function App() {
     setSelected(null);
     setSelectedContainerId(null);
     setSelectedSecurityFindingId(null);
+    setDeniedServiceId(null);
     setView('dashboard');
     setPassword('');
     sessionStorage.removeItem('tg-landed');
@@ -197,6 +271,7 @@ export default function App() {
     }
 
     setSelectedContainerId(null);
+    setDeniedServiceId(null);
     if (next !== 'security') setSelectedSecurityFindingId(null);
 
     setView(next);
@@ -205,6 +280,7 @@ export default function App() {
   const handleSelectService = useCallback(
     (id: string | null, tab: ServiceTab = 'overview') => {
       setServiceTab(tab);
+      setDeniedServiceId(null);
 
       if (id === null) {
         setSelected(null);
@@ -224,16 +300,22 @@ export default function App() {
       // inventory): refetch once so #/services/<id> still lands on it.
       void fetchServices()
         .then((fetched) => {
+          const linked = fetched.find((service) => service.id === id) ?? null;
+
           setServices(fetched);
-          setSelected(fetched.find((service) => service.id === id) ?? null);
+          setSelected(linked);
           setView('services');
+
+          if (linked === null && scoped) {
+            setDeniedServiceId(id);
+          }
         })
         .catch(() => {
           setSelected(null);
           setView('services');
         });
     },
-    [services],
+    [services, scoped],
   );
 
   const handleDeletedService = useCallback(
@@ -303,10 +385,30 @@ export default function App() {
         onSelectService={handleSelectService}
         onLogout={() => void handleLogout()}
         onUnauthorized={handleUnauthorized}
-        username={session.username}
-        isAdmin={isAdmin}
+        session={session}
+        can={can}
       >
-        {selectedContainerId !== null ? (
+        {hasNoServices(session) && view !== 'help' ? (
+          <NoServicesAssigned username={session.username} onRetry={() => void refreshSession()} />
+        ) : deniedServiceId !== null ? (
+          <AccessDenied
+            what={`the service “${deniedServiceId}”`}
+            detail={`Your account is limited to ${scopeLabel(session)}. Ask an admin if you need this one too.`}
+            backLabel="Back to your services"
+            onBack={() => handleSelectService(null)}
+          />
+        ) : !canOpenView(view, session, can) ? (
+          <AccessDenied
+            what={viewLabel(view)}
+            detail={
+              scoped && !needsAdmin(view)
+                ? `It covers the whole host, and your account is limited to ${scopeLabel(session)}.`
+                : `Your role (${session.role}) does not include it. Ask an admin if you need it.`
+            }
+            backLabel="Go to a screen you can use"
+            onBack={() => handleView(firstAllowedView(session, can))}
+          />
+        ) : selectedContainerId !== null ? (
           <ContainerDetail
             id={selectedContainerId}
             onBack={() => setSelectedContainerId(null)}
@@ -326,7 +428,7 @@ export default function App() {
             }}
             onServiceChanged={() => void load()}
             onUnauthorized={handleUnauthorized}
-            isAdmin={isAdmin}
+            can={can}
             initialTab={serviceTab}
             onTabChange={setServiceTab}
           />
@@ -336,16 +438,17 @@ export default function App() {
             onSelectService={handleSelectService}
             onView={handleView}
             onUnauthorized={handleUnauthorized}
+            canHost={can('host.read')}
           />
         ) : view === 'audit' ? (
           <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'help' ? (
-          <HelpScreen isAdmin={isAdmin} onView={handleView} />
+          <HelpScreen isAdmin={can('services.manage')} onView={handleView} />
         ) : view === 'notifications' ? (
           <NotificationsScreen
             services={services ?? []}
             onUnauthorized={handleUnauthorized}
-            isAdmin={isAdmin}
+            isAdmin={can('notifications.ack')}
             onSelectSecurityFinding={(id) => {
               setSelectedSecurityFindingId(id);
               setView('security');
@@ -353,49 +456,57 @@ export default function App() {
           />
         ) : view === 'security' ? (
           <SecurityScreen
-            isAdmin={isAdmin}
+            isAdmin={can('security.manage')}
             onUnauthorized={handleUnauthorized}
             onSelectContainer={setSelectedContainerId}
             initialFindingId={selectedSecurityFindingId}
           />
         ) : view === 'performance' ? (
-          <PerformanceScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+          <PerformanceScreen
+            services={services ?? []}
+            onUnauthorized={handleUnauthorized}
+            canFleet={can('host.read')}
+          />
         ) : view === 'issues' ? (
           <IssuesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'logs' ? (
           <LogsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'images' ? (
-          <ImagesScreen onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
+          <ImagesScreen onUnauthorized={handleUnauthorized} isAdmin={can('host.manage')} />
         ) : view === 'fleet' ? (
           <FleetScreen
             onUnauthorized={handleUnauthorized}
             onSelectService={handleSelectService}
             onSelectContainer={setSelectedContainerId}
-            isAdmin={isAdmin}
+            isAdmin={can('services.manage')}
           />
         ) : view === 'databases' ? (
-          <DatabasesScreen onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
+          <DatabasesScreen onUnauthorized={handleUnauthorized} isAdmin={can('databases.backup')} />
         ) : view === 'environment' ? (
           <EnvironmentScreen
             services={services}
-            isAdmin={isAdmin}
+            isAdmin={can('env.apply')}
             onUnauthorized={handleUnauthorized}
             onOpenService={(id) => handleSelectService(id, 'environment')}
           />
         ) : view === 'rules' ? (
-          <RulesScreen services={services ?? []} onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
+          <RulesScreen
+            services={services ?? []}
+            onUnauthorized={handleUnauthorized}
+            isAdmin={can('alerts.manage')}
+          />
         ) : view === 'keys' ? (
-          <KeysScreen services={services ?? []} onUnauthorized={handleUnauthorized} isAdmin={isAdmin} />
+          <KeysScreen
+            services={services ?? []}
+            onUnauthorized={handleUnauthorized}
+            isAdmin={can('keys.manage')}
+          />
         ) : view === 'users' ? (
-          isAdmin ? (
-            <UsersScreen onUnauthorized={handleUnauthorized} />
-          ) : (
-            <ErrorState
-              title="Admins only"
-              message="User management needs the admin role."
-              onRetry={() => handleView('logs')}
-            />
-          )
+          <UsersScreen
+            services={services ?? []}
+            currentUsername={session.username}
+            onUnauthorized={handleUnauthorized}
+          />
         ) : (
           <>
             <div className="flex items-center justify-between">
@@ -422,12 +533,12 @@ export default function App() {
               <EmptyState
                 title="No services on the radar"
                 body={
-                  isAdmin
+                  can('services.manage')
                     ? 'Nothing is managed yet. Open Fleet, pick a running container and promote it to a managed service to watch and deploy it here.'
                     : 'Nothing is managed yet. An admin adds services from Fleet; they show up here once added.'
                 }
                 action={
-                  isAdmin ? (
+                  can('services.manage') ? (
                     <Button size="sm" onClick={() => handleView('fleet')}>
                       Open Fleet
                     </Button>
@@ -441,7 +552,7 @@ export default function App() {
                 services={services}
                 onSelect={handleSelectService}
                 onDeleted={handleDeletedService}
-                isAdmin={isAdmin}
+                isAdmin={can('services.manage')}
               />
             )}
           </>

@@ -65,6 +65,27 @@ func (in *Inventory) Services(ctx context.Context) ([]model.ServiceView, error) 
 		return nil, fmt.Errorf("loading services: %w", err)
 	}
 
+	return in.views(ctx, defs)
+}
+
+// ServicesIn returns only the listed services with live state, for a
+// caller whose scope is a list. Unknown ids are skipped, and an empty
+// list returns nothing without asking Docker.
+func (in *Inventory) ServicesIn(ctx context.Context, serviceIDs []string) ([]model.ServiceView, error) {
+	if len(serviceIDs) == 0 {
+		return []model.ServiceView{}, nil
+	}
+
+	defs, err := in.services.ByIDs(ctx, serviceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("loading services: %w", err)
+	}
+
+	return in.views(ctx, defs)
+}
+
+// views joins service definitions with the running containers.
+func (in *Inventory) views(ctx context.Context, defs []model.Service) ([]model.ServiceView, error) {
 	containers, err := in.docker.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing containers: %w", err)

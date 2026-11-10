@@ -14,9 +14,11 @@ type servicesResponse struct {
 	Services []model.ServiceView `json:"services"`
 }
 
-// handleServices lists managed services with live state.
+// handleServices lists the managed services in the caller's scope with
+// live state. The scope bounds the query itself, so a scoped caller's
+// list never held anything else.
 func (s *Server) handleServices(w nethttp.ResponseWriter, r *nethttp.Request) {
-	views, err := s.inventory.Services(r.Context())
+	views, err := s.visibleServices(r)
 	if err != nil {
 		writeError(w, s.logger, err, "failed to load services", "services_unavailable", nethttp.StatusInternalServerError)
 
@@ -24,6 +26,16 @@ func (s *Server) handleServices(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	writeJSON(w, s.logger, nethttp.StatusOK, servicesResponse{Services: views})
+}
+
+// visibleServices loads the service views the caller may see.
+func (s *Server) visibleServices(r *nethttp.Request) ([]model.ServiceView, error) {
+	all, serviceIDs := subjectFrom(r).VisibleServices()
+	if all {
+		return s.inventory.Services(r.Context())
+	}
+
+	return s.inventory.ServicesIn(r.Context(), serviceIDs)
 }
 
 // createServiceRequest is the service creation body. Config holds raw

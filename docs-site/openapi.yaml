@@ -4,16 +4,37 @@ info:
   version: 1.0.0
   description: |
     Self-hosted blue-green deploys, metrics, and error tracking.
-    Mirrors `internal/http/server.go` — update both together.
+    Mirrors the route table in `internal/http/routes.go`; a test
+    keeps the two in step.
 
     All routes except `/api/health`, `/api/auth/login`,
     `/api/ingest`, and `/api/ingest/logs` require the session
-    cookie from login. Reads accept any role; every mutating
-    route requires the admin role (viewers get 403 `forbidden`),
-    except `POST /api/auth/password`, which any role may call for
-    its own account. A session on a one-time password gets 403
+    cookie from login. A session on a one-time password gets 403
     `password_change_required` everywhere but `/api/auth/me`,
     `/api/auth/password` and `/api/auth/logout`.
+
+    **Access.** A user has a role, which decides what they may do,
+    and a scope, which decides on which services: every service, or
+    a list. Each operation carries two extensions:
+
+    - `x-touchgrass-capability`: the capability the caller's role
+      must hold (`none` for a public route). Viewers hold the read
+      capabilities; admins hold all of them.
+    - `x-touchgrass-scope`: where it applies. `public` needs no
+      session. `self` is the caller's own account. `fleet` needs
+      the all-services scope, so a user limited to a list is
+      always refused. `service` needs the service named by the
+      request to be in the caller's scope.
+
+    A refused request answers 403 `forbidden`. That includes a
+    service outside the caller's scope, whether or not the id
+    exists. An operation keyed by a resource id (an issue, a log
+    line) answers 404 `not_found` both for an id that does not
+    exist and for one that belongs to a service outside the
+    caller's scope. The lists `GET /services`,
+    `GET /notifications` and `GET /audit` return only the
+    caller's services. See the Access page of the docs for the
+    full matrix.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0
@@ -50,6 +71,8 @@ tags:
 paths:
   /health:
     get:
+      x-touchgrass-capability: none
+      x-touchgrass-scope: public
       operationId: getHealth
       tags: [auth]
       summary: Liveness probe
@@ -63,6 +86,8 @@ paths:
                 $ref: '#/components/schemas/Health'
   /auth/login:
     post:
+      x-touchgrass-capability: none
+      x-touchgrass-scope: public
       operationId: login
       tags: [auth]
       summary: Start a session
@@ -84,6 +109,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
   /auth/logout:
     post:
+      x-touchgrass-capability: session.self
+      x-touchgrass-scope: self
       operationId: logout
       tags: [auth]
       summary: End the session
@@ -91,6 +118,8 @@ paths:
         '204': { description: Session cleared }
   /auth/me:
     get:
+      x-touchgrass-capability: session.self
+      x-touchgrass-scope: self
       operationId: getSession
       tags: [auth]
       summary: Session state
@@ -101,7 +130,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [authenticated, username, role, must_change_password]
+                required: [authenticated, username, role, must_change_password, all_services, services, capabilities]
                 properties:
                   authenticated: { type: boolean }
                   username: { type: string }
@@ -109,13 +138,34 @@ paths:
                   must_change_password:
                     type: boolean
                     description: >-
-                      True while the account holds a one-time password (a
-                      generated first-boot password or a CLI reset). Every
-                      route except this one, `POST /auth/password` and
-                      `POST /auth/logout` then answers 403
-                      `password_change_required`.
+                      True while the account holds a temporary password (a
+                      generated first-boot password, a new account, or a
+                      reset). Every route except this one,
+                      `POST /auth/password` and `POST /auth/logout` then
+                      answers 403 `password_change_required`.
+                  all_services:
+                    type: boolean
+                    description: >-
+                      True when the scope is every service, present and
+                      future, plus the host-level routes.
+                  services:
+                    type: array
+                    items: { type: string }
+                    description: >-
+                      The service ids in scope when `all_services` is
+                      false; empty otherwise.
+                  capabilities:
+                    type: array
+                    items: { type: string }
+                    description: >-
+                      Capability names the caller holds. A `fleet`
+                      capability is listed only for an all-services
+                      caller; a `service` capability applies to the
+                      services in scope.
   /auth/password:
     post:
+      x-touchgrass-capability: session.self
+      x-touchgrass-scope: self
       operationId: changeOwnPassword
       tags: [auth]
       summary: Change the caller's own password (any role)
@@ -155,6 +205,8 @@ paths:
                 $ref: '#/components/schemas/Error'
   /users:
     get:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
       operationId: listUsers
       tags: [auth]
       summary: List managed users (admin only, never includes hashes)
@@ -172,12 +224,18 @@ paths:
                     items: { $ref: '#/components/schemas/User' }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
       operationId: createUser
       tags: [auth]
       summary: Create a user (admin only)
       description: |
         Username shape `^[a-z0-9-]+$` (1-64 chars), password 12-72
-        chars, role admin or viewer. Audits `user_create`.
+        chars, role admin or viewer. The password is temporary: the
+        account must replace it at its first login. Omitting
+        `all_services` means every service, but only when `services`
+        is empty: a list is never widened by accident. Audits
+        `user_create` with the role and scope.
       requestBody:
         required: true
         content:
@@ -189,24 +247,44 @@ paths:
                 username: { type: string }
                 password: { type: string }
                 role: { type: string, enum: [admin, viewer] }
+                all_services:
+                  type: boolean
+                  description: Defaults to true when `services` is empty.
+                services:
+                  type: array
+                  items: { type: string }
+                  description: Service ids to grant when `all_services` is false.
       responses:
         '201':
           description: User created
           content:
             application/json:
               schema: { $ref: '#/components/schemas/User' }
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: >-
+            Invalid input: an unknown role (the reserved `developer`
+            role included), an unknown service, or a service list
+            without `all_services: false`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '409':
-          description: Username taken
+          description: Username taken, or an admin with a service list
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
   /users/{id}/password:
     post:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
       operationId: resetUserPassword
       tags: [auth]
       summary: Reset a password (admin only)
+      description: |
+        Sets a temporary password. The user's sessions and live
+        event streams end at once, and the account must replace the
+        password at its next login. Audits `user_update`.
       parameters:
         - name: id
           in: path
@@ -228,10 +306,16 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /users/{id}/role:
     post:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
       operationId: setUserRole
       tags: [auth]
       summary: Change a role (admin only)
-      description: Demoting or removing the last enabled admin is a 409.
+      description: |
+        Kept for clients that predate scopes; `PUT /users/{id}/access`
+        sets the role and scope together. The scope is kept, except
+        that promoting to admin widens it to every service. Taking
+        the admin role from the last enabled admin is a 409.
       parameters:
         - name: id
           in: path
@@ -260,8 +344,67 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /users/{id}/access:
+    put:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
+      operationId: setUserAccess
+      tags: [auth]
+      summary: Replace a user's role and scope (admin only)
+      description: |
+        Sets the role and the whole scope in one transaction. The
+        change applies to the user's next request, and their live
+        event streams are closed so they reconnect under the new
+        access. Audits `user_update` with the new role and scope.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, all_services]
+              properties:
+                role: { type: string, enum: [admin, viewer] }
+                all_services:
+                  type: boolean
+                  description: Every service, present and future, plus the host-level routes.
+                services:
+                  type: array
+                  items: { type: string }
+                  description: >-
+                    Service ids to grant when `all_services` is false.
+                    Must be empty when it is true. An empty list is
+                    allowed and leaves the user with no service.
+      responses:
+        '200':
+          description: Access replaced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400':
+          description: >-
+            Invalid input: an unknown role (the reserved `developer`
+            role included), an unknown service, a missing
+            `all_services`, or a list sent with `all_services: true`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Would scope an admin, or take the admin role from the last enabled admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /users/{id}/disable:
     post:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
       operationId: disableUser
       tags: [auth]
       summary: Lock an account (admin only)
@@ -286,6 +429,8 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
   /users/{id}/enable:
     post:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
       operationId: enableUser
       tags: [auth]
       summary: Unlock an account (admin only)
@@ -304,6 +449,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /users/{id}:
     delete:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
       operationId: deleteUser
       tags: [auth]
       summary: Delete a user (admin only)
@@ -324,6 +471,8 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
   /ingest:
     post:
+      x-touchgrass-capability: none
+      x-touchgrass-scope: public
       operationId: ingestReport
       tags: [ingest]
       summary: Submit one SDK report
@@ -356,6 +505,8 @@ paths:
         '413': { description: Report exceeds 1MB }
   /ingest/logs:
     post:
+      x-touchgrass-capability: none
+      x-touchgrass-scope: public
       operationId: ingestLogBatch
       tags: [ingest]
       summary: Submit one batch of SDK log records
@@ -400,6 +551,8 @@ paths:
         '413': { description: Batch exceeds 10MB }
   /keys:
     get:
+      x-touchgrass-capability: keys.read
+      x-touchgrass-scope: service
       operationId: listKeys
       tags: [ingest]
       summary: List a service's keys (prefixes only)
@@ -418,6 +571,8 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/APIKey' }
     post:
+      x-touchgrass-capability: keys.manage
+      x-touchgrass-scope: service
       operationId: createKey
       tags: [ingest]
       summary: Mint a key (plaintext returned once)
@@ -448,6 +603,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
   /keys/{id}/revoke:
     post:
+      x-touchgrass-capability: keys.manage
+      x-touchgrass-scope: service
       operationId: revokeKey
       tags: [ingest]
       summary: Revoke a key (immediate)
@@ -461,9 +618,15 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services:
     get:
+      x-touchgrass-capability: service.read
+      x-touchgrass-scope: service
       operationId: listServices
       tags: [services]
       summary: Managed services with live state
+      description: |
+        Returns the services in the caller's scope. A caller limited
+        to a list gets exactly those services; one with no service
+        gets an empty list.
       responses:
         '200':
           description: Services
@@ -477,6 +640,8 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/ServiceView' }
     post:
+      x-touchgrass-capability: services.manage
+      x-touchgrass-scope: fleet
       operationId: createService
       tags: [services]
       summary: Create a managed service
@@ -504,6 +669,8 @@ paths:
         '409': { description: The service id already exists }
   /services/{id}:
     delete:
+      x-touchgrass-capability: services.manage
+      x-touchgrass-scope: fleet
       operationId: deleteService
       tags: [services]
       summary: Remove a service from management
@@ -521,6 +688,8 @@ paths:
         '404': { description: Unknown service id }
   /services/{id}/metrics:
     get:
+      x-touchgrass-capability: metrics.read
+      x-touchgrass-scope: service
       operationId: listMetrics
       tags: [services]
       summary: Container samples, oldest first
@@ -544,6 +713,8 @@ paths:
                     items: { $ref: '#/components/schemas/Metric' }
   /services/{id}/deploys:
     get:
+      x-touchgrass-capability: deploy.read
+      x-touchgrass-scope: service
       operationId: listDeploys
       tags: [services]
       summary: Deploy history, newest first
@@ -563,6 +734,8 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Deploy' }
     post:
+      x-touchgrass-capability: deploy.record
+      x-touchgrass-scope: service
       operationId: recordDeploy
       tags: [services]
       summary: Record a manually-run deploy
@@ -600,6 +773,8 @@ paths:
                   id: { type: integer }
   /services/{id}/cutover:
     post:
+      x-touchgrass-capability: deploy.trigger
+      x-touchgrass-scope: service
       operationId: startCutover
       tags: [services]
       summary: Start an async blue-green cutover (202 + poll history)
@@ -629,6 +804,8 @@ paths:
         '409': { description: A run is already in flight for this service }
   /services/{id}/rollback:
     post:
+      x-touchgrass-capability: deploy.trigger
+      x-touchgrass-scope: service
       operationId: startRollback
       tags: [services]
       summary: Start an async rollback to the opposite live color
@@ -647,6 +824,8 @@ paths:
         '409': { description: A run is already in flight for this service }
   /services/{id}/deploy:
     post:
+      x-touchgrass-capability: deploy.trigger
+      x-touchgrass-scope: service
       operationId: startDeploy
       tags: [services]
       summary: Start an async recreate deploy
@@ -665,14 +844,18 @@ paths:
         '409': { description: A run is already in flight for this service }
   /onboarding/suggest:
     get:
+      x-touchgrass-capability: services.manage
+      x-touchgrass-scope: fleet
       operationId: suggestService
       tags: [onboarding]
-      summary: Draft a service row for one fleet container
+      summary: Draft a service row for one fleet container (admin only)
       description: |
         Drafts project/service/dir from compose labels, the service id
         from the project name, the health URL by probing the lowest
         published host port, and blue-green fields when an X-blue +
-        X-green pair shares the project. Read-only.
+        X-green pair shares the project. It writes nothing, but it
+        probes a container's ports and returns host paths, so it is
+        limited to admins.
       parameters:
         - name: container
           in: query
@@ -685,9 +868,12 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ServiceSuggestion' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '409': { description: The container is already managed by a service }
   /alerts/rules:
     get:
+      x-touchgrass-capability: alerts.read
+      x-touchgrass-scope: service
       operationId: listAlertRules
       tags: [alerts]
       summary: List a service's metric alert rules
@@ -706,6 +892,8 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/AlertRule' }
     post:
+      x-touchgrass-capability: alerts.manage
+      x-touchgrass-scope: service
       operationId: createAlertRule
       tags: [alerts]
       summary: Create a metric alert rule
@@ -729,6 +917,8 @@ paths:
               schema: { $ref: '#/components/schemas/AlertRule' }
   /alerts/rules/{id}:
     delete:
+      x-touchgrass-capability: alerts.manage
+      x-touchgrass-scope: service
       operationId: deleteAlertRule
       tags: [alerts]
       summary: Delete a metric alert rule
@@ -742,9 +932,16 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /notifications:
     get:
+      x-touchgrass-capability: alerts.read
+      x-touchgrass-scope: service
       operationId: listNotifications
       tags: [alerts]
       summary: Notifications newest first, with unread count
+      description: |
+        Without `service_id`, a caller limited to a list of services
+        gets the notifications of those services only, and `unread`
+        counts the same rows. Notifications that belong to no
+        service are returned only to all-services callers.
       parameters:
         - name: service_id
           in: query
@@ -765,6 +962,8 @@ paths:
                   unread: { type: integer }
   /notifications/{id}/read:
     post:
+      x-touchgrass-capability: notifications.ack
+      x-touchgrass-scope: service
       operationId: markNotificationRead
       tags: [alerts]
       summary: Mark one notification read
@@ -777,6 +976,8 @@ paths:
         '204': { description: Marked read }
   /notifications/read:
     post:
+      x-touchgrass-capability: notifications.ack
+      x-touchgrass-scope: service
       operationId: markNotificationsRead
       tags: [alerts]
       summary: Mark every unread notification read (optionally one service)
@@ -796,9 +997,16 @@ paths:
                   marked: { type: integer }
   /audit:
     get:
+      x-touchgrass-capability: audit.read
+      x-touchgrass-scope: service
       operationId: listAudit
       tags: [services]
       summary: Audit entries newest first
+      description: |
+        Without `service_id`, a caller limited to a list of services
+        gets the rows of those services only. Rows that belong to no
+        service (logins, user management, host actions) are returned
+        only to all-services callers.
       parameters:
         - name: service_id
           in: query
@@ -818,17 +1026,30 @@ paths:
                     items: { $ref: '#/components/schemas/Audit' }
   /events:
     get:
+      x-touchgrass-capability: session.self
+      x-touchgrass-scope: self
       operationId: streamEvents
       tags: [services]
       summary: Server-sent live event stream
+      description: |
+        Any session may open the stream; each event is delivered
+        only to subscribers who may see it. Deploy, rollback and
+        live-target events need `deploy.read` on the event's
+        service, `env.apply` progress needs `env.read_keys`, and
+        security events need `security.read`, which is fleet-wide.
+        The server closes a user's streams when their role, scope,
+        password or disabled state changes; reconnect to continue
+        under the new access.
       responses:
         '200':
-          description: text/event-stream of deploy, nginx, and issue events
+          description: text/event-stream of deploy, nginx, env apply, and security events
           content:
             text/event-stream:
               schema: { type: string }
   /issues:
     get:
+      x-touchgrass-capability: issues.read
+      x-touchgrass-scope: service
       operationId: listIssues
       tags: [issues]
       summary: A service's issues, newest activity first
@@ -848,6 +1069,8 @@ paths:
                     items: { $ref: '#/components/schemas/Issue' }
   /issues/occurrences:
     get:
+      x-touchgrass-capability: issues.read
+      x-touchgrass-scope: service
       operationId: listRecentOccurrences
       tags: [issues]
       summary: A service's occurrences newest first, across issues
@@ -868,6 +1091,8 @@ paths:
                     items: { $ref: '#/components/schemas/Occurrence' }
   /issues/{id}:
     get:
+      x-touchgrass-capability: issues.read
+      x-touchgrass-scope: service
       operationId: getIssue
       tags: [issues]
       summary: One issue with recent occurrences
@@ -893,6 +1118,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /issues/{id}/logs:
     get:
+      x-touchgrass-capability: logs.read
+      x-touchgrass-scope: service
       operationId: listIssueLogs
       tags: [issues]
       summary: Log lines around the newest occurrence, newest first
@@ -920,6 +1147,8 @@ paths:
                     items: { $ref: '#/components/schemas/LogLine' }
   /issues/rules:
     get:
+      x-touchgrass-capability: alerts.read
+      x-touchgrass-scope: service
       operationId: listIssueRules
       tags: [issues]
       summary: List a service's issue alert rules
@@ -938,6 +1167,8 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/IssueRule' }
     post:
+      x-touchgrass-capability: alerts.manage
+      x-touchgrass-scope: service
       operationId: createIssueRule
       tags: [issues]
       summary: Create an issue alert rule
@@ -961,6 +1192,8 @@ paths:
               schema: { $ref: '#/components/schemas/IssueRule' }
   /issues/rules/{id}:
     delete:
+      x-touchgrass-capability: alerts.manage
+      x-touchgrass-scope: service
       operationId: deleteIssueRule
       tags: [issues]
       summary: Delete an issue alert rule
@@ -974,6 +1207,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /logs:
     get:
+      x-touchgrass-capability: logs.read
+      x-touchgrass-scope: service
       operationId: searchLogs
       tags: [logs]
       summary: Search collected lines or SDK rows, newest first
@@ -1023,6 +1258,8 @@ paths:
                         - $ref: '#/components/schemas/SDKLog'
   /logs/stats:
     get:
+      x-touchgrass-capability: logs.read
+      x-touchgrass-scope: service
       operationId: getLogStats
       tags: [logs]
       summary: Stored lines plus backpressure losses
@@ -1043,6 +1280,8 @@ paths:
                   truncations: { type: integer }
   /logs/{id}:
     get:
+      x-touchgrass-capability: logs.read
+      x-touchgrass-scope: service
       operationId: getLogContext
       tags: [logs]
       summary: One line with ±neighbors, oldest first
@@ -1078,6 +1317,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /docker/images:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: listImages
       tags: [system]
       summary: Local daemon images, newest first
@@ -1095,6 +1336,8 @@ paths:
                     items: { $ref: '#/components/schemas/Image' }
   /docker/images/prune:
     post:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
       operationId: pruneImages
       tags: [system]
       summary: Remove dangling images only
@@ -1111,6 +1354,8 @@ paths:
                   reclaimed_bytes: { type: integer }
   /system:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getSystem
       tags: [system]
       summary: Host + daemon + self snapshot (nulls where unavailable)
@@ -1122,6 +1367,8 @@ paths:
               schema: { $ref: '#/components/schemas/SystemSnapshot' }
   /system/containers:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: listFleetContainers
       tags: [system]
       summary: Complete current container inventory, including stopped containers
@@ -1164,6 +1411,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
   /system/containers/{id}:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getFleetContainer
       tags: [system]
       summary: Safe container lifecycle and security posture detail
@@ -1181,8 +1430,81 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /system/containers/{id}/approve:
+    post:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: approveFleetContainer
+      tags: [system]
+      summary: Approve a container's current image and configuration as its baseline (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: The approved baseline
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer }
+                  container_id: { type: string }
+                  image_fingerprint: { type: string }
+                  configuration_fingerprint: { type: string }
+                  approved_by: { type: string }
+                  approved_at: { type: string, format: date-time }
+                  active: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /system/containers/{id}/ignore:
+    post:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: ignoreFleetContainer
+      tags: [system]
+      summary: Stop reporting a container, with a reason (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string }
+                expires_at: { type: string, format: date-time }
+                non_expiring: { type: boolean }
+      responses:
+        '200':
+          description: The stored ignore
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  container_id: { type: string }
+                  reason: { type: string }
+                  expires_at: { type: string, format: date-time }
+                  non_expiring: { type: boolean }
+                  actor: { type: string }
+                  created_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /system/history:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getSystemHistory
       tags: [system]
       summary: Bucket-averaged host history (at most 1500 points)
@@ -1212,6 +1534,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
   /performance/summary:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getPerformanceSummary
       tags: [performance]
       summary: Compare bounded HTTP performance windows
@@ -1229,6 +1553,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
   /performance/timeline:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getPerformanceTimeline
       tags: [performance]
       summary: Align available performance signals and change markers
@@ -1246,6 +1572,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
   /performance/routes:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getPerformanceRoutes
       tags: [performance]
       summary: Rank privacy-safe route families
@@ -1266,6 +1594,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
   /performance/postgres:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getPerformancePostgres
       tags: [performance]
       summary: List bounded PostgreSQL metric buckets
@@ -1284,6 +1614,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
   /performance/redis:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getPerformanceRedis
       tags: [performance]
       summary: List bounded Redis metric buckets
@@ -1302,6 +1634,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
   /collectors/status:
     get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
       operationId: getCollectorStatus
       tags: [performance]
       summary: Show last success, error, losses, and staleness by source
@@ -1313,6 +1647,8 @@ paths:
               schema: { $ref: '#/components/schemas/CollectorStatuses' }
   /services/{id}/performance/summary:
     get:
+      x-touchgrass-capability: metrics.read
+      x-touchgrass-scope: service
       operationId: getServicePerformanceSummary
       tags: [performance]
       summary: Compare one service's bounded HTTP performance windows
@@ -1331,6 +1667,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services/{id}/performance/timeline:
     get:
+      x-touchgrass-capability: metrics.read
+      x-touchgrass-scope: service
       operationId: getServicePerformanceTimeline
       tags: [performance]
       summary: Align one service's available performance signals
@@ -1349,6 +1687,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services/{id}/performance/routes:
     get:
+      x-touchgrass-capability: metrics.read
+      x-touchgrass-scope: service
       operationId: getServicePerformanceRoutes
       tags: [performance]
       summary: Rank one service's privacy-safe route families
@@ -1370,6 +1710,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services/{id}/performance/postgres:
     get:
+      x-touchgrass-capability: metrics.read
+      x-touchgrass-scope: service
       operationId: getServicePerformancePostgres
       tags: [performance]
       summary: List one service's bounded PostgreSQL metrics
@@ -1389,6 +1731,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services/{id}/performance/redis:
     get:
+      x-touchgrass-capability: metrics.read
+      x-touchgrass-scope: service
       operationId: getServicePerformanceRedis
       tags: [performance]
       summary: List one service's bounded Redis metrics
@@ -1408,6 +1752,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /databases:
     get:
+      x-touchgrass-capability: databases.read
+      x-touchgrass-scope: fleet
       operationId: listDatabases
       tags: [databases]
       summary: Postgres, redis, and sqlite health
@@ -1429,6 +1775,8 @@ paths:
                     items: { $ref: '#/components/schemas/Database' }
   /databases/backups:
     get:
+      x-touchgrass-capability: databases.read
+      x-touchgrass-scope: fleet
       operationId: listBackups
       tags: [databases]
       summary: Backup artifacts, newest first
@@ -1445,6 +1793,8 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/BackupInfo' }
     post:
+      x-touchgrass-capability: databases.backup
+      x-touchgrass-scope: fleet
       operationId: startBackup
       tags: [databases]
       summary: Start an async pg_dump backup (202 + poll jobs)
@@ -1467,6 +1817,8 @@ paths:
         '503': { description: Postgres is not configured }
   /databases/backups/{name}/verify:
     post:
+      x-touchgrass-capability: databases.backup
+      x-touchgrass-scope: fleet
       operationId: verifyBackup
       tags: [databases]
       summary: Verify one backup (sha256 + pg_restore --list)
@@ -1485,6 +1837,8 @@ paths:
         '503': { description: Postgres is not configured }
   /databases/restore:
     post:
+      x-touchgrass-capability: databases.restore
+      x-touchgrass-scope: fleet
       operationId: startRestore
       tags: [databases]
       summary: Start an async restore of one backup (202 + poll jobs)
@@ -1518,6 +1872,8 @@ paths:
         '503': { description: Postgres is not configured }
   /databases/jobs:
     get:
+      x-touchgrass-capability: databases.read
+      x-touchgrass-scope: fleet
       operationId: listDatabaseJobs
       tags: [databases]
       summary: Job history, newest first (last 20)
@@ -1535,6 +1891,8 @@ paths:
                     items: { $ref: '#/components/schemas/DBJob' }
   /databases/jobs/{id}:
     get:
+      x-touchgrass-capability: databases.read
+      x-touchgrass-scope: fleet
       operationId: getDatabaseJob
       tags: [databases]
       summary: One database job by id
@@ -1552,6 +1910,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /security/summary:
     get:
+      x-touchgrass-capability: security.read
+      x-touchgrass-scope: fleet
       operationId: getSecuritySummary
       tags: [security]
       summary: Current finding counts and collector coverage
@@ -1564,6 +1924,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
   /security/findings:
     get:
+      x-touchgrass-capability: security.read
+      x-touchgrass-scope: fleet
       operationId: listSecurityFindings
       tags: [security]
       summary: List bounded finding episodes
@@ -1590,6 +1952,8 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
   /security/findings/{id}:
     get:
+      x-touchgrass-capability: security.read
+      x-touchgrass-scope: fleet
       operationId: getSecurityFinding
       tags: [security]
       summary: Get one finding episode
@@ -1603,6 +1967,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /security/findings/{id}/acknowledge:
     post:
+      x-touchgrass-capability: security.manage
+      x-touchgrass-scope: fleet
       operationId: acknowledgeSecurityFinding
       tags: [security]
       summary: Acknowledge one open finding as the authenticated admin
@@ -1615,6 +1981,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /security/findings/{id}/resolve:
     post:
+      x-touchgrass-capability: security.manage
+      x-touchgrass-scope: fleet
       operationId: resolveSecurityFinding
       tags: [security]
       summary: Resolve one active finding as the authenticated admin
@@ -1627,6 +1995,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /security/findings/{id}/suppress:
     post:
+      x-touchgrass-capability: security.manage
+      x-touchgrass-scope: fleet
       operationId: suppressSecurityFinding
       tags: [security]
       summary: Suppress one active finding with an auditable reason
@@ -1649,6 +2019,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /security/policies:
     get:
+      x-touchgrass-capability: security.read
+      x-touchgrass-scope: fleet
       operationId: listSecurityPolicies
       tags: [security]
       summary: List security policies
@@ -1663,6 +2035,8 @@ paths:
                 properties: { policies: { type: array, items: { $ref: '#/components/schemas/SecurityPolicy' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
     post:
+      x-touchgrass-capability: security.manage
+      x-touchgrass-scope: fleet
       operationId: createSecurityPolicy
       tags: [security]
       summary: Create a global, service, or container policy
@@ -1684,6 +2058,8 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /security/policies/{id}:
     patch:
+      x-touchgrass-capability: security.manage
+      x-touchgrass-scope: fleet
       operationId: updateSecurityPolicy
       tags: [security]
       summary: Replace a policy body while preserving scope
@@ -1703,6 +2079,8 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
+      x-touchgrass-capability: security.manage
+      x-touchgrass-scope: fleet
       operationId: deleteSecurityPolicy
       tags: [security]
       summary: Delete a security policy
@@ -1715,6 +2093,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services/{id}/env:
     get:
+      x-touchgrass-capability: env.read_keys
+      x-touchgrass-scope: service
       operationId: getEnv
       tags: [env]
       summary: Env state for one service (secrets masked for every role)
@@ -1729,6 +2109,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services/{id}/env/entries/{key}:
     put:
+      x-touchgrass-capability: env.stage
+      x-touchgrass-scope: service
       operationId: stageEnvEntry
       tags: [env]
       summary: Stage an add or change (admin; does not touch the file)
@@ -1760,6 +2142,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
     delete:
+      x-touchgrass-capability: env.stage
+      x-touchgrass-scope: service
       operationId: removeEnvEntry
       tags: [env]
       summary: Stage the removal of a key (admin)
@@ -1773,6 +2157,8 @@ paths:
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/entries/{key}/reveal:
     post:
+      x-touchgrass-capability: env.reveal
+      x-touchgrass-scope: service
       operationId: revealEnvEntry
       tags: [env]
       summary: Decrypt one value (admin; audited as env.reveal; 10 per minute per user)
@@ -1803,6 +2189,8 @@ paths:
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/diff:
     get:
+      x-touchgrass-capability: env.read_keys
+      x-touchgrass-scope: service
       operationId: getEnvDiff
       tags: [env]
       summary: Pending versus applied keys plus the sha256 of the file an apply would write
@@ -1819,6 +2207,8 @@ paths:
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/discard:
     post:
+      x-touchgrass-capability: env.discard
+      x-touchgrass-scope: service
       operationId: discardEnv
       tags: [env]
       summary: Drop every pending change (admin)
@@ -1831,6 +2221,8 @@ paths:
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/import:
     post:
+      x-touchgrass-capability: env.import
+      x-touchgrass-scope: service
       operationId: importEnv
       tags: [env]
       summary: Read the configured target file into the store as applied entries (admin)
@@ -1865,6 +2257,8 @@ paths:
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/apply:
     post:
+      x-touchgrass-capability: env.apply
+      x-touchgrass-scope: service
       operationId: applyEnv
       tags: [env]
       summary: Render, validate, write, restart, probe; rolls back on failure (admin, async)
@@ -1896,6 +2290,8 @@ paths:
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/runs/{run_id}:
     get:
+      x-touchgrass-capability: env.read_keys
+      x-touchgrass-scope: service
       operationId: getEnvRun
       tags: [env]
       summary: One apply or rollback run with its step log
@@ -1914,6 +2310,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
   /services/{id}/env/revisions:
     get:
+      x-touchgrass-capability: env.read_keys
+      x-touchgrass-scope: service
       operationId: listEnvRevisions
       tags: [env]
       summary: Applied revisions newest first with key-level diffs
@@ -1931,6 +2329,8 @@ paths:
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/revisions/{rev}/rollback:
     post:
+      x-touchgrass-capability: env.apply
+      x-touchgrass-scope: service
       operationId: rollbackEnv
       tags: [env]
       summary: Stage a revision's snapshot as pending and apply it (admin, async)
@@ -2056,7 +2456,9 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Forbidden:
-      description: Valid session without the admin role
+      description: >-
+        Valid session whose role or scope does not allow the request.
+        The body never says which, nor whether a named service exists.
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -2353,11 +2755,21 @@ components:
               stale: { type: boolean }
     User:
       type: object
-      required: [id, username, role, disabled, created_at]
+      required: [id, username, role, all_services, services, must_change_password, disabled, created_at]
       properties:
         id: { type: integer }
         username: { type: string }
         role: { type: string, enum: [admin, viewer] }
+        all_services:
+          type: boolean
+          description: True when the scope is every service. Always true for an admin.
+        services:
+          type: array
+          items: { type: string }
+          description: Granted service ids when `all_services` is false; empty otherwise.
+        must_change_password:
+          type: boolean
+          description: True while the account is on a temporary password.
         disabled: { type: boolean }
         created_at: { type: string, format: date-time }
     StackFrame:

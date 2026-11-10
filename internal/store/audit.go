@@ -45,7 +45,8 @@ func (s *AuditStore) Insert(ctx context.Context, audit model.Audit) (int64, erro
 }
 
 // List returns audit entries newest first, bounded by limit. An empty
-// serviceID selects every service; otherwise it selects one service.
+// serviceID selects every row, including the ones that belong to no
+// service; otherwise it selects one service.
 func (s *AuditStore) List(
 	ctx context.Context,
 	serviceID string,
@@ -61,49 +62,61 @@ func (s *AuditStore) List(
 		args = []any{serviceID, limit}
 	}
 
-	rows, err := s.db.sql.QueryContext(ctx, query, args...)
+	return queryRows(ctx, s.db.sql, rowQuery[model.Audit]{what: "audit", query: query, args: args, scan: scanAudit})
+}
+
+// ListForServices returns the audit entries of the listed services
+// newest first, bounded by limit. Rows that belong to no service
+// (logins, user management, host actions) are never included, and an
+// empty list selects nothing.
+func (s *AuditStore) ListForServices(
+	ctx context.Context,
+	serviceIDs []string,
+	limit int,
+) ([]model.Audit, error) {
+	if len(serviceIDs) == 0 {
+		return []model.Audit{}, nil
+	}
+
+	clause, args := inClause(serviceIDs)
+
+	return queryRows(ctx, s.db.sql, rowQuery[model.Audit]{
+		what: "audit",
+		query: `SELECT id, service_id, actor, action, result, detail, created_at
+		 FROM audit WHERE service_id IN ` + clause + ` ORDER BY id DESC LIMIT ?`,
+		args: append(args, limit),
+		scan: scanAudit,
+	})
+}
+
+// scanAudit maps one audit row.
+func scanAudit(row scanner) (model.Audit, error) {
+	var (
+		entry     model.Audit
+		serviceID sql.NullString
+		createdAt string
+	)
+
+	if err := row.Scan(
+		&entry.ID, &serviceID, &entry.Actor, &entry.Action,
+		&entry.Result, &entry.Detail, &createdAt,
+	); err != nil {
+		return model.Audit{}, fmt.Errorf("scanning audit entry: %w", err)
+	}
+
+	if serviceID.Valid {
+		service := serviceID.String
+		entry.ServiceID = &service
+	}
+
+	created, err := parseTime(createdAt, "created_at")
 	if err != nil {
-		return nil, fmt.Errorf("querying audit: %w", err)
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	entries := []model.Audit{}
-
-	for rows.Next() {
-		var (
-			entry     model.Audit
-			serviceID sql.NullString
-			createdAt string
-		)
-
-		if err := rows.Scan(
-			&entry.ID, &serviceID, &entry.Actor, &entry.Action,
-			&entry.Result, &entry.Detail, &createdAt,
-		); err != nil {
-			return nil, fmt.Errorf("scanning audit entry: %w", err)
-		}
-
-		if serviceID.Valid {
-			service := serviceID.String
-			entry.ServiceID = &service
-		}
-
-		created, err := parseTime(createdAt, "created_at")
-		if err != nil {
-			return nil, err
-		}
-
-		entry.CreatedAt = created
-		entries = append(entries, entry)
+		return model.Audit{}, err
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating audit: %w", err)
-	}
+	entry.CreatedAt = created
 
-	return entries, nil
+	return entry, nil
 }
 
 // nullService renders an optional service id for storage.

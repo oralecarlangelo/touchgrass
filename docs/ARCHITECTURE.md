@@ -216,11 +216,21 @@ workflows for investigation.
 
 ## Auth (v1)
 
-- UI/API: managed users with two global roles — `admin` (full
-  power) and `viewer` (read-only: every `GET` plus login/logout;
-  every mutating route answers 403). Passwords are bcrypt-hashed
+- UI/API: managed users with a role and a scope (ADR-0014). The
+  role decides what a user may do: `admin` (full power) or `viewer`
+  (read-only; every mutating route answers 403). The scope decides
+  on which services: all of them, or a list in `user_services`.
+  `internal/authz` holds the one role-to-capability table; every
+  `/api/` route is a row of the route table in
+  `internal/http/routes.go` naming its capability and how its
+  service is found, and nothing under `/api/` is registered any
+  other way. A service out of scope answers 403; a foreign or
+  missing resource id answers 404; lists and the SSE stream carry
+  only the caller's services; host-level routes need the
+  all-services scope. Passwords are bcrypt-hashed
   in SQLite; sessions are server-side random tokens bound to a
-  username, with role and disabled state re-resolved per request.
+  username, with role, scope and disabled state re-resolved per
+  request.
   The bootstrap admin is seeded on first boot only: from
   `TOUCHGRASS_ADMIN_PASSWORD` when set, otherwise with a generated
   one-time password written to `initial-admin-password` beside the
@@ -302,7 +312,9 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
 - `service`/`store` interfaces stay host-agnostic so multi-host agents can
   slot behind them; `docker/` is the seam an agent would remote.
 - Tracing/APM stays out except OTel log correlation (ADR-0009);
-  browser/mobile SDKs, per-service RBAC scoping, SSO, and a general
+  browser/mobile SDKs, custom roles, groups, SSO, and a general
   secrets manager are explicitly out — don't half-build them. The env
-  pillar (ADR-0012) manages one env file per service and nothing more. The
-  admin/viewer split (ADR-0010) is the whole role model.
+  pillar (ADR-0012) manages one env file per service and nothing more.
+  Two roles plus a per-user service scope (ADR-0010, ADR-0014) are the
+  whole access model; a third `developer` role is reserved in the
+  schema and deliberately holds nothing yet.

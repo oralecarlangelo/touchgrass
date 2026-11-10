@@ -66,11 +66,16 @@ export default function Dashboard({
   onSelectService,
   onView,
   onUnauthorized,
+  canHost,
 }: {
   services: ServiceView[] | null;
   onSelectService: (id: string) => void;
   onView: (view: ViewId) => void;
   onUnauthorized: () => void;
+  // Whether the user may see the host: system snapshot and container
+  // inventory. A user scoped to some services may not, so those calls
+  // are never made and their cards are not drawn.
+  canHost: boolean;
 }) {
   const [system, setSystem] = useState<SystemSnapshot | null>(null);
   const [notes, setNotes] = useState<Notification[] | null>(null);
@@ -83,9 +88,9 @@ export default function Dashboard({
 
     try {
       const [snapshot, fetched, containerFleet] = await Promise.all([
-        fetchSystem(),
+        canHost ? fetchSystem() : Promise.resolve(null),
         fetchNotifications('', 100),
-        fetchFleetContainers(),
+        canHost ? fetchFleetContainers() : Promise.resolve(null),
       ]);
       setSystem(snapshot);
       setNotes(fetched.notifications);
@@ -99,7 +104,7 @@ export default function Dashboard({
 
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [onUnauthorized]);
+  }, [onUnauthorized, canHost]);
 
   useEffect(() => {
     void load();
@@ -111,7 +116,7 @@ export default function Dashboard({
   const activity = useMemo(() => bucketByHour(notes ?? []), [notes]);
   const healthy = (services ?? []).filter((service) => service.health === 'healthy').length;
 
-  if (error !== null && system === null) {
+  if (error !== null && system === null && notes === null) {
     return <ErrorState title="Couldn't load the dashboard" message={error} onRetry={() => void load()} />;
   }
 
@@ -135,36 +140,40 @@ export default function Dashboard({
             )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Containers</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {fleet === null ? <Skeleton className="h-8 w-24" /> : (
-              <div>
-                <p className="text-2xl font-semibold">{fleet.containers.length}</p>
-                <p className="text-muted-foreground text-xs">{containerPostureLabel(fleet)}</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Collector freshness</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {fleet === null ? <Skeleton className="h-8 w-24" /> : (
-              <div>
-                <p className="text-2xl font-semibold">
-                  {fleet.freshness.stale || !fleet.freshness.complete ? 'Degraded' : 'Current'}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  {fleet.freshness.reconciled_at === null ? 'Never reconciled' : timeAgo(fleet.freshness.reconciled_at)}
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {canHost && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Containers</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {fleet === null ? <Skeleton className="h-8 w-24" /> : (
+                <div>
+                  <p className="text-2xl font-semibold">{fleet.containers.length}</p>
+                  <p className="text-muted-foreground text-xs">{containerPostureLabel(fleet)}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        {canHost && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Collector freshness</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {fleet === null ? <Skeleton className="h-8 w-24" /> : (
+                <div>
+                  <p className="text-2xl font-semibold">
+                    {fleet.freshness.stale || !fleet.freshness.complete ? 'Degraded' : 'Current'}
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    {fleet.freshness.reconciled_at === null ? 'Never reconciled' : timeAgo(fleet.freshness.reconciled_at)}
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Unread notifications</CardTitle>
@@ -177,83 +186,89 @@ export default function Dashboard({
             )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Host uptime</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {system === null ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <p className="text-2xl font-semibold">
-                {system.uptime_secs === null ? 'n/a' : formatDuration(system.uptime_secs)}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Database</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {system === null ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <p className="text-2xl font-semibold">{formatBytes(system.self.database_bytes)}</p>
-            )}
-          </CardContent>
-        </Card>
+        {canHost && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Host uptime</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {system === null ? (
+                <Skeleton className="h-8 w-24" />
+              ) : (
+                <p className="text-2xl font-semibold">
+                  {system.uptime_secs === null ? 'n/a' : formatDuration(system.uptime_secs)}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        {canHost && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Database</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {system === null ? (
+                <Skeleton className="h-8 w-24" />
+              ) : (
+                <p className="text-2xl font-semibold">{formatBytes(system.self.database_bytes)}</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-sm font-medium">Host resources (live)</CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => onView('fleet')}>
-            Fleet
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {system === null ? (
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </div>
-          ) : (
-            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <div>
-                <dt className="text-muted-foreground text-xs">CPU</dt>
-                <dd className="font-mono text-lg font-semibold">
-                  {system.cpu_percent === null ? 'n/a' : `${system.cpu_percent.toFixed(1)}%`}
-                </dd>
+      {canHost && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Host resources (live)</CardTitle>
+            <Button variant="ghost" size="sm" onClick={() => onView('fleet')}>
+              Fleet
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {system === null ? (
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
               </div>
-              <div>
-                <dt className="text-muted-foreground text-xs">Memory</dt>
-                <dd className="font-mono text-lg font-semibold">
-                  {system.mem_used_bytes === null || system.mem_total_bytes === null
-                    ? 'n/a'
-                    : `${formatBytes(system.mem_used_bytes)} / ${formatBytes(system.mem_total_bytes)}`}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground text-xs">Disk</dt>
-                <dd className="font-mono text-lg font-semibold">
-                  {system.disk_used_bytes === null || system.disk_total_bytes === null
-                    ? 'n/a'
-                    : `${formatBytes(system.disk_used_bytes)} / ${formatBytes(system.disk_total_bytes)}`}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground text-xs">Load (1m)</dt>
-                <dd className="font-mono text-lg font-semibold">
-                  {system.load_1 === null ? 'n/a' : system.load_1.toFixed(2)}
-                </dd>
-              </div>
-            </dl>
-          )}
-        </CardContent>
-      </Card>
+            ) : (
+              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div>
+                  <dt className="text-muted-foreground text-xs">CPU</dt>
+                  <dd className="font-mono text-lg font-semibold">
+                    {system.cpu_percent === null ? 'n/a' : `${system.cpu_percent.toFixed(1)}%`}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground text-xs">Memory</dt>
+                  <dd className="font-mono text-lg font-semibold">
+                    {system.mem_used_bytes === null || system.mem_total_bytes === null
+                      ? 'n/a'
+                      : `${formatBytes(system.mem_used_bytes)} / ${formatBytes(system.mem_total_bytes)}`}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground text-xs">Disk</dt>
+                  <dd className="font-mono text-lg font-semibold">
+                    {system.disk_used_bytes === null || system.disk_total_bytes === null
+                      ? 'n/a'
+                      : `${formatBytes(system.disk_used_bytes)} / ${formatBytes(system.disk_total_bytes)}`}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground text-xs">Load (1m)</dt>
+                  <dd className="font-mono text-lg font-semibold">
+                    {system.load_1 === null ? 'n/a' : system.load_1.toFixed(2)}
+                  </dd>
+                </div>
+              </dl>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

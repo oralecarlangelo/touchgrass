@@ -18,8 +18,8 @@ func TestHubBroadcast(t *testing.T) {
 
 	hub := NewHub(slog.New(slog.DiscardHandler))
 
-	first, cancelFirst := hub.Subscribe()
-	second, cancelSecond := hub.Subscribe()
+	first, cancelFirst := hub.Subscribe(testAdminSubject())
+	second, cancelSecond := hub.Subscribe(testAdminSubject())
 
 	defer cancelFirst()
 	defer cancelSecond()

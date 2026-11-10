@@ -101,3 +101,14 @@ func (a *Audit) List(
 
 	return a.audits.List(ctx, serviceID, clampLimit(limit))
 }
+
+// ListForServices returns the entries of the listed services newest
+// first, for a caller whose scope is a list. Entries that belong to no
+// service are never included.
+func (a *Audit) ListForServices(
+	ctx context.Context,
+	serviceIDs []string,
+	limit int,
+) ([]model.Audit, error) {
+	return a.audits.ListForServices(ctx, serviceIDs, clampLimit(limit))
+}

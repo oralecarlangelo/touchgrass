@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/oralecarlangelo/touchgrass/internal/authz"
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
@@ -88,10 +89,10 @@ func seedTestUsers(t *testing.T, db *store.DB) {
 	ctx := context.Background()
 
 	for _, user := range []model.User{
-		{Username: defaultLoginUsername, PasswordHash: string(adminHash), Role: model.RoleAdmin},
-		{Username: testViewerUsername, PasswordHash: string(viewerHash), Role: model.RoleViewer},
+		{Username: defaultLoginUsername, PasswordHash: string(adminHash), Role: model.RoleAdmin, AllServices: true},
+		{Username: testViewerUsername, PasswordHash: string(viewerHash), Role: model.RoleViewer, AllServices: true},
 	} {
-		if _, err := users.Create(ctx, user); err != nil {
+		if _, err := users.Create(ctx, user, defaultLoginUsername); err != nil {
 			t.Fatalf("Create(%s) error = %v, want nil", user.Username, err)
 		}
 	}
@@ -113,6 +114,13 @@ func seedTestServices(t *testing.T, db *store.DB) {
 		if _, err := rules.Create(context.Background(), testfixture.DefaultRule(service.ID)); err != nil {
 			t.Fatalf("Create(rule for %s) error = %v, want nil", service.ID, err)
 		}
+	}
+}
+
+// testAdminSubject is the harness admin as the policy sees it.
+func testAdminSubject() authz.Subject {
+	return authz.Subject{
+		Username: defaultLoginUsername, Role: model.RoleAdmin, AllServices: true, Services: []string{},
 	}
 }
 
@@ -286,6 +294,7 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 		Performance:    performance,
 		FleetInventory: fleetInventory,
 		Env:            envService,
+		Owners:         service.NewOwners(store.NewOwnerStore(db)),
 		Dist:           testDist(),
 		Docs:           testDocs(),
 	})

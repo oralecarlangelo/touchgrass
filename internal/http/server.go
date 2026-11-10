@@ -44,6 +44,7 @@ type Config struct {
 	FleetInventory *service.FleetInventory
 	Security       *service.Security
 	Env            *service.Env
+	Owners         *service.Owners
 	Dist           fs.FS
 	Docs           fs.FS
 	DevProxy       string
@@ -72,6 +73,7 @@ type Server struct {
 	fleetInventory *service.FleetInventory
 	security       *service.Security
 	env            *service.Env
+	owners         *service.Owners
 	handler        nethttp.Handler
 }
 
@@ -100,99 +102,14 @@ func New(cfg Config) *Server {
 		fleetInventory: cfg.FleetInventory,
 		security:       cfg.Security,
 		env:            cfg.Env,
+		owners:         cfg.Owners,
 	}
-	mux.HandleFunc("GET /api/health", server.handleHealth)
-	mux.HandleFunc("GET /api/services", server.handleServices)
-	mux.HandleFunc("POST /api/services", server.requireAdmin(server.handleCreateService))
-	mux.HandleFunc("DELETE /api/services/{id}", server.requireAdmin(server.handleDeleteService))
-	mux.HandleFunc("GET /api/onboarding/suggest", server.handleOnboardingSuggest)
-	mux.HandleFunc("GET /api/services/{id}/metrics", server.handleMetrics)
-	mux.HandleFunc("GET /api/services/{id}/deploys", server.handleDeploys)
-	mux.HandleFunc("POST /api/services/{id}/deploys", server.requireAdmin(server.handleRecordDeploy))
-	mux.HandleFunc("POST /api/services/{id}/cutover", server.requireAdmin(server.handleCutover))
-	mux.HandleFunc("POST /api/services/{id}/rollback", server.requireAdmin(server.handleRollback))
-	mux.HandleFunc("POST /api/services/{id}/deploy", server.requireAdmin(server.handleDeploy))
-	mux.HandleFunc("GET /api/alerts/rules", server.handleRules)
-	mux.HandleFunc("POST /api/alerts/rules", server.requireAdmin(server.handleCreateRule))
-	mux.HandleFunc("DELETE /api/alerts/rules/{id}", server.requireAdmin(server.handleDeleteRule))
-	mux.HandleFunc("GET /api/notifications", server.handleNotifications)
-	mux.HandleFunc("POST /api/notifications/{id}/read", server.requireAdmin(server.handleMarkNotificationRead))
-	mux.HandleFunc("POST /api/notifications/read", server.requireAdmin(server.handleMarkNotificationsRead))
-	mux.HandleFunc("GET /api/audit", server.handleAudit)
-	mux.HandleFunc("GET /api/events", server.handleEvents)
-	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
-	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
-	mux.HandleFunc("GET /api/auth/me", server.handleMe)
-	mux.HandleFunc("POST /api/auth/password", server.handleChangePassword)
-	mux.HandleFunc("GET /api/users", server.requireAdmin(server.handleUsers))
-	mux.HandleFunc("POST /api/users", server.requireAdmin(server.handleCreateUser))
-	mux.HandleFunc("POST /api/users/{id}/password", server.requireAdmin(server.handleUserPassword))
-	mux.HandleFunc("POST /api/users/{id}/role", server.requireAdmin(server.handleUserRole))
-	mux.HandleFunc("POST /api/users/{id}/disable", server.requireAdmin(server.handleUserDisable))
-	mux.HandleFunc("POST /api/users/{id}/enable", server.requireAdmin(server.handleUserEnable))
-	mux.HandleFunc("DELETE /api/users/{id}", server.requireAdmin(server.handleDeleteUser))
-	mux.HandleFunc("POST /api/ingest", server.handleIngest)
-	mux.HandleFunc("POST /api/ingest/logs", server.handleIngestLogs)
-	mux.HandleFunc("POST /api/keys", server.requireAdmin(server.handleCreateKey))
-	mux.HandleFunc("GET /api/keys", server.handleKeys)
-	mux.HandleFunc("POST /api/keys/{id}/revoke", server.requireAdmin(server.handleRevokeKey))
-	mux.HandleFunc("GET /api/issues", server.handleIssues)
-	mux.HandleFunc("GET /api/issues/occurrences", server.handleOccurrences)
-	mux.HandleFunc("GET /api/issues/{id}", server.handleIssue)
-	mux.HandleFunc("GET /api/issues/{id}/logs", server.handleIssueLogs)
-	mux.HandleFunc("POST /api/issues/rules", server.requireAdmin(server.handleCreateIssueRule))
-	mux.HandleFunc("GET /api/issues/rules", server.handleIssueRules)
-	mux.HandleFunc("DELETE /api/issues/rules/{id}", server.requireAdmin(server.handleDeleteIssueRule))
-	mux.HandleFunc("GET /api/logs", server.handleLogs)
-	mux.HandleFunc("GET /api/logs/stats", server.handleLogStats)
-	mux.HandleFunc("GET /api/logs/{id}", server.handleLogContext)
-	mux.HandleFunc("GET /api/docker/images", server.handleDockerImages)
-	mux.HandleFunc("POST /api/docker/images/prune", server.requireAdmin(server.handlePruneImages))
-	mux.HandleFunc("GET /api/system", server.handleSystem)
-	mux.HandleFunc("GET /api/system/containers", server.handleContainers)
-	mux.HandleFunc("GET /api/system/containers/{id}", server.handleContainer)
-	mux.HandleFunc("POST /api/system/containers/{id}/approve", server.requireAdmin(server.handleApproveContainer))
-	mux.HandleFunc("POST /api/system/containers/{id}/ignore", server.requireAdmin(server.handleIgnoreContainer))
-	mux.HandleFunc("GET /api/security/summary", server.handleSecuritySummary)
-	mux.HandleFunc("GET /api/security/findings", server.handleSecurityFindings)
-	mux.HandleFunc("GET /api/security/findings/{id}", server.handleSecurityFinding)
-	mux.HandleFunc("GET /api/security/policies", server.handleSecurityPolicies)
-	mux.HandleFunc("POST /api/security/findings/{id}/acknowledge", server.requireAdmin(server.handleSecurityAcknowledge))
-	mux.HandleFunc("POST /api/security/findings/{id}/resolve", server.requireAdmin(server.handleSecurityResolve))
-	mux.HandleFunc("POST /api/security/findings/{id}/suppress", server.requireAdmin(server.handleSecuritySuppress))
-	mux.HandleFunc("POST /api/security/policies", server.requireAdmin(server.handleCreateSecurityPolicy))
-	mux.HandleFunc("PATCH /api/security/policies/{id}", server.requireAdmin(server.handleUpdateSecurityPolicy))
-	mux.HandleFunc("DELETE /api/security/policies/{id}", server.requireAdmin(server.handleDeleteSecurityPolicy))
-	mux.HandleFunc("GET /api/system/history", server.handleSystemHistory)
-	mux.HandleFunc("GET /api/databases", server.handleDatabases)
-	mux.HandleFunc("GET /api/databases/backups", server.handleBackups)
-	mux.HandleFunc("POST /api/databases/backups", server.requireAdmin(server.handleStartBackup))
-	mux.HandleFunc("GET /api/databases/jobs", server.handleJobs)
-	mux.HandleFunc("GET /api/databases/jobs/{id}", server.handleJob)
-	mux.HandleFunc("POST /api/databases/backups/{name}/verify", server.requireAdmin(server.handleVerifyBackup))
-	mux.HandleFunc("POST /api/databases/restore", server.requireAdmin(server.handleRestore))
-	mux.HandleFunc("GET /api/performance/summary", server.handlePerformanceSummary)
-	mux.HandleFunc("GET /api/performance/timeline", server.handlePerformanceTimeline)
-	mux.HandleFunc("GET /api/performance/routes", server.handlePerformanceRoutes)
-	mux.HandleFunc("GET /api/performance/postgres", server.handlePerformancePostgres)
-	mux.HandleFunc("GET /api/performance/redis", server.handlePerformanceRedis)
-	mux.HandleFunc("GET /api/collectors/status", server.handleCollectorStatus)
-	mux.HandleFunc("GET /api/services/{id}/performance/summary", server.handlePerformanceSummary)
-	mux.HandleFunc("GET /api/services/{id}/performance/timeline", server.handlePerformanceTimeline)
-	mux.HandleFunc("GET /api/services/{id}/performance/routes", server.handlePerformanceRoutes)
-	mux.HandleFunc("GET /api/services/{id}/performance/postgres", server.handlePerformancePostgres)
-	mux.HandleFunc("GET /api/services/{id}/performance/redis", server.handlePerformanceRedis)
-	mux.HandleFunc("GET /api/services/{id}/env", server.handleEnv)
-	mux.HandleFunc("PUT /api/services/{id}/env/entries/{key}", server.requireAdmin(server.handleEnvPut))
-	mux.HandleFunc("DELETE /api/services/{id}/env/entries/{key}", server.requireAdmin(server.handleEnvDelete))
-	mux.HandleFunc("POST /api/services/{id}/env/entries/{key}/reveal", server.requireAdmin(server.handleEnvReveal))
-	mux.HandleFunc("GET /api/services/{id}/env/diff", server.handleEnvDiff)
-	mux.HandleFunc("POST /api/services/{id}/env/discard", server.requireAdmin(server.handleEnvDiscard))
-	mux.HandleFunc("POST /api/services/{id}/env/import", server.requireAdmin(server.handleEnvImport))
-	mux.HandleFunc("POST /api/services/{id}/env/apply", server.requireAdmin(server.handleEnvApply))
-	mux.HandleFunc("GET /api/services/{id}/env/runs/{run_id}", server.handleEnvRun)
-	mux.HandleFunc("GET /api/services/{id}/env/revisions", server.handleEnvRevisions)
-	mux.HandleFunc("POST /api/services/{id}/env/revisions/{rev}/rollback", server.requireAdmin(server.handleEnvRollback))
+
+	// Every API route comes from the route table and is wrapped in its
+	// guard. Nothing under /api/ is registered anywhere else.
+	for _, rt := range server.routes() {
+		mux.HandleFunc(rt.method+" "+rt.pattern, server.guard(rt))
+	}
 
 	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Redirect(w, r, "/docs/", nethttp.StatusFound)

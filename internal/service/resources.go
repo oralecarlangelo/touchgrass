@@ -516,6 +516,33 @@ func (s *Sampler) MarkNotificationsRead(ctx context.Context, serviceID string) (
 	return s.notifications.MarkAllRead(ctx, serviceID)
 }
 
+// NotificationsForServices returns the newest notifications of the listed
+// services first, plus the unread count over the same services, for a
+// caller whose scope is a list.
+func (s *Sampler) NotificationsForServices(
+	ctx context.Context,
+	serviceIDs []string,
+	limit int,
+) ([]model.Notification, int64, error) {
+	notifications, err := s.notifications.ListForServices(ctx, serviceIDs, clampLimit(limit))
+	if err != nil {
+		return nil, 0, err
+	}
+
+	unread, err := s.notifications.CountUnreadForServices(ctx, serviceIDs)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return notifications, unread, nil
+}
+
+// MarkNotificationsReadForServices stamps every unread notification of the
+// listed services read and reports the count.
+func (s *Sampler) MarkNotificationsReadForServices(ctx context.Context, serviceIDs []string) (int64, error) {
+	return s.notifications.MarkAllReadForServices(ctx, serviceIDs)
+}
+
 // clampLimit applies the default and max list bounds.
 func clampLimit(limit int) int {
 	if limit <= 0 {

@@ -9,6 +9,9 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
 
+// testGranter attributes grants made by store tests.
+const testGranter = "root"
+
 func TestUserStoreRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -17,8 +20,8 @@ func TestUserStoreRoundTrip(t *testing.T) {
 	users := NewUserStore(db)
 
 	created, err := users.Create(ctx, model.User{
-		Username: "bob", PasswordHash: "hash-bob", Role: model.RoleViewer,
-	})
+		Username: "bob", PasswordHash: "hash-bob", Role: model.RoleViewer, AllServices: true,
+	}, testGranter)
 	if err != nil {
 		t.Fatalf("Create() error = %v, want nil", err)
 	}
@@ -62,14 +65,13 @@ func TestUserStoreUpdateAndDelete(t *testing.T) {
 	users := NewUserStore(db)
 
 	created, err := users.Create(ctx, model.User{
-		Username: "carol", PasswordHash: "hash-carol", Role: model.RoleViewer,
-	})
+		Username: "carol", PasswordHash: "hash-carol", Role: model.RoleViewer, AllServices: true,
+	}, testGranter)
 	if err != nil {
 		t.Fatalf("Create() error = %v, want nil", err)
 	}
 
 	disabled := time.Now()
-	created.Role = model.RoleAdmin
 	created.PasswordHash = "hash-carol-2"
 	created.DisabledAt = &disabled
 
@@ -82,8 +84,8 @@ func TestUserStoreUpdateAndDelete(t *testing.T) {
 		t.Fatalf("ByID() error = %v, want nil", err)
 	}
 
-	if got.Role != model.RoleAdmin || got.PasswordHash != "hash-carol-2" || !got.Disabled() {
-		t.Errorf("ByID() after update = %+v, want disabled admin with new hash", got)
+	if got.Role != model.RoleViewer || got.PasswordHash != "hash-carol-2" || !got.Disabled() {
+		t.Errorf("ByID() after update = %+v, want disabled viewer with new hash", got)
 	}
 
 	if err := users.Update(ctx, model.User{ID: created.ID + 99}); !errors.Is(err, ErrUserNotFound) {
@@ -111,10 +113,10 @@ func TestUserStoreListAndAdminCount(t *testing.T) {
 	users := NewUserStore(db)
 
 	for _, user := range []model.User{
-		{Username: "amy", PasswordHash: "hash-amy", Role: model.RoleAdmin},
-		{Username: "ben", PasswordHash: "hash-ben", Role: model.RoleViewer},
+		{Username: "amy", PasswordHash: "hash-amy", Role: model.RoleAdmin, AllServices: true},
+		{Username: "ben", PasswordHash: "hash-ben", Role: model.RoleViewer, AllServices: true},
 	} {
-		if _, err := users.Create(ctx, user); err != nil {
+		if _, err := users.Create(ctx, user, testGranter); err != nil {
 			t.Fatalf("Create(%s) error = %v, want nil", user.Username, err)
 		}
 	}

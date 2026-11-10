@@ -421,7 +421,18 @@ export default function App() {
             {error === null && services !== null && services.length === 0 && (
               <EmptyState
                 title="No services on the radar"
-                body="Grass: touched. Add services to the inventory to watch them here."
+                body={
+                  isAdmin
+                    ? 'Nothing is managed yet. Open Fleet, pick a running container and promote it to a managed service to watch and deploy it here.'
+                    : 'Nothing is managed yet. An admin adds services from Fleet; they show up here once added.'
+                }
+                action={
+                  isAdmin ? (
+                    <Button size="sm" onClick={() => handleView('fleet')}>
+                      Open Fleet
+                    </Button>
+                  ) : undefined
+                }
               />
             )}
 

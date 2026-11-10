@@ -17,6 +17,7 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
+	"github.com/oralecarlangelo/touchgrass/internal/testfixture"
 )
 
 // testVersion is the stubbed binary version.
@@ -92,6 +93,25 @@ func seedTestUsers(t *testing.T, db *store.DB) {
 	} {
 		if _, err := users.Create(ctx, user); err != nil {
 			t.Fatalf("Create(%s) error = %v, want nil", user.Username, err)
+		}
+	}
+}
+
+// seedTestServices inserts the shared service fixture. Migrations seed
+// no service, so every harness that serves a populated inventory adds it.
+func seedTestServices(t *testing.T, db *store.DB) {
+	t.Helper()
+
+	services := store.NewServiceStore(db)
+	rules := store.NewRuleStore(db)
+
+	for _, service := range testfixture.DogfoodServices() {
+		if err := services.Create(context.Background(), service); err != nil {
+			t.Fatalf("Create(%s) error = %v, want nil", service.ID, err)
+		}
+
+		if _, err := rules.Create(context.Background(), testfixture.DefaultRule(service.ID)); err != nil {
+			t.Fatalf("Create(rule for %s) error = %v, want nil", service.ID, err)
 		}
 	}
 }
@@ -178,6 +198,7 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 	}
 
 	seedTestUsers(t, db)
+	seedTestServices(t, db)
 
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)

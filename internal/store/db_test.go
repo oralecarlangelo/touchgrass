@@ -6,12 +6,34 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/oralecarlangelo/touchgrass/internal/testfixture"
 )
 
 // testServiceAPI is the seeded blue-green service id.
 const testServiceAPI = "tn-api"
 
-// openTestDB returns a migrated in-memory database.
+// seedDogfoodServices inserts the shared service fixture. Migrations
+// no longer seed any service, so suites that need an inventory add it.
+func seedDogfoodServices(t *testing.T, db *DB) {
+	t.Helper()
+
+	services := NewServiceStore(db)
+	rules := NewRuleStore(db)
+
+	for _, service := range testfixture.DogfoodServices() {
+		if err := services.Create(context.Background(), service); err != nil {
+			t.Fatalf("Create(%s) error = %v, want nil", service.ID, err)
+		}
+
+		if _, err := rules.Create(context.Background(), testfixture.DefaultRule(service.ID)); err != nil {
+			t.Fatalf("Create(rule for %s) error = %v, want nil", service.ID, err)
+		}
+	}
+}
+
+// openTestDB returns a migrated in-memory database holding the shared
+// service fixture.
 func openTestDB(t *testing.T) *DB {
 	t.Helper()
 
@@ -29,6 +51,8 @@ func openTestDB(t *testing.T) *DB {
 	if _, err := db.MigrateUp(context.Background()); err != nil {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
+
+	seedDogfoodServices(t, db)
 
 	return db
 }
@@ -156,5 +180,46 @@ func TestMigrationStatus(t *testing.T) {
 
 	if len(applied) != 22 || len(pending) != 0 {
 		t.Errorf("MigrationStatus() = (%v, %v), want (22 applied, 0 pending)", applied, pending)
+	}
+}
+
+// A fresh install opens with nothing in its inventory: no migration may
+// seed a service (or anything hanging off one) from another deployment.
+func TestMigrateUpSeedsNoServices(t *testing.T) {
+	t.Parallel()
+
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open() error = %v, want nil", err)
+	}
+
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close() error = %v, want nil", err)
+		}
+	})
+
+	ctx := context.Background()
+
+	if _, err := db.MigrateUp(ctx); err != nil {
+		t.Fatalf("MigrateUp() error = %v, want nil", err)
+	}
+
+	services, err := NewServiceStore(db).All(ctx)
+	if err != nil {
+		t.Fatalf("All() error = %v, want nil", err)
+	}
+
+	if len(services) != 0 {
+		t.Errorf("services after migrate = %+v, want none", services)
+	}
+
+	rules, err := NewRuleStore(db).AllEnabled(ctx)
+	if err != nil {
+		t.Fatalf("AllEnabled() error = %v, want nil", err)
+	}
+
+	if len(rules) != 0 {
+		t.Errorf("alert rules after migrate = %+v, want none", rules)
 	}
 }

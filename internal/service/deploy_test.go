@@ -12,6 +12,7 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/probe"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
+	"github.com/oralecarlangelo/touchgrass/internal/testfixture"
 )
 
 // stubLister is a fake docker.Lister.
@@ -86,6 +87,21 @@ func openInventoryDB(t *testing.T) *store.DB {
 
 	if _, err := db.MigrateUp(context.Background()); err != nil {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
+	}
+
+	// Migrations seed no service; the suites below exercise a populated
+	// inventory, so add the shared fixture.
+	services := store.NewServiceStore(db)
+	rules := store.NewRuleStore(db)
+
+	for _, fixture := range testfixture.DogfoodServices() {
+		if err := services.Create(context.Background(), fixture); err != nil {
+			t.Fatalf("Create(%s) error = %v, want nil", fixture.ID, err)
+		}
+
+		if _, err := rules.Create(context.Background(), testfixture.DefaultRule(fixture.ID)); err != nil {
+			t.Fatalf("Create(rule for %s) error = %v, want nil", fixture.ID, err)
+		}
 	}
 
 	return db

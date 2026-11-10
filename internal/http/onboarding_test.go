@@ -40,6 +40,7 @@ func onboardingTestServer(t *testing.T, lister docker.Lister, prober service.Pro
 	}
 
 	seedTestUsers(t, db)
+	seedTestServices(t, db)
 
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)

@@ -52,6 +52,19 @@ schema versions. Put it behind nginx or Caddy for TLS, set
 `TOUCHGRASS_COOKIE_SECURE=true` behind HTTPS, and rate-limit
 `/api/auth/login` — the reference nginx config does all three.
 
+## Your first service
+
+A new install manages nothing: the inventory starts empty. Open **Fleet**,
+which lists every container on the Docker daemon, and promote the ones
+you want to a managed service; touchgrass drafts the definition for you
+to review. `POST /api/services` does the same from a script.
+
+**Upgrading from v0.4.0 or earlier?** Those versions inserted three
+services from the project's first deployment (`tn-api`, `tn-fe`,
+`admin-fe`) into every new database. Upgrading never removes services,
+so if your inventory lists those three and they are not yours, delete
+them from each service's page.
+
 ## Configuration
 
 | Variable                           | Default            | Meaning                                              |

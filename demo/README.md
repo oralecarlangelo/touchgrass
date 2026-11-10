@@ -16,9 +16,10 @@ curl -s http://127.0.0.1:8080/api/health
 ## Onboard the toy service
 
 Services are data (`services` table, ADR-0006): one row points
-touchgrass at the demo compose project. The seed migration ships
-TicketNation rows, so add the demo row with a throwaway sqlite client
-against the named volume:
+touchgrass at the demo compose project. A fresh database starts with
+no services, so add the demo row. The console can do it (Fleet →
+promote a container to a managed service); for a scripted demo, a
+throwaway sqlite client against the named volume is quicker:
 
 ```bash
 docker run --rm -v demo_demo-data:/data nouchka/sqlite3 /data/touchgrass.db \

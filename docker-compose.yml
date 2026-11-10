@@ -25,9 +25,10 @@ services:
       TOUCHGRASS_POSTGRES_USER: "${TOUCHGRASS_POSTGRES_USER:-postgres}"
       TOUCHGRASS_POSTGRES_DB: "${TOUCHGRASS_POSTGRES_DB:-postgres}"
       TOUCHGRASS_REDIS_CONTAINER: "${TOUCHGRASS_REDIS_CONTAINER:-}"
-      # Required: the single admin password. Export it before up:
-      #   export TOUCHGRASS_ADMIN_PASSWORD='choose-a-strong-password'
-      TOUCHGRASS_ADMIN_PASSWORD: "${TOUCHGRASS_ADMIN_PASSWORD:?set TOUCHGRASS_ADMIN_PASSWORD first}"
+      # Optional: seed the admin password (12+ characters). Left empty, the
+      # first boot generates a one-time password — read it with
+      #   docker compose exec touchgrass cat /data/initial-admin-password
+      TOUCHGRASS_ADMIN_PASSWORD: "${TOUCHGRASS_ADMIN_PASSWORD:-}"
     volumes:
       - touchgrass-data:/data
       # Host telemetry and the dedicated Nginx stream are read-only. Override

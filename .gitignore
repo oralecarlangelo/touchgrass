@@ -52,3 +52,6 @@ tmp/
 
 # Air hot reload
 tmp/
+
+# Generated one-time admin password (first boot without TOUCHGRASS_ADMIN_PASSWORD).
+initial-admin-password

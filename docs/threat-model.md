@@ -21,20 +21,32 @@ container security monitoring.
 
 - Managed users in SQLite (`users` table): username, bcrypt hash
   (`DefaultCost`), role (`admin` or `viewer`), disabled flag.
-  `TOUCHGRASS_ADMIN_PASSWORD` (required, env-only) seeds the
-  bootstrap admin on first boot only — later rotations happen
-  through user management, and the env is ignored once an enabled
-  admin exists. With zero enabled admins (fresh DB or manual
-  surgery — unreachable through the API), boot reseeds admin from
-  the env and logs a warning.
+  The bootstrap admin is seeded on first boot only. With
+  `TOUCHGRASS_ADMIN_PASSWORD` set (optional, env-only) it is seeded
+  from the env; later rotations happen through user management, and
+  the env is ignored once an admin has chosen a password. With it
+  unset, boot generates a one-time password (130 bits), writes it
+  to `initial-admin-password` beside the database (0600, never
+  logged) and flags the account `must_change_password`: until it is
+  replaced the session can only read `/api/auth/me`, change the
+  password, or log out, and the file is deleted on the change
+  (ADR-0013). There is no default password at any point. With zero
+  enabled admins (fresh DB or manual surgery — unreachable through
+  the API), boot reseeds admin the same way and logs a warning.
+- Self-service `POST /api/auth/password` (any role) needs the
+  current password, shares the login rate limit, is audited, and
+  ends the caller's other sessions. `touchgrass users
+  reset-password` on the host issues a one-time password for a
+  lost one; host access already implies control of the database.
 - Roles: admins hold full power; viewers are read-only (every
   `GET` plus login/logout; every mutating route answers 403
   `forbidden`). UI controls hide for viewers, but enforcement is
   server-side per route — a raw HTTP client gains nothing.
 - Sessions are server-side random tokens bound to a username; role
   and disabled state re-resolve from the store on every request,
-  so disables and role changes bite immediately. Password resets
-  do not kill existing sessions — disable first to lock out.
+  so disables and role changes bite immediately. An admin's
+  password reset in Users does not kill existing sessions —
+  disable first to lock out; a user's own password change does.
 - Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` behind
   `TOUCHGRASS_COOKIE_SECURE=true` (set it whenever TLS terminates in
   front). Logout destroys the token. Per-IP login rate limiting

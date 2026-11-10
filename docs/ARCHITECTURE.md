@@ -221,8 +221,13 @@ workflows for investigation.
   every mutating route answers 403). Passwords are bcrypt-hashed
   in SQLite; sessions are server-side random tokens bound to a
   username, with role and disabled state re-resolved per request.
-  `TOUCHGRASS_ADMIN_PASSWORD` seeds the bootstrap admin on first
-  boot only (ignored once an enabled admin exists). A
+  The bootstrap admin is seeded on first boot only: from
+  `TOUCHGRASS_ADMIN_PASSWORD` when set, otherwise with a generated
+  one-time password written to `initial-admin-password` beside the
+  database, which must be replaced at first login (ADR-0013; while
+  `must_change_password` is set the middleware allows only me,
+  change-password and logout). Any user changes their own password
+  at `POST /api/auth/password`. A
   last-enabled-admin guard rejects orphaning demotes, disables,
   and deletes. Binds localhost by default; public listen requires
   explicit config.
@@ -233,7 +238,7 @@ workflows for investigation.
 Environment variables only in v1 (no config file, no Viper):
 
 - `TOUCHGRASS_ADDR` (default `127.0.0.1:8080`), `TOUCHGRASS_DB`
-  (default `./touchgrass.db`), `TOUCHGRASS_ADMIN_PASSWORD` (required),
+  (default `./touchgrass.db`), `TOUCHGRASS_ADMIN_PASSWORD` (optional seed),
   `TOUCHGRASS_DATA_RETENTION_*` overrides, `TOUCHGRASS_ENV_KEY_FILE`
   (0600 key file; enables the env pillar) or `TOUCHGRASS_ENV_KEY` (dev).
 - Logs to stdout, JSON via `slog`. Graceful shutdown on SIGTERM

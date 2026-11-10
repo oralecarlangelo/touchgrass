@@ -1151,6 +1151,47 @@ actor, and one-click rollback — with no plaintext at rest.
 SCOPE GUARD: one key, no rotation tooling, no per-service keys,
 no external secrets manager, no UI (separate PR) — follow-ups.
 
+### S30 — Generated first-boot admin password (2026-11-10)
+
+**Status**: IMPLEMENTED on `feat/first-boot-admin-password`; PR open.
+**Goal**: a fresh install needs no admin secret, never has a default
+password, and a lost password has a way back (ADR-0013).
+
+- S30.1 Optional seed + generated one-time password (1pd) [FR-P1, NFR-5]
+  Acceptance: no `TOUCHGRASS_ADMIN_PASSWORD` → boot writes
+  `initial-admin-password` (0600) beside the DB before the admin row,
+  logs the path never the value; a restart keeps the unused password;
+  a configured password still seeds unchanged and replaces an unused
+  generated one; the CLI no longer demands the variable.
+- S30.2 Must-change gate + self-service change (1pd) [FR-P1, NFR-5]
+  Acceptance: migration 0022 `users.must_change_password`; middleware
+  answers 403 `password_change_required` on everything but me,
+  change-password and logout; `POST /api/auth/password` (any role)
+  proves the current password, shares the login rate limit, audits,
+  ends the caller's other sessions, deletes the initial file.
+- S30.3 Offline recovery (0.5pd) [NFR-6]
+  Acceptance: `touchgrass users reset-password [--username]` issues
+  a one-time password once, audited as `cli:<os user>`; refuses an
+  unmigrated database, an unknown or a disabled account.
+- S30.4 UI + docs (1pd) [NFR-6]
+  Acceptance: forced change screen (does not re-ask the password just
+  typed), account-menu "Change password" for every role, first-time
+  hint on the login form; ADR-0013, README, self-hosting, threat
+  model, ARCHITECTURE, OpenAPI, compose default updated.
+- Standards in play: `golang-security` (CSPRNG, 0600 atomic write,
+  no secret in logs, rate-limited verify), `golang-database`
+  (additive migration), `golang-testing` (table-driven, temp dirs).
+- Validation: `make vet`/`lint` (0 new issues)/`test`/`build` green;
+  web `verify` + vitest green; exercised end to end against a real
+  binary in a browser: generated file → login → forced change →
+  dashboard → file gone; account-menu change with a wrong current
+  password; CLI reset locks the live session to the change screen.
+  Not yet exercised on a host behind a proxy.
+
+SCOPE GUARD: no forced change after an admin's reset in Users, no
+password history, no invitation flow, no extra roles — the
+roles-and-access plan picks those up (S31+).
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

@@ -14,7 +14,8 @@ import (
 )
 
 const (
-	// bootstrapAdmin is the username seeded from the admin password env.
+	// bootstrapAdmin is the username seeded on first boot, from the
+	// configured admin password or a generated one-time password.
 	bootstrapAdmin = "admin"
 	// minPasswordLength rejects short passwords on managed accounts.
 	minPasswordLength = 12
@@ -40,11 +41,38 @@ type CreateUserInput struct {
 type Users struct {
 	users *store.UserStore
 	audit *Audit
+	// initialPasswordFile is where a generated one-time admin password
+	// is written; empty disables generation.
+	initialPasswordFile string
 }
 
 // NewUsers builds a Users service.
 func NewUsers(users *store.UserStore, audit *Audit) *Users {
 	return &Users{users: users, audit: audit}
+}
+
+// WithInitialPasswordFile sets where EnsureAdmin writes a generated
+// one-time admin password and returns u for chaining at wiring time.
+// Without it, EnsureAdmin needs a configured password.
+func (u *Users) WithInitialPasswordFile(path string) *Users {
+	u.initialPasswordFile = path
+
+	return u
+}
+
+// AdminBootstrap reports what EnsureAdmin found or did at startup.
+type AdminBootstrap struct {
+	// Seeded reports that the bootstrap admin was created or repaired.
+	Seeded bool
+	// Generated reports that the seeded password was generated rather
+	// than configured; it is in PasswordFile and must be replaced at
+	// first login.
+	Generated bool
+	// Pending reports that the bootstrap admin still holds a one-time
+	// password from an earlier boot or a reset.
+	Pending bool
+	// PasswordFile is the generated password's file, when one exists.
+	PasswordFile string
 }
 
 // Create validates and stores one user.
@@ -195,10 +223,13 @@ func (u *Users) SetPassword(
 	}
 
 	user.PasswordHash = hash
+	user.MustChangePassword = false
 
 	if err := u.users.Update(ctx, user); err != nil {
 		return err
 	}
+
+	u.discardInitialPassword(user.Username)
 
 	if _, err := u.audit.Record(ctx, model.AuditRecord{
 		Actor: actor, Action: model.AuditUserUpdate, Result: model.AuditSuccess,
@@ -208,6 +239,95 @@ func (u *Users) SetPassword(
 	}
 
 	return nil
+}
+
+// ChangeOwnPassword replaces the caller's own password after proving
+// the current one, and lifts the one-time-password restriction. A
+// wrong current password reports ErrUnauthorized.
+func (u *Users) ChangeOwnPassword(ctx context.Context, username, current, next string) error {
+	user, err := u.Verify(ctx, username, current)
+	if err != nil {
+		return err
+	}
+
+	if next == current {
+		return fmt.Errorf("%w: the new password must differ from the current one", ErrInvalidInput)
+	}
+
+	if err := checkPassword(next); err != nil {
+		return err
+	}
+
+	hash, err := hashPassword(next)
+	if err != nil {
+		return err
+	}
+
+	detail := "changed own password"
+	if user.MustChangePassword {
+		detail = "replaced one-time password"
+	}
+
+	user.PasswordHash = hash
+	user.MustChangePassword = false
+
+	if err := u.users.Update(ctx, user); err != nil {
+		return err
+	}
+
+	u.discardInitialPassword(user.Username)
+
+	if _, err := u.audit.Record(ctx, model.AuditRecord{
+		Actor: user.Username, Action: model.AuditUserUpdate, Result: model.AuditSuccess, Detail: detail,
+	}); err != nil {
+		return fmt.Errorf("auditing password change: %w", err)
+	}
+
+	return nil
+}
+
+// ResetWithOneTimePassword gives one enabled account a generated
+// one-time password and returns it once: the account can then only
+// change its password until it has. It is the offline recovery path
+// for a lost password (the `users reset-password` command).
+func (u *Users) ResetWithOneTimePassword(ctx context.Context, username, actor string) (string, error) {
+	if actor == "" {
+		return "", fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	user, err := u.users.ByUsername(ctx, username)
+	if err != nil {
+		return "", fmt.Errorf("looking up user %q: %w", username, err)
+	}
+
+	if user.Disabled() {
+		return "", fmt.Errorf("%w: user %q is disabled", ErrConflict, username)
+	}
+
+	password := generatePassword()
+
+	hash, err := hashPassword(password)
+	if err != nil {
+		return "", err
+	}
+
+	user.PasswordHash = hash
+	user.MustChangePassword = true
+
+	if err := u.users.Update(ctx, user); err != nil {
+		return "", err
+	}
+
+	u.discardInitialPassword(user.Username)
+
+	if _, err := u.audit.Record(ctx, model.AuditRecord{
+		Actor: actor, Action: model.AuditUserUpdate, Result: model.AuditSuccess,
+		Detail: "reset password of user " + user.Username + " to a one-time password",
+	}); err != nil {
+		return "", fmt.Errorf("auditing password reset: %w", err)
+	}
+
+	return password, nil
 }
 
 // SetDisabled locks or unlocks one account.
@@ -287,54 +407,148 @@ func (u *Users) Delete(ctx context.Context, id int64, actor string) error {
 	return nil
 }
 
-// EnsureAdmin guarantees a usable admin account: when no enabled
-// admin exists it creates (or repairs) the bootstrap admin from the
-// configured password and reports seeded true. Otherwise it leaves
-// every account untouched and reports seeded false, so later password
-// rotations happen through user management, not the environment.
-func (u *Users) EnsureAdmin(ctx context.Context, password string) (bool, error) {
+// EnsureAdmin guarantees a usable admin account. When no enabled admin
+// exists it creates (or repairs) the bootstrap admin: from the
+// configured password when one is set, otherwise from a generated
+// one-time password written to the initial password file, which the
+// admin must replace at first login. When an enabled admin exists it
+// leaves every account untouched, so later rotations happen through
+// user management, not the environment — except that a password
+// configured while the generated one is still unused takes its place.
+func (u *Users) EnsureAdmin(ctx context.Context, password string) (AdminBootstrap, error) {
 	count, err := u.users.CountEnabledAdmins(ctx)
 	if err != nil {
-		return false, err
+		return AdminBootstrap{}, err
 	}
 
 	if count > 0 {
-		return false, nil
+		return u.reconcileBootstrap(ctx, password)
 	}
 
-	if err := checkPassword(password); err != nil {
-		return false, err
+	if password != "" {
+		if err := checkPassword(password); err != nil {
+			return AdminBootstrap{}, err
+		}
+
+		if err := u.seedAdmin(ctx, password, false); err != nil {
+			return AdminBootstrap{}, err
+		}
+
+		u.discardInitialPassword(bootstrapAdmin)
+
+		return AdminBootstrap{Seeded: true}, nil
 	}
 
+	return u.seedGeneratedAdmin(ctx)
+}
+
+// seedGeneratedAdmin writes a one-time password to the initial
+// password file, then seeds the bootstrap admin with it. The file is
+// written first so a crash between the two leaves no admin whose
+// password nobody can read; the next boot simply generates again.
+func (u *Users) seedGeneratedAdmin(ctx context.Context) (AdminBootstrap, error) {
+	if u.initialPasswordFile == "" {
+		return AdminBootstrap{}, fmt.Errorf(
+			"%w: no admin password is configured and no initial password file is set", ErrInvalidInput)
+	}
+
+	password := generatePassword()
+
+	if err := writeInitialPassword(u.initialPasswordFile, password); err != nil {
+		return AdminBootstrap{}, err
+	}
+
+	if err := u.seedAdmin(ctx, password, true); err != nil {
+		return AdminBootstrap{}, errors.Join(err, removeIfPresent(u.initialPasswordFile))
+	}
+
+	return AdminBootstrap{Seeded: true, Generated: true, PasswordFile: u.initialPasswordFile}, nil
+}
+
+// seedAdmin creates the bootstrap admin, or repairs an existing row of
+// that name into an enabled admin, with the given password.
+func (u *Users) seedAdmin(ctx context.Context, password string, mustChange bool) error {
 	hash, err := hashPassword(password)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	existing, err := u.users.ByUsername(ctx, bootstrapAdmin)
-	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
-		return false, fmt.Errorf("looking up admin: %w", err)
-	}
-
 	if errors.Is(err, store.ErrUserNotFound) {
 		if _, err := u.users.Create(ctx, model.User{
-			Username: bootstrapAdmin, PasswordHash: hash, Role: model.RoleAdmin,
+			Username: bootstrapAdmin, PasswordHash: hash, Role: model.RoleAdmin, MustChangePassword: mustChange,
 		}); err != nil {
-			return false, fmt.Errorf("seeding admin: %w", err)
+			return fmt.Errorf("seeding admin: %w", err)
 		}
 
-		return true, nil
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("looking up admin: %w", err)
 	}
 
 	existing.PasswordHash = hash
 	existing.Role = model.RoleAdmin
+	existing.MustChangePassword = mustChange
 	existing.DisabledAt = nil
 
 	if err := u.users.Update(ctx, existing); err != nil {
-		return false, fmt.Errorf("repairing admin: %w", err)
+		return fmt.Errorf("repairing admin: %w", err)
 	}
 
-	return true, nil
+	return nil
+}
+
+// reconcileBootstrap handles a boot that already has an enabled admin.
+// It reports a bootstrap admin still holding a one-time password,
+// applies a newly configured password in its place, and removes an
+// initial password file nobody needs any more.
+func (u *Users) reconcileBootstrap(ctx context.Context, password string) (AdminBootstrap, error) {
+	admin, err := u.users.ByUsername(ctx, bootstrapAdmin)
+	if err != nil && !errors.Is(err, store.ErrUserNotFound) {
+		return AdminBootstrap{}, fmt.Errorf("looking up admin: %w", err)
+	}
+
+	pending := err == nil && admin.MustChangePassword && !admin.Disabled() && admin.Role == model.RoleAdmin
+	if !pending {
+		u.discardInitialPassword(bootstrapAdmin)
+
+		return AdminBootstrap{}, nil
+	}
+
+	if password == "" {
+		bootstrap := AdminBootstrap{Pending: true}
+		if u.initialPasswordFile != "" && fileExists(u.initialPasswordFile) {
+			bootstrap.PasswordFile = u.initialPasswordFile
+		}
+
+		return bootstrap, nil
+	}
+
+	if err := checkPassword(password); err != nil {
+		return AdminBootstrap{}, err
+	}
+
+	if err := u.seedAdmin(ctx, password, false); err != nil {
+		return AdminBootstrap{}, err
+	}
+
+	u.discardInitialPassword(bootstrapAdmin)
+
+	return AdminBootstrap{Seeded: true}, nil
+}
+
+// discardInitialPassword removes the initial password file once the
+// bootstrap admin's password is no longer the generated one. Removal
+// is best-effort: the file then holds a dead password, and failing a
+// completed password change over it would help nobody.
+func (u *Users) discardInitialPassword(username string) {
+	if username != bootstrapAdmin || u.initialPasswordFile == "" {
+		return
+	}
+
+	_ = removeIfPresent(u.initialPasswordFile)
 }
 
 // requireAnotherAdmin rejects changes that would leave no enabled

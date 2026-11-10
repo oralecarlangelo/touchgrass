@@ -11,6 +11,7 @@ import HelpScreen from './components/HelpScreen.tsx';
 import ImagesScreen from './components/ImagesScreen.tsx';
 import IssuesScreen from './components/IssuesScreen.tsx';
 import KeysScreen from './components/KeysScreen.tsx';
+import FirstLoginPassword from './components/account/FirstLoginPassword.tsx';
 import LoginForm from './components/LoginForm.tsx';
 import LogsScreen from './components/LogsScreen.tsx';
 import NotificationsScreen from './components/NotificationsScreen.tsx';
@@ -60,6 +61,9 @@ export default function App() {
   // Deep-link: the hash mirrors the view + selected service both ways.
   // A linked service resolves once the inventory loads.
   const pendingServiceRef = useRef<string | null>(parseHash(window.location.hash).serviceId);
+
+  // The one-time password typed at login, held only until it is replaced.
+  const oneTimePasswordRef = useRef('');
 
   useEffect(() => {
     writeHash(view, selected?.id ?? null, serviceTab);
@@ -150,8 +154,14 @@ export default function App() {
 
     try {
       await login(username.trim() === '' ? 'admin' : username.trim(), password);
+
+      const next = await fetchSession();
+
+      // A one-time password is replaced on the next screen; keep what
+      // was just typed (memory only) so it is not asked for twice.
+      oneTimePasswordRef.current = next.must_change_password === true ? password : '';
       setPassword('');
-      setSession(await fetchSession());
+      setSession(next);
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -265,6 +275,20 @@ export default function App() {
         onSubmit={() => void handleLogin()}
         submitting={loggingIn}
         error={loginError}
+      />
+    );
+  }
+
+  if (session.must_change_password === true) {
+    return (
+      <FirstLoginPassword
+        username={session.username}
+        knownCurrent={oneTimePasswordRef.current}
+        onChanged={() => {
+          oneTimePasswordRef.current = '';
+          void refreshSession();
+        }}
+        onLogout={() => void handleLogout()}
       />
     );
   }

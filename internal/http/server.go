@@ -123,6 +123,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", server.handleMe)
+	mux.HandleFunc("POST /api/auth/password", server.handleChangePassword)
 	mux.HandleFunc("GET /api/users", server.requireAdmin(server.handleUsers))
 	mux.HandleFunc("POST /api/users", server.requireAdmin(server.handleCreateUser))
 	mux.HandleFunc("POST /api/users/{id}/password", server.requireAdmin(server.handleUserPassword))

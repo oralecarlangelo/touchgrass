@@ -128,7 +128,9 @@ type Config struct {
 	RetentionMetrics       time.Duration
 	RetentionNotifications time.Duration
 	RetentionDeploys       time.Duration
-	// AdminPassword guards every API route (required).
+	// AdminPassword seeds the bootstrap admin while no enabled admin
+	// exists. Optional: when empty the first boot generates a one-time
+	// password beside the database instead.
 	AdminPassword string
 	// CookieSecure sets the Secure cookie flag (behind TLS).
 	CookieSecure bool
@@ -724,12 +726,11 @@ func parsePositiveInt64(getenv func(string) string, name, fallback string) (int6
 	return value, nil
 }
 
-// loadAdmin validates the admin password and cookie-security flag.
+// loadAdmin reads the optional admin password and validates the
+// cookie-security flag. An empty password is valid: the first boot
+// then generates a one-time password for the admin.
 func loadAdmin(getenv func(string) string) (adminConfig, error) {
 	password := getenv(adminPasswordEnvVar)
-	if password == "" {
-		return adminConfig{}, fmt.Errorf("invalid %s: must be set", adminPasswordEnvVar)
-	}
 
 	secure := false
 

@@ -27,27 +27,31 @@ Prerequisites: Go 1.26+, Node 20+, Docker, and `golangci-lint` v2
 (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest`).
 
 ```bash
-export TOUCHGRASS_ADMIN_PASSWORD='choose-a-strong-password'
 make build && make test && make lint
 make run &
 curl -s http://127.0.0.1:8080/api/health
+cat initial-admin-password          # the one-time admin password
 open http://127.0.0.1:8080
 ```
 
 Expected: `{"status":"ok","version":"..."}` (`status` is always `ok`
 on a healthy process; `version` comes from `git describe` at build
 time, `dev` when unset — same value `touchgrass version` prints).
-The dashboard at `/` asks for a login (username `admin` plus the
-password above on first boot), then lists services from
-`GET /api/services`. Hand other devs read-only `viewer` accounts
-from the Users screen.
+The dashboard at `/` asks for a login. On a first boot with no
+`TOUCHGRASS_ADMIN_PASSWORD`, touchgrass generates a one-time password
+for `admin`, writes it to `initial-admin-password` beside the database
+(mode 0600) and makes you choose your own at first login; the file is
+deleted once you have. Lost a password? `touchgrass users
+reset-password` on the host issues a new one-time password. The
+dashboard then lists services from `GET /api/services`. Hand other
+devs read-only `viewer` accounts from the Users screen.
 
 Or run with Docker Compose (binds `127.0.0.1:8080` on the host):
 
 ```bash
-export TOUCHGRASS_ADMIN_PASSWORD='choose-a-strong-password'
 docker compose up --build -d
 curl -s http://127.0.0.1:8080/api/health
+docker compose exec touchgrass cat /data/initial-admin-password
 ```
 
 The compose file refuses to start without the password (fail-closed
@@ -72,7 +76,7 @@ Environment only (no config file):
 | `TOUCHGRASS_DB`                      | `./touchgrass.db`  | SQLite file path                                       |
 | `APP_ENV`                            | `prod`             | `dev` proxies `/` to Vite, else embedded UI             |
 | `DOCKER_HOST`                        | unix socket        | Docker daemon (standard client env)                    |
-| `TOUCHGRASS_ADMIN_PASSWORD`          | required           | Seeds the `admin` user on first boot; rotate in the Users screen after |
+| `TOUCHGRASS_ADMIN_PASSWORD`          | (empty)            | Optional: seeds `admin` on first boot (12+ chars). Empty = a one-time password is generated in `initial-admin-password` beside the DB |
 | `TOUCHGRASS_COOKIE_SECURE`           | `false`            | Set `true` when serving behind TLS                     |
 | `TOUCHGRASS_ENV_KEY_FILE`            | (empty)            | 0600 file with the AES-256 key for the env pillar; empty = pillar off |
 | `TOUCHGRASS_ENV_KEY`                 | (empty)            | Hex key inline (development only)                      |

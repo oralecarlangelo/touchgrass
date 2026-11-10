@@ -77,6 +77,13 @@ func (w *statusWriter) WriteHeader(status int) {
 	w.ResponseWriter.WriteHeader(status)
 }
 
+// Unwrap exposes the underlying writer so http.ResponseController can
+// reach the connection, which the event stream needs to move its write
+// deadline.
+func (w *statusWriter) Unwrap() nethttp.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // Flush passes streaming through to the underlying writer.
 func (w *statusWriter) Flush() {
 	if flusher, ok := w.ResponseWriter.(nethttp.Flusher); ok {

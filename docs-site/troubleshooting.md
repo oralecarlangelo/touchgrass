@@ -86,6 +86,23 @@ mount and permissions, then compare `docker ps -a` with
 `GET /api/system/containers`. A container created and removed entirely
 between polling and event coverage can still be missed.
 
+## Live progress disconnects before a deploy finishes
+
+The progress panel reads one long-lived stream, `GET /api/events`.
+Losing it never stops the run: the script keeps going on the server
+and the result lands in deploy history.
+
+1. On v0.5.0 or earlier, upgrade. Those versions ended the stream at
+   the first event sent more than 10 seconds after it opened, so any
+   longer deploy, rollback, or env apply lost its progress.
+2. Behind a reverse proxy, the stream must reach the browser
+   unbuffered. touchgrass sends `X-Accel-Buffering: no`, which nginx
+   honors; on other proxies turn response buffering off for
+   `/api/events`.
+3. An idle stream carries a `: ping` comment every 15 seconds, so a
+   proxy idle or read timeout must be longer than that. A proxy that
+   caps the total response time will still cut the stream at its cap.
+
 ## The console shows stale data
 
 Metrics sample every 30s, logs tail every 5s. If the gap is longer

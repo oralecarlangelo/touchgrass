@@ -3,8 +3,10 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	nethttp "net/http"
 
@@ -13,6 +15,17 @@ import (
 
 // eventBuffer holds events for slow subscribers before drops.
 const eventBuffer = 16
+
+// eventHeartbeat is how often an idle stream gets a comment frame. It
+// stays under the 30-60s idle timeouts common in reverse proxies, and
+// the write is also what notices a client that vanished without closing.
+const eventHeartbeat = 15 * time.Second
+
+// Stream frames that carry no event; clients ignore comment lines.
+const (
+	frameConnected = ": connected\n\n"
+	framePing      = ": ping\n\n"
+)
 
 // errNoFlush reports a writer without streaming support.
 var errNoFlush = errors.New("response writer lacks Flush")
@@ -75,8 +88,7 @@ func (h *Hub) Subscribe() (<-chan model.Event, func()) {
 
 // handleEvents streams server-sent events until the client disconnects.
 func (s *Server) handleEvents(w nethttp.ResponseWriter, r *nethttp.Request) {
-	flusher, ok := w.(nethttp.Flusher)
-	if !ok {
+	if _, ok := w.(nethttp.Flusher); !ok {
 		writeError(w, s.logger, errNoFlush, "streaming unsupported", "internal", nethttp.StatusInternalServerError)
 
 		return
@@ -87,14 +99,19 @@ func (s *Server) handleEvents(w nethttp.ResponseWriter, r *nethttp.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	if _, err := w.Write([]byte(": connected\n\n")); err != nil {
+	// Subscribe before the first byte so a client that has seen the
+	// stream open cannot miss an event it triggers next.
+	events, cancel := s.events.Subscribe()
+	defer cancel()
+
+	control := nethttp.NewResponseController(w)
+
+	if err := writeFrame(w, control, frameConnected); err != nil {
 		return
 	}
 
-	flusher.Flush()
-
-	events, cancel := s.events.Subscribe()
-	defer cancel()
+	heartbeat := time.NewTicker(s.eventHeartbeat)
+	defer heartbeat.Stop()
 
 	ctx := r.Context()
 
@@ -102,6 +119,10 @@ func (s *Server) handleEvents(w nethttp.ResponseWriter, r *nethttp.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			if err := writeFrame(w, control, framePing); err != nil {
+				return
+			}
 		case event, ok := <-events:
 			if !ok {
 				return
@@ -114,13 +135,35 @@ func (s *Server) handleEvents(w nethttp.ResponseWriter, r *nethttp.Request) {
 				return
 			}
 
-			if _, err := w.Write([]byte(sseFrame(event.Type, data))); err != nil {
+			if err := writeFrame(w, control, sseFrame(event.Type, data)); err != nil {
 				return
 			}
-
-			flusher.Flush()
 		}
 	}
+}
+
+// writeFrame writes and flushes one frame under its own write deadline.
+// The server's WriteTimeout is a deadline for the whole response, set
+// once when the request arrives, so a stream has to move it forward
+// before every write or the first frame after it passes fails. Each
+// frame still gets only writeTimeout, so a client that stops reading is
+// dropped instead of pinning the handler.
+func writeFrame(w nethttp.ResponseWriter, control *nethttp.ResponseController, frame string) error {
+	err := control.SetWriteDeadline(time.Now().Add(writeTimeout))
+	// A writer without deadlines has no server deadline to outlive.
+	if err != nil && !errors.Is(err, nethttp.ErrNotSupported) {
+		return fmt.Errorf("extending write deadline: %w", err)
+	}
+
+	if _, err := w.Write([]byte(frame)); err != nil {
+		return fmt.Errorf("writing frame: %w", err)
+	}
+
+	if err := control.Flush(); err != nil {
+		return fmt.Errorf("flushing frame: %w", err)
+	}
+
+	return nil
 }
 
 // sseFrame renders one event. Env apply progress is a named event so

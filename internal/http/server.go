@@ -72,6 +72,7 @@ type Server struct {
 	fleetInventory *service.FleetInventory
 	security       *service.Security
 	env            *service.Env
+	eventHeartbeat time.Duration
 	handler        nethttp.Handler
 }
 
@@ -100,6 +101,7 @@ func New(cfg Config) *Server {
 		fleetInventory: cfg.FleetInventory,
 		security:       cfg.Security,
 		env:            cfg.Env,
+		eventHeartbeat: eventHeartbeat,
 	}
 	mux.HandleFunc("GET /api/health", server.handleHealth)
 	mux.HandleFunc("GET /api/services", server.handleServices)

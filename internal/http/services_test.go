@@ -57,6 +57,7 @@ func servicesTestServer(t *testing.T, lister docker.Lister) *Server {
 	}
 
 	seedTestUsers(t, db)
+	seedTestServices(t, db)
 
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)

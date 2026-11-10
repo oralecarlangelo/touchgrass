@@ -144,6 +144,7 @@ func newDatabaseFixture(
 	}
 
 	seedTestUsers(t, db)
+	seedTestServices(t, db)
 
 	services := store.NewServiceStore(db)
 	audit := service.NewAudit(services, store.NewAuditStore(db))

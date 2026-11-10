@@ -1,11 +1,14 @@
--- 0002_seed_services: default inventory for TicketNation's box.
--- Strategy config is data (ADR-0006): edit these rows (or insert your own
--- services) to manage a different host. Values verified against the tn-api,
--- tn-fe, and admin-fe compose files plus deploy/bluegreen-*.sh.
-INSERT INTO services (id, name, strategy, compose_project, compose_dir, config) VALUES
-('tn-api', 'tn-api', 'bluegreen', 'ticketnation', '/opt/ticketnation',
- '{"blue_service":"api-blue","green_service":"api-green","blue_target":"127.0.0.1:4101","green_target":"127.0.0.1:4102","legacy_target":"127.0.0.1:4000","nginx_conf":"/etc/nginx/sites-available/ticketnation","marker":"# BLUEGREEN-ACTIVE","blue_url":"http://127.0.0.1:4101/health","green_url":"http://127.0.0.1:4102/health","public_url":"https://api.ticketnation.ph/health"}'),
-('tn-fe', 'tn-fe', 'recreate', 'ticketnation-fe', '/opt/ticketnation-fe',
- '{"service":"fe","health_url":"http://127.0.0.1:3000","public_url":"https://ticketnation.ph"}'),
-('admin-fe', 'admin-fe', 'recreate', 'ticketnation-admin', '/opt/ticketnation-admin',
- '{"service":"app","health_url":"http://127.0.0.1:3002/health","public_url":"https://admin.ticketnation.ph/health"}');
+-- 0002_seed_services: intentionally empty.
+--
+-- This migration used to insert three services (tn-api, tn-fe, admin-fe)
+-- belonging to the first dogfood deployment, so every new install opened
+-- with another project's services in its inventory. A fresh database now
+-- starts with no services: add your own from the console (Services ->
+-- Add service) or POST /api/services.
+--
+-- The file keeps its name and version so the migration sequence is
+-- unchanged. Databases that applied the old version keep their rows:
+-- nothing here or later removes them, because on the deployment they
+-- came from they are live configuration. An install that never wanted
+-- them can delete the three services in the console.
+SELECT 1;

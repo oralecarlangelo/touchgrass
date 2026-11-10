@@ -338,5 +338,7 @@ func openFileTestDB(t *testing.T) *DB {
 		t.Fatalf("MigrateUp() error = %v", err)
 	}
 
+	seedDogfoodServices(t, db)
+
 	return db
 }

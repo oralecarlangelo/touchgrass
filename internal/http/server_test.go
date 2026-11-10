@@ -53,6 +53,7 @@ func testServer(t *testing.T) *Server {
 	}
 
 	seedTestUsers(t, db)
+	seedTestServices(t, db)
 
 	logger := slog.New(slog.DiscardHandler)
 	services := store.NewServiceStore(db)

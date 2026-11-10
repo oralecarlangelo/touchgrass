@@ -42,6 +42,8 @@ Commands:
   migrate [up|status] manage the database schema (default: status)
   env <import|set|apply> --service <id>
                       manage a service's encrypted env file (see env -h)
+  users reset-password [--username admin]
+                      replace a lost password with a one-time one (see users -h)
   version             print the version and build SHA
 `
 
@@ -65,12 +67,14 @@ func run(args []string) error {
 		return runMigrate(args[1:])
 	case "env":
 		return runEnv(args[1:])
+	case "users":
+		return runUsers(args[1:])
 	case "version", "-v", "--version":
 		return runVersion(args[1:])
 	case "help", "-h", "--help":
 		return usage(os.Stdout)
 	default:
-		return fmt.Errorf("unknown command %q: want serve, migrate, env, or version", args[0])
+		return fmt.Errorf("unknown command %q: want serve, migrate, env, users, or version", args[0])
 	}
 }
 
@@ -327,7 +331,7 @@ func runServe(args []string) error {
 
 	onboarding := newOnboarding(wiring, prober, audit)
 
-	managedUsers, err := ensureUsers(ctx, db, audit, cfg.AdminPassword, logger)
+	managedUsers, err := ensureUsers(ctx, db, audit, cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -439,28 +443,6 @@ func runServe(args []string) error {
 	}
 
 	return nil
-}
-
-// ensureUsers wires managed accounts and guarantees a usable admin.
-func ensureUsers(
-	ctx context.Context,
-	db *store.DB,
-	audit *service.Audit,
-	adminPassword string,
-	logger *slog.Logger,
-) (*service.Users, error) {
-	users := service.NewUsers(store.NewUserStore(db), audit)
-
-	seeded, err := users.EnsureAdmin(ctx, adminPassword)
-	if err != nil {
-		return nil, fmt.Errorf("ensuring admin account: %w", err)
-	}
-
-	if seeded {
-		logger.Warn("no enabled admin found; seeded admin from TOUCHGRASS_ADMIN_PASSWORD")
-	}
-
-	return users, nil
 }
 
 // applyMigrations brings the serve database current, logging what applied.

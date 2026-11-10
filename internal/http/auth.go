@@ -36,20 +36,29 @@ const (
 	defaultLoginUsername = "admin"
 	// errForbiddenMessage reports a valid session without the role.
 	errForbiddenMessage = "admin role required"
+	// errPasswordChangeMessage reports a session still on a one-time
+	// password: it may only change that password.
+	errPasswordChangeMessage = "change your one-time password to continue"
+	// codePasswordChangeRequired is the envelope code clients switch on
+	// to show the change-password screen.
+	codePasswordChangeRequired = "password_change_required"
 	// unknownActor attributes requests that never passed auth.
 	unknownActor = "unknown"
 )
 
 // Auth errors, translated to user-safe envelopes at the boundary.
 var (
-	errAuthRequired = errors.New("missing or expired session")
-	errForbidden    = errors.New("role lacks permission")
+	errAuthRequired           = errors.New("missing or expired session")
+	errForbidden              = errors.New("role lacks permission")
+	errPasswordChangeRequired = errors.New("one-time password not yet replaced")
 )
 
 // Identity is the authenticated caller attached to request contexts.
 type Identity struct {
 	Username string
 	Role     model.Role
+	// MustChangePassword marks a session on a one-time password.
+	MustChangePassword bool
 }
 
 // Admin reports full-power access.
@@ -136,7 +145,22 @@ func (a *Authenticator) Authenticate(r *nethttp.Request) (Identity, bool) {
 		return Identity{}, false
 	}
 
-	return Identity{Username: user.Username, Role: user.Role}, true
+	return Identity{
+		Username: user.Username, Role: user.Role, MustChangePassword: user.MustChangePassword,
+	}, true
+}
+
+// DropOtherSessions ends every session of username except keep, so a
+// password change logs out whoever else held the old password.
+func (a *Authenticator) DropOtherSessions(username, keep string) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	for token, sess := range a.sessions {
+		if sess.username == username && token != keep {
+			delete(a.sessions, token)
+		}
+	}
 }
 
 // Logout drops a session token.
@@ -212,8 +236,22 @@ func (a *Authenticator) Middleware(logger *slog.Logger, next nethttp.Handler) ne
 			return
 		}
 
+		if identity.MustChangePassword && !allowedOnOneTimePassword(r.URL.Path) {
+			writeError(w, logger, errPasswordChangeRequired, errPasswordChangeMessage,
+				codePasswordChangeRequired, nethttp.StatusForbidden)
+
+			return
+		}
+
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), identityKey{}, identity)))
 	})
+}
+
+// allowedOnOneTimePassword reports the only routes a session on a
+// one-time password may call: see who it is, change the password, or
+// leave.
+func allowedOnOneTimePassword(path string) bool {
+	return path == "/api/auth/me" || path == "/api/auth/password" || path == "/api/auth/logout"
 }
 
 // requireAdmin rejects authenticated callers without the admin role.
@@ -275,9 +313,16 @@ type loginRequest struct {
 
 // meResponse is the session probe payload.
 type meResponse struct {
-	Authenticated bool   `json:"authenticated"`
-	Username      string `json:"username"`
-	Role          string `json:"role"`
+	Authenticated      bool   `json:"authenticated"`
+	Username           string `json:"username"`
+	Role               string `json:"role"`
+	MustChangePassword bool   `json:"must_change_password"`
+}
+
+// changePasswordRequest is the self-service password change body.
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
 }
 
 // handleLogin mints a session cookie.
@@ -343,5 +388,47 @@ func (s *Server) handleMe(w nethttp.ResponseWriter, r *nethttp.Request) {
 	identity, _ := identityFrom(r)
 	writeJSON(w, s.logger, nethttp.StatusOK, meResponse{
 		Authenticated: true, Username: identity.Username, Role: string(identity.Role),
+		MustChangePassword: identity.MustChangePassword,
 	})
+}
+
+// handleChangePassword replaces the caller's own password. A wrong
+// current password counts against the login rate limit, and success
+// ends the caller's other sessions.
+func (s *Server) handleChangePassword(w nethttp.ResponseWriter, r *nethttp.Request) {
+	body, ok := decodeBody[changePasswordRequest](w, s.logger, r)
+	if !ok {
+		return
+	}
+
+	identity, _ := identityFrom(r)
+	ip := clientIP(r)
+
+	if s.auth.AttemptsExceeded(ip) {
+		writeError(w, s.logger, errAuthRequired, "too many attempts, try again later", "rate_limited", nethttp.StatusTooManyRequests)
+
+		return
+	}
+
+	err := s.users.ChangeOwnPassword(r.Context(), identity.Username, body.CurrentPassword, body.NewPassword)
+	s.auth.RegisterFailure(ip, errors.Is(err, service.ErrUnauthorized))
+
+	if errors.Is(err, service.ErrUnauthorized) {
+		s.auditLogin(r.Context(), identity.Username, model.AuditFailure, "failed password change from "+ip)
+		writeError(w, s.logger, err, "current password is incorrect", "invalid_current_password", nethttp.StatusForbidden)
+
+		return
+	}
+
+	if err != nil {
+		writeServiceError(w, s.logger, err, "failed to change password")
+
+		return
+	}
+
+	if cookie, err := r.Cookie(sessionCookie); err == nil {
+		s.auth.DropOtherSessions(identity.Username, cookie.Value)
+	}
+
+	w.WriteHeader(nethttp.StatusNoContent)
 }

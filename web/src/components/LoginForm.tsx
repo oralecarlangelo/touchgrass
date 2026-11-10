@@ -63,13 +63,25 @@ export default function LoginForm({
               </p>
             )}
 
-            <Button
-              type="submit"
-              disabled={submitting || password === ''}
-              className="w-full"
-            >
+            <Button type="submit" disabled={submitting || password === ''} className="w-full">
               {submitting ? 'Checking…' : 'Log in'}
             </Button>
+
+            <details className="text-muted-foreground text-sm">
+              <summary className="hover:text-foreground cursor-pointer select-none">
+                First time on this install?
+              </summary>
+              <p className="mt-2">
+                If no admin password was configured, touchgrass generated a one-time password on its
+                first start. Sign in as <code className="text-foreground">admin</code> with the
+                contents of the <code className="text-foreground">initial-admin-password</code> file
+                beside the database; you choose your own password right after.
+              </p>
+              <p className="mt-2">
+                Lost it? On the host, run{' '}
+                <code className="text-foreground">touchgrass users reset-password</code>.
+              </p>
+            </details>
           </form>
         </CardContent>
       </Card>

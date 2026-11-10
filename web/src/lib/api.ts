@@ -462,6 +462,9 @@ export interface SessionInfo {
   authenticated: boolean;
   username: string;
   role: string;
+  // True while the account holds a one-time password: every other API
+  // route answers 403 password_change_required until it is replaced.
+  must_change_password?: boolean;
 }
 
 export async function fetchSession(): Promise<SessionInfo> {
@@ -482,6 +485,18 @@ export async function login(username: string, password: string): Promise<void> {
 
 export async function logout(): Promise<void> {
   await request<undefined>('/api/auth/logout', { method: 'POST' });
+}
+
+// Replaces the caller's own password. The server ends the caller's
+// other sessions; this one stays signed in.
+export async function changeOwnPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await request<undefined>(
+    '/api/auth/password',
+    jsonBody({ current_password: currentPassword, new_password: newPassword }),
+  );
 }
 
 export async function startCutover(

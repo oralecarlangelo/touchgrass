@@ -15,11 +15,12 @@ import {
 
 export default function UserMenu({
   username,
-  isAdmin,
+  access,
   onLogout,
 }: {
   username: string;
-  isAdmin: boolean;
+  // The role and scope, e.g. "viewer · 2 services".
+  access: string;
   onLogout: () => void;
 }) {
   const [changingPassword, setChangingPassword] = useState(false);
@@ -34,7 +35,8 @@ export default function UserMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuLabel>
-            {username} · {isAdmin ? 'admin' : 'viewer'}
+            {username}
+            <span className="text-muted-foreground block text-xs font-normal">{access}</span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => setChangingPassword(true)}>

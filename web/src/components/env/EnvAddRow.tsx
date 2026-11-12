@@ -148,7 +148,7 @@ export default function EnvAddRow({
             disabled={disabled || busy}
             autoComplete="off"
             spellCheck={false}
-            placeholder={secret ? 'Masked once staged' : 'postgres://…'}
+            placeholder={secret ? 'Masked once staged' : allowSecret ? 'postgres://…' : 'Plain value'}
             className="font-mono text-xs"
             onChange={(event) => {
               setValue(event.target.value);

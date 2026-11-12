@@ -1262,7 +1262,7 @@ tokens — S32–S34 of the plan pick those up.
 
 ### S32 — Developer role: deploy and operate in scope (2026-11-12)
 
-**Status**: IMPLEMENTED on `claude/roles-s32-developer-role-18f861`; PR open.
+**Status**: SHIPPED to `develop` (PR #9); not yet released.
 **Goal**: an admin can give an account the `developer` role with a
 service scope; that developer can deploy, cut over and roll back the
 services in scope, record a manual deploy, manage their alert and
@@ -1341,6 +1341,80 @@ roles-and-access plan.
 SCOPE GUARD: no env write rights for non-admins (`env.stage` is
 S33), no SDK key management, no host or security mutations, no API
 tokens, no custom roles, no groups.
+
+### S33 — Env proposals by developers (2026-11-12)
+
+**Status**: IMPLEMENTED on `claude/roles-s33-env-proposals-41d100`; PR open.
+**Goal**: a developer can propose non-secret env changes for a service
+in their scope; only an admin can apply them, and no path lets a
+non-admin learn, confirm or influence a secret value (ADR-0016). Admin
+behaviour is unchanged. Third of four sprints in the roles-and-access
+plan.
+
+- S33.1 Stage rules (1pd) [FR-P1, NFR-5]
+  Acceptance: `developer` holds `env.stage`, service-scoped. Past the
+  two stage routes a caller without `env.apply` is a proposer
+  (`service.EnvActor`, zero value restricted): may add a new key and
+  change or remove a key whose applied and pending entries are not
+  secret; may not touch a secret key, set the secret flag, or replace
+  or withdraw another user's pending change (409
+  `env_pending_by_other`). Every attempt on a secret answers 403
+  `env_secret_restricted` with the same body and the same `env.stage`
+  failure audit row, decided from flags before the value is validated
+  or anything is decrypted; tests stage the true value, wrong values
+  and invalid values and compare status, body, audit rows and the
+  stored entry.
+- S33.2 Read hardening (0.5pd) [NFR-5]
+  Acceptance: `rendered_sha256` is absent from the diff and the
+  revision list for a caller without `env.apply`; the digest is no
+  longer written into a run's render step or its `env.apply` event,
+  and is stripped from the steps of older runs for non-appliers.
+  Checked and left as they are: the view (a secret is `value: null`,
+  no length, no `applied_value`), entry states, and command output
+  (`validate_cmd`, `write_cmd`, `restart_cmd`), which is the
+  operator's contract under ADR-0012.
+- S33.3 Review UI (1pd) [NFR-6]
+  Acceptance: the Environment tab takes per-capability access instead
+  of one admin flag; the pending bar names who staged the changes and
+  shows "Awaiting an admin" where an admin sees Review & apply; the
+  apply dialog lists the author beside each key and warns when
+  someone else proposed; a secret row and a row with someone else's
+  pending change show as not editable with the reason; discard,
+  import, reveal and rollback stay hidden for non-admins; component
+  tests cover each. The dialog sends the digest it reviewed, and the
+  server refuses the apply (409 `env_pending_changed`) if anything
+  was staged since.
+- S33.4 Docs (0.5pd) [NFR-6]
+  Acceptance: ADR-0016 with pointers from ADR-0012, 0014 and 0015;
+  threat model env section "Env proposals by developers" (applying a
+  proposal is a review step); `docs-site/env.md` proposal flow;
+  `docs-site/access.md` matrix and API answers, held to the policy by
+  the existing test; OpenAPI operations, optional digest fields and
+  the new codes, capability parity test green.
+- Standards in play: `golang-security` (no oracle: one refusal decided
+  before the value is read; safe zero value for authority; digest
+  only for appliers), `golang-testing` (checked-in route matrices, an
+  env route table that fails on an unnamed route; generic non-dogfood
+  fixtures with placeholder values only).
+- Validation: `go build`/`vet`/`test` green (also `-race` on
+  `internal/http` and `internal/service`), lint 0 new issues, web
+  `verify` + vitest green, docs build + OpenAPI lint clean.
+  `access_developer.tsv` differs from S32's only in the stage and
+  remove-entry routes and from the frozen v0.6.0 viewer file in
+  exactly twelve routes; 30 routes stay admin-only for a developer of
+  any scope. Exercised against the real binary on a loopback port
+  with a throwaway database and key file, two generic services whose
+  env target, validator and restart command are local files in a temp
+  directory, a scoped developer, a second one, an all-services
+  developer and a scoped viewer: 64 raw-HTTP checks, then the
+  Environment tab in a browser as the developer and as the admin
+  (propose, refused secret, stale review refused, apply). Not
+  exercised: the three production deployments, a host behind a
+  reverse proxy, a validator that echoes values.
+
+SCOPE GUARD: no apply, reveal, import, discard or revision rollback
+for non-admins; no approval workflow beyond "an admin applies"; no
+key management; no access overview or login throttle (S34).
 
 ## Working agreements
 

@@ -148,7 +148,7 @@ row; activation itself does not approve or modify containers.
 
 The account is limited to selected services, or its role does not include
 what was asked. The header shows the role and scope next to the touchgrass
-name, for example `viewer · 2 services`.
+name, for example `viewer · 2 services` or `developer · 1 service`.
 
 - A missing **Fleet, Security, Databases, Images, API keys or Users** entry
   is expected for an account limited to selected services: those screens

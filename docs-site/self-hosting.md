@@ -32,8 +32,9 @@ Everyone can change their own password later from the account menu;
 doing so signs them out everywhere else.
 
 **Adding people.** Create accounts in **Users**. A `viewer` is
-read-only, and you can limit one to selected services so a developer
-sees only what they work on. The password you set is temporary: the
+read-only; a `developer` can also deploy and manage alerts. You can
+limit either to selected services, so someone sees, and deploys, only
+what they work on. The password you set is temporary: the
 user replaces it at first login. See [Users, roles & access](/access).
 
 **Lost a password** and no other admin can reset it in **Users**? On the

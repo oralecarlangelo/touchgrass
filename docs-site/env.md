@@ -189,7 +189,7 @@ not applied, apply running, no target, no key) and links to the same tab.
 | **This host has no encryption key** | The server started without a key (`503 env_key_missing`) | Set the key on the host and restart touchgrass |
 | **No entries yet** | Target configured, nothing tracked | **Import the current file** reads what is on the host; secret-looking keys are marked secret by name |
 | **An apply is running** | Another session (or this one) started an apply | The table is read-only; the live progress is pinned at the top |
-| Read-only account | You are a viewer | You see keys, plain values and the pending summary; no edits, no reveal |
+| Read-only account | You are a viewer or a developer | You see keys, plain values and the pending summary; no edits, no reveal. Env changes are admin-only |
 
 ### Entries
 

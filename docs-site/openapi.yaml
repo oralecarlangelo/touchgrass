@@ -19,7 +19,9 @@ info:
 
     - `x-touchgrass-capability`: the capability the caller's role
       must hold (`none` for a public route). Viewers hold the read
-      capabilities; admins hold all of them.
+      capabilities. Developers hold those plus `deploy.trigger`,
+      `deploy.record`, `alerts.manage` and `notifications.ack`.
+      Admins hold all of them.
     - `x-touchgrass-scope`: where it applies. `public` needs no
       session. `self` is the caller's own account. `fleet` needs
       the all-services scope, so a user limited to a list is
@@ -29,9 +31,9 @@ info:
     A refused request answers 403 `forbidden`. That includes a
     service outside the caller's scope, whether or not the id
     exists. An operation keyed by a resource id (an issue, a log
-    line) answers 404 `not_found` both for an id that does not
-    exist and for one that belongs to a service outside the
-    caller's scope. The lists `GET /services`,
+    line, a rule, a notification) answers 404 `not_found` both for
+    an id that does not exist and for one that belongs to a service
+    outside the caller's scope. The lists `GET /services`,
     `GET /notifications` and `GET /audit` return only the
     caller's services. See the Access page of the docs for the
     full matrix.
@@ -134,7 +136,7 @@ paths:
                 properties:
                   authenticated: { type: boolean }
                   username: { type: string }
-                  role: { type: string, enum: [admin, viewer] }
+                  role: { type: string, enum: [admin, developer, viewer] }
                   must_change_password:
                     type: boolean
                     description: >-
@@ -246,7 +248,7 @@ paths:
               properties:
                 username: { type: string }
                 password: { type: string }
-                role: { type: string, enum: [admin, viewer] }
+                role: { type: string, enum: [admin, developer, viewer] }
                 all_services:
                   type: boolean
                   description: Defaults to true when `services` is empty.
@@ -262,9 +264,8 @@ paths:
               schema: { $ref: '#/components/schemas/User' }
         '400':
           description: >-
-            Invalid input: an unknown role (the reserved `developer`
-            role included), an unknown service, or a service list
-            without `all_services: false`.
+            Invalid input: an unknown role, an unknown service, or a
+            service list without `all_services: false`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -329,7 +330,7 @@ paths:
               type: object
               required: [role]
               properties:
-                role: { type: string, enum: [admin, viewer] }
+                role: { type: string, enum: [admin, developer, viewer] }
       responses:
         '200':
           description: Role changed
@@ -369,7 +370,7 @@ paths:
               type: object
               required: [role, all_services]
               properties:
-                role: { type: string, enum: [admin, viewer] }
+                role: { type: string, enum: [admin, developer, viewer] }
                 all_services:
                   type: boolean
                   description: Every service, present and future, plus the host-level routes.
@@ -388,9 +389,9 @@ paths:
               schema: { $ref: '#/components/schemas/User' }
         '400':
           description: >-
-            Invalid input: an unknown role (the reserved `developer`
-            role included), an unknown service, a missing
-            `all_services`, or a list sent with `all_services: true`.
+            Invalid input: an unknown role, an unknown service, a
+            missing `all_services`, or a list sent with
+            `all_services: true`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -739,6 +740,13 @@ paths:
       operationId: recordDeploy
       tags: [services]
       summary: Record a manually-run deploy
+      description: |
+        Adds an entry to the deploy history and writes a
+        `deploy_record` audit row under the caller. For an admin,
+        `actor` is required and names who the entry is attributed
+        to. For anyone else `actor` is ignored: the entry always
+        carries the caller's own username, so a record cannot be
+        filed in another name.
       parameters:
         - $ref: '#/components/parameters/ServicePath'
       requestBody:
@@ -747,10 +755,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [sha, actor, outcome]
+              required: [sha, outcome]
               properties:
                 sha: { type: string }
-                actor: { type: string }
+                actor:
+                  type: string
+                  description: >-
+                    Required for an admin. Ignored for every other
+                    role, which is always recorded as itself.
                 type:
                   type: string
                   enum: [cutover, rollback, manual, deploy]
@@ -778,6 +790,11 @@ paths:
       operationId: startCutover
       tags: [services]
       summary: Start an async blue-green cutover (202 + poll history)
+      description: |
+        Runs the cutover script configured on the service. The
+        caller chooses only the service and the target colour; the
+        script, its arguments and the service definition can be
+        changed by an admin alone. Audited under the caller.
       parameters:
         - $ref: '#/components/parameters/ServicePath'
       requestBody:
@@ -897,6 +914,10 @@ paths:
       operationId: createAlertRule
       tags: [alerts]
       summary: Create a metric alert rule
+      description: |
+        The service is `service_id` in the body; a caller limited
+        to a list of services gets 403 for any other. Writes an
+        `alert_rule_create` audit row under the caller.
       requestBody:
         required: true
         content:
@@ -922,6 +943,11 @@ paths:
       operationId: deleteAlertRule
       tags: [alerts]
       summary: Delete a metric alert rule
+      description: |
+        Writes an `alert_rule_delete` audit row under the caller,
+        against the service the rule belonged to. For a caller
+        limited to a list of services, a rule of another service
+        answers the same 404 as an id that does not exist.
       parameters:
         - name: id
           in: path
@@ -967,6 +993,14 @@ paths:
       operationId: markNotificationRead
       tags: [alerts]
       summary: Mark one notification read
+      description: |
+        The read flag is shared by every user. A call that changes
+        it writes a `notification_read` audit row under the caller.
+        For a caller limited to a list of services, a notification
+        of another service, or of no service, answers the same 404
+        as an id that does not exist. For an all-services caller an
+        unknown id, like an already-read notification, is a 204
+        that changes nothing.
       parameters:
         - name: id
           in: path
@@ -974,6 +1008,7 @@ paths:
           schema: { type: integer }
       responses:
         '204': { description: Marked read }
+        '404': { $ref: '#/components/responses/NotFound' }
   /notifications/read:
     post:
       x-touchgrass-capability: notifications.ack
@@ -981,6 +1016,12 @@ paths:
       operationId: markNotificationsRead
       tags: [alerts]
       summary: Mark every unread notification read (optionally one service)
+      description: |
+        Without `service_id`, a caller limited to a list of
+        services marks only the notifications of those services;
+        notifications of other services and of no service are left
+        unread. Writes one `notification_read` audit row per
+        service whose notifications were marked.
       parameters:
         - name: service_id
           in: query
@@ -1172,6 +1213,10 @@ paths:
       operationId: createIssueRule
       tags: [issues]
       summary: Create an issue alert rule
+      description: |
+        The service is `service_id` in the body; a caller limited
+        to a list of services gets 403 for any other. Writes an
+        `issue_rule_create` audit row under the caller.
       requestBody:
         required: true
         content:
@@ -1197,6 +1242,11 @@ paths:
       operationId: deleteIssueRule
       tags: [issues]
       summary: Delete an issue alert rule
+      description: |
+        Writes an `issue_rule_delete` audit row under the caller,
+        against the service the rule belonged to. For a caller
+        limited to a list of services, a rule of another service
+        answers the same 404 as an id that does not exist.
       parameters:
         - name: id
           in: path
@@ -2759,7 +2809,7 @@ components:
       properties:
         id: { type: integer }
         username: { type: string }
-        role: { type: string, enum: [admin, viewer] }
+        role: { type: string, enum: [admin, developer, viewer] }
         all_services:
           type: boolean
           description: True when the scope is every service. Always true for an admin.
@@ -2957,7 +3007,41 @@ components:
         id: { type: integer }
         service_id: { type: ['string', 'null'] }
         actor: { type: string }
-        action: { type: string, enum: [cutover, rollback, login, deploy, db_backup, db_restore, service_create, service_delete, user_create, user_update, user_delete] }
+        action:
+          type: string
+          enum:
+            - cutover
+            - rollback
+            - login
+            - deploy
+            - db_backup
+            - db_restore
+            - service_create
+            - service_delete
+            - user_create
+            - user_update
+            - user_delete
+            - container_approve
+            - container_ignore
+            - security_acknowledge
+            - security_resolve
+            - security_suppress
+            - security_policy_create
+            - security_policy_update
+            - security_policy_delete
+            - env.stage
+            - env.discard
+            - env.import
+            - env.reveal
+            - env.apply
+            - env.apply_failed
+            - env.rollback
+            - deploy_record
+            - alert_rule_create
+            - alert_rule_delete
+            - issue_rule_create
+            - issue_rule_delete
+            - notification_read
         result: { type: string, enum: [success, failure] }
         detail: { type: string }
         created_at: { type: string, format: date-time }

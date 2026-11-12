@@ -44,8 +44,9 @@ for `admin`, writes it to `initial-admin-password` beside the database
 deleted once you have. Lost a password? `touchgrass users
 reset-password` on the host issues a new one-time password. The
 dashboard then lists services from `GET /api/services`. Hand other
-devs read-only `viewer` accounts from the Users screen, limited to the
-services they work on if you like (see `docs-site/access.md`).
+devs read-only `viewer` accounts from the Users screen, or `developer`
+accounts that can also deploy, limited to the services they work on if
+you like (see `docs-site/access.md`).
 
 Or run with Docker Compose (binds `127.0.0.1:8080` on the host):
 

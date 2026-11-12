@@ -11,6 +11,7 @@ import (
 
 	nethttp "net/http"
 
+	"github.com/oralecarlangelo/touchgrass/internal/authz"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
@@ -31,10 +32,12 @@ type envImportRequest struct {
 	Replace bool `json:"replace"`
 }
 
-// envApplyRequest is the apply body; confirm must equal the service name.
+// envApplyRequest is the apply body; confirm must equal the service
+// name. RenderedSHA256 is the optional digest the caller reviewed.
 type envApplyRequest struct {
-	Confirm string `json:"confirm"`
-	Summary string `json:"summary"`
+	Confirm        string `json:"confirm"`
+	Summary        string `json:"summary"`
+	RenderedSHA256 string `json:"rendered_sha256"`
 }
 
 // envRollbackRequest is the rollback body.
@@ -45,6 +48,22 @@ type envRollbackRequest struct {
 // envRunResponse reports an accepted run.
 type envRunResponse struct {
 	RunID string `json:"run_id"`
+}
+
+// mayApplyEnv reports whether the caller holds env.apply for the
+// service in the path. Two things follow from it. Such a caller stages
+// as a reviewer (whoever may apply decides what the service runs
+// anyway); everyone else who reaches a stage route is a proposer, held
+// to the non-secret rules. And only such a caller is shown the digest
+// of a rendered env file: with every other value known, the digest
+// confirms a guess at a short secret offline.
+func mayApplyEnv(r *nethttp.Request) bool {
+	return subjectFrom(r).Can(authz.EnvApply, r.PathValue("id"))
+}
+
+// envActor says who is changing env and with what authority.
+func envActor(r *nethttp.Request) service.EnvActor {
+	return service.EnvActor{Name: requestActor(r), Reviewer: mayApplyEnv(r)}
 }
 
 // handleEnv returns the env state of a service.
@@ -66,14 +85,13 @@ func (s *Server) handleEnvPut(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	entry, err := s.env.Stage(
-		r.Context(),
-		r.PathValue("id"),
-		r.PathValue("key"),
-		body.Value,
-		body.IsSecret,
-		requestActor(r),
-	)
+	entry, err := s.env.Stage(r.Context(), service.EnvChange{
+		ServiceID: r.PathValue("id"),
+		Key:       r.PathValue("key"),
+		Value:     body.Value,
+		IsSecret:  body.IsSecret,
+		By:        envActor(r),
+	})
 	if err != nil {
 		writeEnvError(w, s.logger, err, "failed to stage env entry")
 
@@ -85,7 +103,7 @@ func (s *Server) handleEnvPut(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 // handleEnvDelete stages the removal of one entry.
 func (s *Server) handleEnvDelete(w nethttp.ResponseWriter, r *nethttp.Request) {
-	if err := s.env.Remove(r.Context(), r.PathValue("id"), r.PathValue("key"), requestActor(r)); err != nil {
+	if err := s.env.Remove(r.Context(), r.PathValue("id"), r.PathValue("key"), envActor(r)); err != nil {
 		writeEnvError(w, s.logger, err, "failed to stage env removal")
 
 		return
@@ -108,7 +126,7 @@ func (s *Server) handleEnvReveal(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 // handleEnvDiff compares pending and applied keys.
 func (s *Server) handleEnvDiff(w nethttp.ResponseWriter, r *nethttp.Request) {
-	diff, err := s.env.Diff(r.Context(), r.PathValue("id"))
+	diff, err := s.env.Diff(r.Context(), r.PathValue("id"), mayApplyEnv(r))
 	if err != nil {
 		writeEnvError(w, s.logger, err, "failed to diff env")
 
@@ -153,13 +171,13 @@ func (s *Server) handleEnvApply(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	runID, err := s.env.Apply(
-		context.WithoutCancel(r.Context()),
-		r.PathValue("id"),
-		body.Confirm,
-		body.Summary,
-		requestActor(r),
-	)
+	runID, err := s.env.Apply(context.WithoutCancel(r.Context()), service.EnvApplyRequest{
+		ServiceID:      r.PathValue("id"),
+		Confirm:        body.Confirm,
+		Summary:        body.Summary,
+		ReviewedSHA256: body.RenderedSHA256,
+		Actor:          requestActor(r),
+	})
 	if err != nil {
 		writeEnvError(w, s.logger, err, "failed to start env apply")
 
@@ -171,7 +189,7 @@ func (s *Server) handleEnvApply(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 // handleEnvRun returns one run with its step log.
 func (s *Server) handleEnvRun(w nethttp.ResponseWriter, r *nethttp.Request) {
-	run, err := s.env.Run(r.Context(), r.PathValue("id"), r.PathValue("run_id"))
+	run, err := s.env.Run(r.Context(), r.PathValue("id"), r.PathValue("run_id"), mayApplyEnv(r))
 	if err != nil {
 		writeEnvError(w, s.logger, err, "failed to load env run")
 
@@ -183,7 +201,7 @@ func (s *Server) handleEnvRun(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 // handleEnvRevisions lists revisions newest first.
 func (s *Server) handleEnvRevisions(w nethttp.ResponseWriter, r *nethttp.Request) {
-	revisions, err := s.env.Revisions(r.Context(), r.PathValue("id"))
+	revisions, err := s.env.Revisions(r.Context(), r.PathValue("id"), mayApplyEnv(r))
 	if err != nil {
 		writeEnvError(w, s.logger, err, "failed to load env revisions")
 
@@ -291,6 +309,17 @@ func writeEnvError(w nethttp.ResponseWriter, logger *slog.Logger, err error, mes
 		writeError(w, logger, err, "no pending env changes to apply", "env_nothing_to_apply", nethttp.StatusConflict)
 	case errors.Is(err, service.ErrEnvConfirmationMismatch):
 		writeError(w, logger, err, "confirmation must equal the service name", "confirmation_mismatch", nethttp.StatusBadRequest)
+	case errors.Is(err, service.ErrEnvSecretRestricted):
+		// One fixed answer for every attempt on a secret: the wrapped
+		// error names the key and is not sent.
+		writeError(w, logger, service.ErrEnvSecretRestricted, "secret keys can only be changed by an admin",
+			"env_secret_restricted", nethttp.StatusForbidden)
+	case errors.Is(err, service.ErrEnvPendingByOther):
+		writeError(w, logger, err, "this key has a pending change by someone else; an admin can replace it",
+			"env_pending_by_other", nethttp.StatusConflict)
+	case errors.Is(err, service.ErrEnvPendingChanged):
+		writeError(w, logger, err, "pending changes differ from the ones reviewed; review them again",
+			"env_pending_changed", nethttp.StatusConflict)
 	case errors.Is(err, service.ErrEnvRevealRateLimited):
 		w.Header().Set("Retry-After", revealRetryAfter)
 		writeError(w, logger, err, "too many reveals, try again later", "env_reveal_rate_limited", nethttp.StatusTooManyRequests)

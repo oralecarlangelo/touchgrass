@@ -1,4 +1,5 @@
 import type { SessionInfo } from './api.ts';
+import type { EnvAccess } from './env.ts';
 import type { ViewId } from './views.ts';
 
 // Capability names mirror internal/authz. The server decides what a
@@ -56,6 +57,18 @@ export function makeCan(session: SessionInfo | null): Can {
     }
 
     return allServices || services.has(serviceId);
+  };
+}
+
+// envAccessFor reads what the user may do with one service's env.
+export function envAccessFor(can: Can, serviceId: string, username: string): EnvAccess {
+  return {
+    stage: can('env.stage', serviceId),
+    apply: can('env.apply', serviceId),
+    discard: can('env.discard', serviceId),
+    import: can('env.import', serviceId),
+    reveal: can('env.reveal', serviceId),
+    username,
   };
 }
 

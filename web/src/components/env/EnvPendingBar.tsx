@@ -1,18 +1,24 @@
 import { Button } from '@/components/ui/button';
 import { stateTextClass } from './EnvStateChip.tsx';
-import { describePending, type PendingCounts } from '@/lib/env.ts';
+import { describeAuthors, describePending, type PendingAuthor, type PendingCounts } from '@/lib/env.ts';
 
 // EnvPendingBar is the sticky footer that appears while staged changes
-// exist. It reads the same colours as the row gutters.
+// exist. It reads the same colours as the row gutters, names who staged
+// the changes, and offers Apply only to a user who may apply: everyone
+// else sees that the changes wait for an admin.
 export default function EnvPendingBar({
   counts,
-  isAdmin,
+  authors,
+  canApply,
+  canDiscard,
   disabled,
   onReview,
   onDiscard,
 }: {
   counts: PendingCounts;
-  isAdmin: boolean;
+  authors: PendingAuthor[];
+  canApply: boolean;
+  canDiscard: boolean;
   disabled: boolean;
   onReview: () => void;
   onDiscard: () => void;
@@ -44,18 +50,23 @@ export default function EnvPendingBar({
               {part.value} {part.label}
             </span>
           ))}
+        {authors.length > 0 && (
+          <span className="text-muted-foreground text-xs">Staged by {describeAuthors(authors)}</span>
+        )}
       </div>
-      {isAdmin ? (
+      {canApply ? (
         <div className="ml-auto flex gap-2">
-          <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={onDiscard}>
-            Discard
-          </Button>
+          {canDiscard && (
+            <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={onDiscard}>
+              Discard
+            </Button>
+          )}
           <Button type="button" size="sm" disabled={disabled} onClick={onReview}>
             Review &amp; apply
           </Button>
         </div>
       ) : (
-        <span className="text-muted-foreground ml-auto text-xs">An admin applies these.</span>
+        <span className="text-muted-foreground ml-auto text-xs font-medium">Awaiting an admin</span>
       )}
     </div>
   );

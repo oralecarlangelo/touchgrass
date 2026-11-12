@@ -5,6 +5,9 @@
 - Amends: ADR-0014 (its "reserved" third role is now defined; "a scoped
   account is read-only" no longer holds for a developer)
 - Supersedes in part: ADR-0010 ("no operator/deployer role")
+- Amended by: ADR-0016, which adds `env.stage` to the role as a right to
+  propose non-secret env changes. Where this record says the role holds
+  no env write, ADR-0016 is current.
 
 ## Context
 

@@ -60,6 +60,35 @@ describe('EnvReviewDialog', () => {
     expect(html).toContain('Shop API');
   });
 
+  it('names who staged each key and warns when someone else proposed', () => {
+    const base = {
+      serviceName: 'Shop API',
+      diff,
+      diffError: null,
+      summary: '',
+      confirm: '',
+      onSummaryChange: noop,
+      onConfirmChange: noop,
+      onSubmitAttempt: noop,
+      busy: false,
+      error: null,
+    };
+    const authors = { SMTP_HOST: 'ben', GCASH_KEY: 'ana', OLD_FLAG: 'cy' };
+    const reviewed = renderToStaticMarkup(<EnvReviewBody {...base} authors={authors} reviewer="ana" />);
+
+    expect(reviewed).toContain('title="Staged by ben"');
+    expect(reviewed).toContain('title="Staged by ana"');
+    expect(reviewed).toContain('title="Staged by cy"');
+    expect(reviewed).toContain('Proposed by ben, cy');
+    expect(reviewed).toContain('Applying is the review');
+
+    const own = renderToStaticMarkup(
+      <EnvReviewBody {...base} authors={{ SMTP_HOST: 'ana', GCASH_KEY: 'ana', OLD_FLAG: 'ana' }} reviewer="ana" />,
+    );
+    expect(own).toContain('title="Staged by ana"');
+    expect(own).not.toContain('Proposed by');
+  });
+
   it('shows a diff loading skeleton, a diff error and a server error', () => {
     const base = {
       serviceName: 'Shop API',

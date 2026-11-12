@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { stateTextClass } from './EnvStateChip.tsx';
 import type { EnvDiff, EnvEntry } from '@/lib/api.ts';
-import { applyStepCopy, applyStepOrder, shortSha, suggestSummary } from '@/lib/env.ts';
+import { applyStepCopy, applyStepOrder, pendingAuthorByKey, shortSha, suggestSummary } from '@/lib/env.ts';
 
 export function confirmationMatches(input: string, serviceName: string): boolean {
   return input.trim() === serviceName.trim() && serviceName.trim() !== '';
@@ -26,10 +26,12 @@ function DiffColumn({
   title,
   keys,
   state,
+  authors,
 }: {
   title: string;
   keys: string[];
   state: 'added' | 'changed' | 'removed';
+  authors: Record<string, string>;
 }) {
   return (
     <div className="min-w-0">
@@ -41,11 +43,15 @@ function DiffColumn({
       ) : (
         <ul className="mt-1 space-y-0.5" aria-label={`${title} keys`}>
           {keys.map((key) => (
-            <li
-              key={key}
-              className={`truncate font-mono text-xs ${state === 'removed' ? 'text-muted-foreground line-through' : ''}`}
-            >
-              {key}
+            <li key={key} className="flex min-w-0 items-baseline gap-1.5 text-xs">
+              <span className={`truncate font-mono ${state === 'removed' ? 'text-muted-foreground line-through' : ''}`}>
+                {key}
+              </span>
+              {(authors[key] ?? '') !== '' && (
+                <span className="text-muted-foreground shrink-0" title={`Staged by ${authors[key]}`}>
+                  by {authors[key]}
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -60,6 +66,8 @@ export function EnvReviewBody({
   serviceName,
   diff,
   diffError,
+  authors = {},
+  reviewer = '',
   summary,
   confirm,
   onSummaryChange,
@@ -71,6 +79,9 @@ export function EnvReviewBody({
   serviceName: string;
   diff: EnvDiff | null;
   diffError: string | null;
+  // Who staged each pending key, and who is reviewing.
+  authors?: Record<string, string>;
+  reviewer?: string;
   summary: string;
   confirm: string;
   onSummaryChange: (value: string) => void;
@@ -80,6 +91,10 @@ export function EnvReviewBody({
   error: string | null;
 }) {
   const ready = confirmationMatches(confirm, serviceName);
+  const pendingKeys = diff === null ? [] : [...diff.added, ...diff.changed, ...diff.removed];
+  const proposers = [
+    ...new Set(pendingKeys.map((key) => authors[key] ?? '').filter((name) => name !== '' && name !== reviewer)),
+  ].sort();
 
   return (
     <div className="space-y-4">
@@ -98,10 +113,20 @@ export function EnvReviewBody({
       ) : (
         <>
           <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-3">
-            <DiffColumn title="Added" keys={diff.added} state="added" />
-            <DiffColumn title="Changed" keys={diff.changed} state="changed" />
-            <DiffColumn title="Removed" keys={diff.removed} state="removed" />
+            <DiffColumn title="Added" keys={diff.added} state="added" authors={authors} />
+            <DiffColumn title="Changed" keys={diff.changed} state="changed" authors={authors} />
+            <DiffColumn title="Removed" keys={diff.removed} state="removed" authors={authors} />
           </div>
+          {proposers.length > 0 && (
+            <Alert>
+              <TriangleAlert aria-hidden />
+              <AlertTitle>Proposed by {proposers.join(', ')}</AlertTitle>
+              <AlertDescription>
+                Applying is the review. An env value can change what the service runs or where it
+                connects, so check each value in the table before you apply.
+              </AlertDescription>
+            </Alert>
+          )}
           {diff.rendered_sha256 !== '' && (
             <p className="text-muted-foreground text-xs">
               Rendered file <span className="font-mono">{shortSha(diff.rendered_sha256)}</span>
@@ -207,6 +232,7 @@ export default function EnvReviewDialog({
   entries,
   diff,
   diffError,
+  reviewer,
   busy,
   error,
   onClose,
@@ -217,10 +243,11 @@ export default function EnvReviewDialog({
   entries: EnvEntry[];
   diff: EnvDiff | null;
   diffError: string | null;
+  reviewer: string;
   busy: boolean;
   error: string | null;
   onClose: () => void;
-  onApply: (input: { confirm: string; summary: string }) => void;
+  onApply: (input: { confirm: string; summary: string; rendered_sha256?: string }) => void;
 }) {
   const [summary, setSummary] = useState('');
   const [summaryTouched, setSummaryTouched] = useState(false);
@@ -241,8 +268,14 @@ export default function EnvReviewDialog({
 
   const ready = confirmationMatches(confirm, serviceName) && diff !== null && !busy;
   const submit = () => {
-    if (ready) {
-      onApply({ confirm: confirm.trim(), summary: summary.trim() });
+    if (ready && diff !== null) {
+      // Naming the reviewed digest makes the server refuse the apply if
+      // anything was staged after this dialog loaded its diff.
+      onApply({
+        confirm: confirm.trim(),
+        summary: summary.trim(),
+        ...(diff.rendered_sha256 !== '' ? { rendered_sha256: diff.rendered_sha256 } : {}),
+      });
     }
   };
 
@@ -259,6 +292,8 @@ export default function EnvReviewDialog({
           serviceName={serviceName}
           diff={diff}
           diffError={diffError}
+          authors={pendingAuthorByKey(entries)}
+          reviewer={reviewer}
           summary={summary}
           confirm={confirm}
           onSummaryChange={(value) => {

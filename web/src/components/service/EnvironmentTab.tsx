@@ -63,15 +63,20 @@ import {
 } from '@/lib/api.ts';
 import {
   defaultEnvFilters,
+  entryLockReason,
   envShortcut,
   filterEnvEntries,
   initialRevealState,
+  isProposer,
   missingRequiredKeys,
+  pendingAuthors,
   pendingCounts,
   revealReducer,
   sortEnvEntries,
+  secretLockReason,
   undoPlan,
   type ApplyRunState,
+  type EnvAccess,
   type EnvFilters,
   type EnvSort,
   type RevealState,
@@ -113,7 +118,11 @@ function FilterChip({
 
 export interface EnvironmentTabViewProps {
   service: ServiceView;
-  isAdmin: boolean;
+  // What this user may do here. Someone who may stage but not apply is
+  // a proposer: they see an editable table for plain keys, "Awaiting an
+  // admin" where an admin sees Apply, and no discard, import, reveal or
+  // rollback.
+  access: EnvAccess;
   overview: EnvOverview | null;
   loading: boolean;
   error: string | null;
@@ -151,10 +160,12 @@ export interface EnvironmentTabViewProps {
 // EnvironmentTabView renders every state of the tab from props. The
 // container below owns the data; this split keeps the states testable.
 export function EnvironmentTabView(props: EnvironmentTabViewProps) {
-  const { service, isAdmin, overview, loading, error, run, filters, sort } = props;
+  const { service, access, overview, loading, error, run, filters, sort } = props;
+  const isAdmin = access.apply;
+  const proposer = isProposer(access);
   const runRunning = run !== null && run.status === 'running';
   const applyInProgress = runRunning || (overview?.apply_in_progress ?? false);
-  const readOnly = !isAdmin || applyInProgress;
+  const readOnly = !access.stage || applyInProgress;
 
   const entries = overview?.entries ?? [];
   const visible = useMemo(
@@ -162,6 +173,16 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
     [entries, filters, sort],
   );
   const counts = useMemo(() => pendingCounts(entries), [entries]);
+  const authors = useMemo(() => pendingAuthors(entries), [entries]);
+  const lockedReason = useMemo(() => {
+    const byKey = new Map(entries.map((entry) => [entry.key, entry]));
+
+    return (key: string): string | null => {
+      const entry = byKey.get(key);
+
+      return entry === undefined ? null : entryLockReason(entry, access);
+    };
+  }, [entries, access]);
   const missing = useMemo(
     () => missingRequiredKeys(overview?.last_validation ?? null, entries),
     [overview, entries],
@@ -235,7 +256,7 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
             <History aria-hidden />
             Revisions
           </Button>
-          {isAdmin && entries.length > 0 && (
+          {access.import && entries.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button type="button" variant="outline" size="icon-sm" aria-label="More actions">
@@ -282,6 +303,17 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
         </Alert>
       )}
 
+      {proposer && (
+        <Alert>
+          <Lock aria-hidden />
+          <AlertTitle>You can propose changes</AlertTitle>
+          <AlertDescription>
+            Add a key, or change or remove a plain one. An admin reviews and applies what you stage.
+            Secret keys are admin only.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {error !== null && (
         <Alert variant="destructive">
           <AlertTitle>Couldn't refresh</AlertTitle>
@@ -297,7 +329,7 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
       {entries.length === 0 ? (
         <EnvNoEntries
           target={overview.target}
-          isAdmin={isAdmin}
+          isAdmin={access.import}
           busy={props.importBusy}
           error={props.importError}
           result={props.importResult}
@@ -309,7 +341,7 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
             validation={overview.last_validation}
             missingKeys={missing}
             requiredCount={requiredCount}
-            isAdmin={isAdmin && !readOnly}
+            isAdmin={access.stage && !readOnly}
             onAddKey={props.onAddKey}
           />
 
@@ -377,7 +409,7 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
               </Select>
             </div>
 
-            {isAdmin && (
+            {access.stage && (
               <EnvAddRow
                 serviceId={service.id}
                 disabled={readOnly}
@@ -385,6 +417,8 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
                 serverError={props.addError}
                 prefillKey={props.prefillKey}
                 existingKeys={existingKeys}
+                allowSecret={access.apply}
+                lockedReason={lockedReason}
                 onStage={props.onStage}
                 onPaste={props.onPaste}
               />
@@ -393,7 +427,7 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
             <CardContent className="px-0 py-0">
               <EnvEntriesTable
                 entries={visible}
-                isAdmin={isAdmin}
+                access={access}
                 readOnly={readOnly}
                 busyKey={props.busyKey}
                 reveal={props.reveal}
@@ -421,7 +455,9 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
 
       <EnvPendingBar
         counts={counts}
-        isAdmin={isAdmin}
+        authors={authors}
+        canApply={access.apply}
+        canDiscard={access.discard}
         disabled={applyInProgress || props.busyKey !== null}
         onReview={props.onReview}
         onDiscard={props.onDiscard}
@@ -432,11 +468,11 @@ export function EnvironmentTabView(props: EnvironmentTabViewProps) {
 
 export default function EnvironmentTab({
   service,
-  isAdmin,
+  access,
   onUnauthorized,
 }: {
   service: ServiceView;
-  isAdmin: boolean;
+  access: EnvAccess;
   onUnauthorized: () => void;
 }) {
   const [overview, setOverview] = useState<EnvOverview | null>(null);
@@ -597,12 +633,24 @@ export default function EnvironmentTab({
         onUnauthorized();
         return true;
       }
+
+      const code = apiErrorCode(err);
+
+      // The proposer rules: say which one, and show what is staged now.
+      if (code === 'env_secret_restricted') {
+        toast.error(secretLockReason);
+        void load();
+        return true;
+      }
+      if (code === 'env_pending_by_other') {
+        toast.error('Someone else has a pending change on this key. Only they or an admin can change it.');
+        void load();
+        return true;
+      }
       if (err instanceof ApiError && err.status === 403) {
         setViewerNotice(true);
         return true;
       }
-
-      const code = apiErrorCode(err);
 
       if (code === 'env_apply_in_progress') {
         toast.message('An apply is already running; showing it.');
@@ -790,7 +838,7 @@ export default function EnvironmentTab({
     }
   }
 
-  async function handleApply(input: { confirm: string; summary: string }): Promise<void> {
+  async function handleApply(input: { confirm: string; summary: string; rendered_sha256?: string }): Promise<void> {
     if (applyBusy) {
       return;
     }
@@ -815,6 +863,12 @@ export default function EnvironmentTab({
       } else if (code === 'env_apply_in_progress') {
         setReviewOpen(false);
         handleFailure(err);
+      } else if (code === 'env_pending_changed') {
+        // Something was staged after the diff loaded. Show the current
+        // set and make the admin review it before applying.
+        setApplyError('The pending changes changed while you were reviewing. The list is now current: check it, then apply again.');
+        void load();
+        void fetchEnvDiff(service.id).then(setDiff, () => setDiff(null));
       } else if (!handleFailure(err)) {
         setApplyError(errorMessage(err));
       }
@@ -938,7 +992,7 @@ export default function EnvironmentTab({
     <>
       <EnvironmentTabView
         service={service}
-        isAdmin={isAdmin}
+        access={access}
         overview={overview}
         loading={loading}
         error={error}
@@ -998,6 +1052,7 @@ export default function EnvironmentTab({
         entries={overview?.entries ?? []}
         diff={diff}
         diffError={diffError}
+        reviewer={access.username}
         busy={applyBusy}
         error={applyError}
         onClose={() => setReviewOpen(false)}
@@ -1007,7 +1062,7 @@ export default function EnvironmentTab({
       <EnvRevisionsSheet
         open={revisionsOpen}
         serviceName={service.name}
-        isAdmin={isAdmin}
+        isAdmin={access.apply}
         disabled={runRunning || (overview?.apply_in_progress ?? false)}
         revisions={revisions}
         error={revisionsError}

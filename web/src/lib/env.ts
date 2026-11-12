@@ -308,6 +308,105 @@ export function suggestSummary(diff: EnvDiff, entries: EnvEntry[] = []): string 
   return parts.join('; ');
 }
 
+// --- Who may do what on the Environment tab -------------------------------
+
+// EnvAccess is what the signed-in user may do with one service's env.
+// The server enforces every part of it; the tab only uses it to hide
+// what would be refused. A user who may stage but not apply is a
+// proposer: new keys and non-secret keys only, an admin applies.
+export interface EnvAccess {
+  stage: boolean;
+  apply: boolean;
+  discard: boolean;
+  import: boolean;
+  reveal: boolean;
+  username: string;
+}
+
+export const readOnlyEnvAccess: EnvAccess = {
+  stage: false,
+  apply: false,
+  discard: false,
+  import: false,
+  reveal: false,
+  username: '',
+};
+
+export function fullEnvAccess(username: string): EnvAccess {
+  return { stage: true, apply: true, discard: true, import: true, reveal: true, username };
+}
+
+// isProposer reports a user who stages for an admin to apply.
+export function isProposer(access: EnvAccess): boolean {
+  return access.stage && !access.apply;
+}
+
+export const secretLockReason = 'Secret keys can only be changed by an admin.';
+
+// entryLockReason says why this user cannot change an entry, or null
+// when they can. It mirrors the server's proposer rules: no secret key,
+// and no key that carries someone else's pending change.
+export function entryLockReason(entry: EnvEntry, access: EnvAccess): string | null {
+  if (!access.stage) {
+    return 'Your account can read this environment but not change it.';
+  }
+
+  if (access.apply) {
+    return null;
+  }
+
+  if (entry.is_secret) {
+    return secretLockReason;
+  }
+
+  if (entry.state !== 'applied' && entry.updated_by !== access.username) {
+    return `${entry.updated_by === '' ? 'Someone else' : entry.updated_by} staged a change to this key. Only they or an admin can change it.`;
+  }
+
+  return null;
+}
+
+export interface PendingAuthor {
+  name: string;
+  count: number;
+}
+
+// pendingAuthors lists who staged the pending changes, most changes first.
+export function pendingAuthors(entries: EnvEntry[]): PendingAuthor[] {
+  const counts = new Map<string, number>();
+
+  for (const entry of entries) {
+    if (entry.state === 'applied') {
+      continue;
+    }
+
+    const name = entry.updated_by === '' ? 'unknown' : entry.updated_by;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+export function describeAuthors(authors: PendingAuthor[]): string {
+  return authors.map((author) => (authors.length > 1 ? `${author.name} (${author.count})` : author.name)).join(', ');
+}
+
+// pendingAuthorByKey maps each pending key to who staged it, for the
+// review dialog.
+export function pendingAuthorByKey(entries: EnvEntry[]): Record<string, string> {
+  const authors: Record<string, string> = {};
+
+  for (const entry of entries) {
+    if (entry.state !== 'applied') {
+      authors[entry.key] = entry.updated_by;
+    }
+  }
+
+  return authors;
+}
+
 // --- Undo of a staged change ----------------------------------------------
 
 export type UndoPlan =

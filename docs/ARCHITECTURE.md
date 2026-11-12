@@ -218,7 +218,8 @@ workflows for investigation.
 
 - UI/API: managed users with a role and a scope (ADR-0014). The
   role decides what a user may do: `admin` (full power), `developer`
-  (read, plus deploy and alert management; ADR-0015) or `viewer`
+  (read, plus deploy, alert management and env proposals; ADR-0015,
+  ADR-0016) or `viewer`
   (read-only; every mutating route answers 403). The scope decides
   on which services: all of them, or a list in `user_services`.
   `internal/authz` holds the one role-to-capability table; every
@@ -317,4 +318,4 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
   secrets manager are explicitly out — don't half-build them. The env
   pillar (ADR-0012) manages one env file per service and nothing more.
   Three fixed roles plus a per-user service scope (ADR-0010, ADR-0014,
-  ADR-0015) are the whole access model.
+  ADR-0015, ADR-0016) are the whole access model.

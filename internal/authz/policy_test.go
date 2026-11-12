@@ -251,13 +251,15 @@ func TestViewerHoldsExactlyWhatItHeldBeforeDeveloper(t *testing.T) {
 	}
 }
 
-// A developer is a viewer plus four service-scoped operations, and
-// nothing else: no env write, no keys, no fleet-level mutation.
+// A developer is a viewer plus five service-scoped operations, and
+// nothing else: no env apply, discard, import or reveal, no keys, no
+// fleet-level mutation. env.stage opens the stage routes only; the
+// proposer rules behind them are tested in internal/service.
 func TestDeveloperHoldsViewerReadsPlusOperations(t *testing.T) {
 	t.Parallel()
 
 	operations := []authz.Capability{
-		authz.DeployTrigger, authz.DeployRecord, authz.AlertsManage, authz.NotificationsAck,
+		authz.DeployTrigger, authz.DeployRecord, authz.AlertsManage, authz.NotificationsAck, authz.EnvStage,
 	}
 
 	for _, capability := range authz.Capabilities() {
@@ -287,7 +289,7 @@ func TestDeveloperHoldsViewerReadsPlusOperations(t *testing.T) {
 	everywhere := authz.Subject{Role: model.RoleDeveloper, AllServices: true, Services: []string{}}
 
 	for _, capability := range []authz.Capability{
-		authz.EnvStage, authz.EnvDiscard, authz.EnvImport, authz.EnvApply, authz.EnvReveal, authz.KeysManage,
+		authz.EnvDiscard, authz.EnvImport, authz.EnvApply, authz.EnvReveal, authz.KeysManage,
 		authz.HostManage, authz.SecurityManage, authz.DatabasesBackup, authz.DatabasesRestore,
 		authz.ServicesManage, authz.UsersManage,
 	} {

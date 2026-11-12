@@ -47,7 +47,7 @@ func TestEnvApplySuccess(t *testing.T) {
 	requireEqual(t, "validation ok", view.LastValidation.OK, true)
 	requireEqual(t, "apply in progress", view.ApplyInProgress, false)
 
-	revisions, err := fixture.env.Revisions(context.Background(), testEnvServiceID)
+	revisions, err := fixture.env.Revisions(context.Background(), testEnvServiceID, true)
 	requireNoError(t, err, "Revisions()")
 	requireEqual(t, "revision count", len(revisions), 1)
 	requireEqual(t, "revision applied", revisions[0].Applied, true)
@@ -231,15 +231,15 @@ func TestEnvApplyGuards(t *testing.T) {
 	fixture := newEnvFixture(t, healthyProber())
 	ctx := context.Background()
 
-	_, err := fixture.env.Apply(ctx, testEnvServiceID, testEnvServiceID, "", testEnvActor)
+	_, err := fixture.env.Apply(ctx, applyRequest(testEnvServiceID, ""))
 	requireIs(t, "Apply(no pending)", err, ErrEnvNothingToApply)
 
 	fixture.stage(t, "A", "1", false)
 
-	_, err = fixture.env.Apply(ctx, testEnvServiceID, "wrong", "", testEnvActor)
+	_, err = fixture.env.Apply(ctx, applyRequest("wrong", ""))
 	requireIs(t, "Apply(wrong confirm)", err, ErrEnvConfirmationMismatch)
 
-	_, err = fixture.env.Apply(ctx, "tn-api", "tn-api", "", testEnvActor)
+	_, err = fixture.env.Apply(ctx, EnvApplyRequest{ServiceID: testServiceAPI, Confirm: testServiceAPI, Actor: testEnvActor})
 	requireIs(t, "Apply(unconfigured)", err, ErrEnvNotConfigured)
 }
 
@@ -261,11 +261,11 @@ func TestEnvApplyInProgressLock(t *testing.T) {
 		}
 	}
 
-	runID, err := fixture.env.Apply(ctx, testEnvServiceID, testEnvServiceID, "held", testEnvActor)
+	runID, err := fixture.env.Apply(ctx, applyRequest(testEnvServiceID, "held"))
 	requireNoError(t, err, "Apply()")
 	requireEqual(t, "Active() during run", fixture.env.Active(testEnvServiceID), true)
 
-	_, err = fixture.env.Apply(ctx, testEnvServiceID, testEnvServiceID, "", testEnvActor)
+	_, err = fixture.env.Apply(ctx, applyRequest(testEnvServiceID, ""))
 	requireIs(t, "concurrent Apply()", err, ErrEnvApplyInProgress)
 
 	_, err = fixture.env.Rollback(ctx, testEnvServiceID, 1, testEnvServiceID, testEnvActor)
@@ -274,7 +274,7 @@ func TestEnvApplyInProgressLock(t *testing.T) {
 	requireEqual(t, "View() in progress", held.ApplyInProgress, true)
 	requireEqual(t, "View() active run id", held.ActiveRunID, runID)
 
-	running, err := fixture.env.Run(ctx, testEnvServiceID, runID)
+	running, err := fixture.env.Run(ctx, testEnvServiceID, runID, true)
 	requireNoError(t, err, "Run()")
 	requireEqual(t, "run state while held", running.State, model.EnvRunRunning)
 
@@ -282,7 +282,7 @@ func TestEnvApplyInProgressLock(t *testing.T) {
 	fixture.await(t, runID)
 	requireEqual(t, "Active() after run", fixture.env.Active(testEnvServiceID), false)
 
-	_, err = fixture.env.Run(ctx, testEnvServiceID, "nope")
+	_, err = fixture.env.Run(ctx, testEnvServiceID, "nope", true)
 	requireIs(t, "Run(unknown)", err, store.ErrEnvRunNotFound)
 }
 
@@ -330,7 +330,7 @@ func TestEnvRollbackStagesSnapshot(t *testing.T) {
 func checkRollbackRevisions(t *testing.T, fixture *envFixture) {
 	t.Helper()
 
-	revisions, err := fixture.env.Revisions(context.Background(), testEnvServiceID)
+	revisions, err := fixture.env.Revisions(context.Background(), testEnvServiceID, true)
 	requireNoError(t, err, "Revisions()")
 	requireEqual(t, "revision count", len(revisions), 3)
 	requireEqual(t, "newest applied", revisions[0].Applied, true)
@@ -362,7 +362,7 @@ func TestEnvReconcileFailsOrphans(t *testing.T) {
 	}), "InsertRun()")
 	requireNoError(t, fixture.env.Reconcile(ctx), "Reconcile()")
 
-	run, err := fixture.env.Run(ctx, testEnvServiceID, "orphan")
+	run, err := fixture.env.Run(ctx, testEnvServiceID, "orphan", true)
 	requireNoError(t, err, "Run(orphan)")
 	requireEqual(t, "orphan state", run.State, model.EnvRunFailed)
 }

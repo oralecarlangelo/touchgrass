@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -53,8 +54,25 @@ type envRun struct {
 	swapped     bool
 }
 
+// EnvApplyRequest asks for the pending changes of one service to be
+// applied.
+type EnvApplyRequest struct {
+	ServiceID string
+	// Confirm must equal the service name.
+	Confirm string
+	Summary string
+	// ReviewedSHA256, when set, is the rendered-file digest the caller
+	// reviewed (from Diff). The apply is refused if the pending set has
+	// changed since, so a change staged after the review cannot ride
+	// along unseen.
+	ReviewedSHA256 string
+	Actor          string
+}
+
 // Apply validates the request and starts an async apply run.
-func (e *Env) Apply(ctx context.Context, serviceID, confirm, summary, actor string) (string, error) {
+func (e *Env) Apply(ctx context.Context, request EnvApplyRequest) (string, error) {
+	serviceID, confirm, summary, actor := request.ServiceID, request.Confirm, request.Summary, request.Actor
+
 	target, err := e.resolve(ctx, serviceID)
 	if err != nil {
 		return "", err
@@ -78,7 +96,32 @@ func (e *Env) Apply(ctx context.Context, serviceID, confirm, summary, actor stri
 		return "", fmt.Errorf("%w: type the service name to confirm", ErrEnvConfirmationMismatch)
 	}
 
+	if err := e.checkReviewed(entries, request.ReviewedSHA256); err != nil {
+		return "", err
+	}
+
 	return e.launch(ctx, target, entries, diff, summary, actor)
+}
+
+// checkReviewed refuses entries whose rendered file is not the one the
+// caller reviewed. An empty digest skips the check.
+func (e *Env) checkReviewed(entries []model.EnvEntry, reviewedSHA256 string) error {
+	if reviewedSHA256 == "" {
+		return nil
+	}
+
+	rendered, err := e.render(entries)
+	if err != nil {
+		return err
+	}
+
+	secret.Zero(rendered.data)
+
+	if rendered.sha != reviewedSHA256 {
+		return ErrEnvPendingChanged
+	}
+
+	return nil
 }
 
 // Rollback stages a revision's snapshot as pending changes and applies it.
@@ -319,13 +362,30 @@ func (e *Env) Done(runID string) <-chan struct{} {
 	return closed
 }
 
+// envStepHash matches the rendered-file digest that render steps
+// recorded before it was dropped from step messages.
+var envStepHash = regexp.MustCompile(` \(sha256 [0-9a-f]{64}\)`)
+
 // Run returns one run with its step log.
-func (e *Env) Run(ctx context.Context, serviceID, runID string) (model.EnvRun, error) {
+//
+// Runs recorded by earlier versions carry the rendered-file digest in
+// their render step. withHash keeps it; pass it only for a caller who
+// may apply.
+func (e *Env) Run(ctx context.Context, serviceID, runID string, withHash bool) (model.EnvRun, error) {
 	if _, err := e.services.Get(ctx, serviceID); err != nil {
 		return model.EnvRun{}, err
 	}
 
-	return e.store.GetRun(ctx, serviceID, runID)
+	run, err := e.store.GetRun(ctx, serviceID, runID)
+	if err != nil || withHash {
+		return run, err
+	}
+
+	for i := range run.Steps {
+		run.Steps[i].Message = envStepHash.ReplaceAllString(run.Steps[i].Message, "")
+	}
+
+	return run, nil
 }
 
 // AwaitRun blocks until the run finishes or ctx ends, then returns it.
@@ -336,7 +396,7 @@ func (e *Env) AwaitRun(ctx context.Context, serviceID, runID string) (model.EnvR
 	case <-e.Done(runID):
 	}
 
-	return e.Run(ctx, serviceID, runID)
+	return e.Run(ctx, serviceID, runID, true)
 }
 
 // Reconcile fails runs left running by a previous process. Call once at boot.
@@ -419,7 +479,7 @@ func (e *Env) renderAndValidate(ctx context.Context, run *envRun) error {
 	}
 
 	e.progress(ctx, run, model.EnvStepRender, model.EnvRunSucceeded,
-		fmt.Sprintf("rendered %d keys (sha256 %s)", len(rendered.keys), rendered.sha))
+		fmt.Sprintf("rendered %d keys", len(rendered.keys)))
 
 	if cfg.ValidateCmd == "" {
 		e.progress(ctx, run, model.EnvStepValidate, model.EnvRunSucceeded, "no validate_cmd configured; skipped")
@@ -842,8 +902,9 @@ func describeDiff(diff model.EnvDiff) string {
 }
 
 // Revisions lists revisions newest first with key-level diffs against
-// their predecessors.
-func (e *Env) Revisions(ctx context.Context, serviceID string) ([]model.EnvRevisionView, error) {
+// their predecessors. withHash adds each revision's rendered-file digest;
+// pass it only for a caller who may apply.
+func (e *Env) Revisions(ctx context.Context, serviceID string, withHash bool) ([]model.EnvRevisionView, error) {
 	if _, err := e.resolve(ctx, serviceID); err != nil {
 		return nil, err
 	}
@@ -879,11 +940,16 @@ func (e *Env) Revisions(ctx context.Context, serviceID string) ([]model.EnvRevis
 			return nil, err
 		}
 
-		views = append(views, model.EnvRevisionView{
+		view := model.EnvRevisionView{
 			ID: revision.ID, CreatedAt: revision.CreatedAt, CreatedBy: revision.CreatedBy, Summary: revision.Summary,
-			Added: diff.Added, Changed: diff.Changed, Removed: diff.Removed,
-			RenderedSHA256: revision.RenderedSHA256, Applied: revision.Applied,
-		})
+			Added: diff.Added, Changed: diff.Changed, Removed: diff.Removed, Applied: revision.Applied,
+		}
+
+		if withHash {
+			view.RenderedSHA256 = revision.RenderedSHA256
+		}
+
+		views = append(views, view)
 	}
 
 	return views, nil

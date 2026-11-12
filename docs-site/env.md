@@ -103,7 +103,8 @@ record pending adds, changes, and removals without touching the file.
 The env view shows each entry's state (`applied`, `added`, `changed`,
 `removed`) and `pending_count`; a changed non-secret entry also carries
 `applied_value` so the UI can offer undo. `GET …/env/diff` lists the
-pending keys and the sha256 of the file an apply would write. `POST
+pending keys and, for a user who may apply, `rendered_sha256`: the
+SHA-256 of the file an apply would write. `POST
 …/env/discard` drops everything pending; deleting a key that was only
 ever staged (`added`) drops the staged add outright.
 
@@ -117,6 +118,66 @@ present for them. An admin can call `POST …/entries/{KEY}/reveal` (10
 per minute per user; a 429 carries `Retry-After`); each call writes an
 `env.reveal` audit row naming the key.
 
+## Proposals from developers
+
+A user with the `developer` role can stage env changes for the services
+in their scope. They cannot apply them: an admin does. This lets the
+people who write a service prepare a config change without holding its
+secrets or the power to restart it with a new file.
+
+A developer may:
+
+- add a key that does not exist yet;
+- change or remove a key that is **not secret**;
+- replace or withdraw their own pending change (stage the applied value
+  again, or delete a key they added).
+
+A developer may not:
+
+- stage, remove or re-flag a key that is flagged secret, whether the
+  flag is on the applied entry or on a pending one;
+- set `is_secret` on anything, including a new key. A value a developer
+  stages is plain text that everyone with access to the service can
+  read, so secrets are added by an admin;
+- change a key that carries someone else's pending change;
+- apply, discard, import, reveal, or roll back a revision.
+
+| Request by a developer | Answer |
+| --- | --- |
+| `PUT …/entries/{KEY}` for a new or non-secret key, `is_secret` false or absent | 200, the entry with `state` and `updated_by` set to the developer |
+| `PUT` or `DELETE …/entries/{KEY}` on a secret key, or any `PUT` with `is_secret: true` | 403 `env_secret_restricted` |
+| `PUT` or `DELETE …/entries/{KEY}` on a key with another user's pending change | 409 `env_pending_by_other` |
+| apply, discard, import, reveal, revision rollback | 403 `forbidden` |
+
+The refusal for a secret key is the same response, and the same
+`env.stage` audit row (result `failure`, detail `refused secret KEY`),
+whatever value was sent. It is decided from the secret flags
+alone, before the value is looked at, so it cannot be used to test a
+guess against a secret.
+
+Readers who cannot apply (viewers and developers) do not receive
+`rendered_sha256` in the diff or in the revision list. With every other
+value known, that digest would let a short secret be confirmed offline.
+
+**Applying a proposal is a review step.** An env value can change what a
+service runs or where it connects: an interpreter option, a preload
+path, a database or webhook URL pointed somewhere else. The env view
+shows who staged each pending entry (`updated_by`); read each proposed
+value before you apply. To make sure you apply what you read, send the
+digest from the diff with the apply:
+
+```bash
+# GET  …/env/diff   -> {"added":["FEATURE_X"],…,"rendered_sha256":"9f2c…"}
+# POST …/env/apply     {"confirm":"api","summary":"enable feature x","rendered_sha256":"9f2c…"}
+```
+
+If anything was staged in between, the apply answers 409
+`env_pending_changed` and nothing runs. The console always sends it.
+
+Before you give a developer a service, check its secret flags. Import
+guesses them by name; a key that should be secret and is not flagged is
+readable by everyone in scope and changeable by a developer.
+
 ## Apply
 
 ```bash
@@ -124,7 +185,9 @@ touchgrass env apply --service api --summary "rotate DB password"
 # or POST /api/services/api/env/apply {"confirm": "api", "summary": "..."}
 ```
 
-`confirm` must equal the service name. The run returns `202 {run_id}`
+`confirm` must equal the service name. An optional `rendered_sha256`
+(from `GET …/env/diff`) makes the apply refuse with 409
+`env_pending_changed` if the pending set changed after you read it. The run returns `202 {run_id}`
 and then:
 
 1. **render** — header `# managed by touchgrass — do not edit`, then
@@ -154,7 +217,8 @@ started_at, finished_at?}`. One run per service at a time (409
 ## Roll back
 
 `GET …/env/revisions` lists revisions newest first with the keys each
-one added, changed, or removed. `POST …/env/revisions/{rev}/rollback
+one added, changed, or removed (and, for a user who may apply, each
+file's `rendered_sha256`). `POST …/env/revisions/{rev}/rollback
 {"confirm": "api"}` stages that snapshot as pending — so the diff shows
 exactly what will change — and runs the same apply pipeline. The
 result is a new revision, so history only ever grows.
@@ -189,7 +253,8 @@ not applied, apply running, no target, no key) and links to the same tab.
 | **This host has no encryption key** | The server started without a key (`503 env_key_missing`) | Set the key on the host and restart touchgrass |
 | **No entries yet** | Target configured, nothing tracked | **Import the current file** reads what is on the host; secret-looking keys are marked secret by name |
 | **An apply is running** | Another session (or this one) started an apply | The table is read-only; the live progress is pinned at the top |
-| Read-only account | You are a viewer or a developer | You see keys, plain values and the pending summary; no edits, no reveal. Env changes are admin-only |
+| Read-only account | You are a viewer | You see keys, plain values and the pending summary with who staged it; no edits, no reveal |
+| **You can propose changes** | You are a developer | You can add a key and change or remove a plain one. An admin applies. Secret rows show **Admin only** |
 
 ### Entries
 
@@ -216,7 +281,8 @@ down the left edge of the row so a staged change reads like a diff.
 ### Adding entries
 
 The row above the table stages one entry: key, value, secret toggle,
-**Stage**. Keys follow `^[A-Z_][A-Z0-9_]*$`; values are a single line. The
+**Stage**. A developer sees key, value and **Propose**: no secret toggle
+and no bulk paste, and a warning if the name looks like a secret. Keys follow `^[A-Z_][A-Z0-9_]*$`; values are a single line. The
 secret toggle pre-selects itself for secret-looking names (`*_KEY`, `*_SECRET`,
 `*_TOKEN`, `*PASSWORD*`, …).
 
@@ -229,14 +295,19 @@ This is how a batch of payment keys lands in one go.
 ### Review and apply
 
 While staged changes exist, a bar stays at the bottom: `3 changes not
-applied · 1 added · 1 changed · 1 removed`, with **Review & apply** and
-**Discard** (confirmed).
+applied · 1 added · 1 changed · 1 removed · Staged by sam (2), ana (1)`.
+An admin sees **Review & apply** and **Discard** (confirmed) there;
+everyone else sees **Awaiting an admin**.
 
-**Review & apply** shows the server-side diff as three lists, a summary
+**Review & apply** shows the server-side diff as three lists with the
+author beside each key, a warning when someone else proposed any of
+them, a summary
 field prefilled from the keys (`Rotate GCASH_KEY; Add SMTP_HOST`), the five
 steps the apply will run — render → validate → write → restart → probe — and
 the confirmation gate: type the service name exactly, the same gate a
-cutover uses. Apply stays disabled until the name matches.
+cutover uses. Apply stays disabled until the name matches. If someone
+stages another change while the dialog is open, the apply is refused,
+the list reloads, and you review again.
 
 On acceptance the dialog becomes a **progress view** pinned above the table:
 a vertical stepper driven by the live `env.apply` events (polling takes over
@@ -248,8 +319,9 @@ was restored, and **Retry** reopens the review — staged changes stay staged.
 ### Revisions
 
 **Revisions** opens a drawer listing every applied file, newest first, with
-summary, author, time, the added/changed/removed counts, the first eight
-characters of the rendered file's SHA-256 and a **current** badge. **Roll back
+summary, author, time, the added/changed/removed counts, a **current**
+badge and, for admins, the first eight characters of the rendered file's
+SHA-256. **Roll back
 to this** uses the same typed-name gate and the same progress view.
 
 ### Validation

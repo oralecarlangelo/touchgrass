@@ -164,6 +164,10 @@ var developerGains = []string{
 	"DELETE /api/issues/rules/{id}",
 	"POST /api/notifications/{id}/read",
 	"POST /api/notifications/read",
+	// S33: a developer reaches the two stage routes as a proposer. The
+	// handler then refuses every secret key; see env_proposal_test.go.
+	"PUT /api/services/{id}/env/entries/{key}",
+	"DELETE /api/services/{id}/env/entries/{key}",
 }
 
 func TestDeveloperMatrixDiffersFromViewerOnlyByItsOperations(t *testing.T) {
@@ -208,8 +212,8 @@ func TestDeveloperMatrixDiffersFromViewerOnlyByItsOperations(t *testing.T) {
 	}
 }
 
-// Whatever its scope, a developer is refused every route that changes
-// env, keys, users, services, the host, security or databases. The
+// Whatever its scope, a developer is refused every route that applies,
+// discards, imports, reveals or rolls back env, or changes keys, users, services, the host, security or databases. The
 // list is written out so that re-guarding one of them cannot pass
 // unnoticed.
 func TestDeveloperIsRefusedEveryAdminOnlyRoute(t *testing.T) {
@@ -222,8 +226,8 @@ func TestDeveloperIsRefusedEveryAdminOnlyRoute(t *testing.T) {
 	adminOnly := append(slices.Clone(legacyAdminOnly), adminOnlySince31...)
 	adminOnly = slices.DeleteFunc(adminOnly, func(name string) bool { return slices.Contains(developerGains, name) })
 
-	if len(adminOnly) != 32 {
-		t.Fatalf("admin-only routes after the developer's ten = %d, want 32", len(adminOnly))
+	if len(adminOnly) != 30 {
+		t.Fatalf("admin-only routes after the developer's twelve = %d, want 30", len(adminOnly))
 	}
 
 	cookies := map[string]*nethttp.Cookie{

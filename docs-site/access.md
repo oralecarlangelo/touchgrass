@@ -6,7 +6,7 @@ user may do. The scope decides on which services.
 | Role        | What it may do                                                    |
 | ----------- | ----------------------------------------------------------------- |
 | `admin`     | Everything: deploy, manage env and secrets, manage users. Always every service |
-| `developer` | Read, plus operate: deploy, cut over, roll back, record a manual deploy, manage alert and issue rules, mark notifications read. On every service, or only on the services you select |
+| `developer` | Read, plus operate: deploy, cut over, roll back, record a manual deploy, manage alert and issue rules, mark notifications read, propose non-secret env changes. On every service, or only on the services you select |
 | `viewer`    | Read only. On every service, or only on the services you select   |
 
 | Scope                 | What it covers                                                          |
@@ -72,7 +72,10 @@ scope, and only there, they can also:
   their own username; an `actor` sent in the request is ignored;
 - **create and delete alert rules and issue rules**;
 - **mark notifications read**, one at a time or all at once. The read
-  flag is shared, so a notification they mark read is read for everyone.
+  flag is shared, so a notification they mark read is read for everyone;
+- **propose env changes**: add a new key, or change or remove a key that
+  is not secret. The change is staged under their name and waits for an
+  admin to apply it. See [Environment & secrets](env.md#proposals-from-developers).
 
 Each of these writes an audit row under the developer's name against the
 service it concerned, so anyone who can read that service can see who
@@ -80,7 +83,10 @@ deployed it, who changed its rules and who dismissed its alerts.
 
 A developer cannot, on any service:
 
-- stage, apply, import, discard or reveal env entries;
+- apply, import, discard or reveal env entries, or roll an env revision
+  back;
+- stage, remove or re-flag a secret env key, or mark any key secret;
+- replace or withdraw another user's pending env change;
 - mint or revoke SDK keys;
 - create, change or delete a service, its deploy script, its validate
   or restart command;
@@ -139,7 +145,7 @@ the all-services scope. `self` applies to the user's own account.
 | `alerts.manage` | Create and delete alert and issue rules | service | no | yes | yes |
 | `notifications.ack` | Mark notifications read | service | no | yes | yes |
 | `env.read_keys` | Env key names, flags, non-secret values, diff, revisions, runs | service | yes | yes | yes |
-| `env.stage` | Stage or remove an env entry | service | no | no | yes |
+| `env.stage` | Stage or remove an env entry. A developer proposes: new keys and non-secret keys only | service | no | yes | yes |
 | `env.discard` | Drop all pending env changes | service | no | no | yes |
 | `env.import` | Import the env file from the host | service | no | no | yes |
 | `env.apply` | Apply env changes, roll back to a revision | service | no | no | yes |
@@ -164,9 +170,15 @@ the console, although the API lets a scoped user list the key prefixes of
 their own services.
 
 A developer holds the viewer's rows plus `deploy.trigger`,
-`deploy.record`, `alerts.manage` and `notifications.ack`. All four are
-`service` capabilities, so the role adds no host-level power even with
-the all-services scope. `env.stage` is not part of the role.
+`deploy.record`, `alerts.manage`, `notifications.ack` and `env.stage`.
+All five are `service` capabilities, so the role adds no host-level power even with
+the all-services scope.
+
+`env.stage` is part of the role too, and for a developer it is narrower
+than the name suggests. The capability opens the two stage routes; past
+them a user who does not also hold `env.apply` may only add new keys and
+change or remove keys that are not secret. Everything touching a secret
+answers 403 `env_secret_restricted`.
 
 ## How the API answers
 
@@ -180,6 +192,9 @@ it. A raw HTTP client gains nothing.
 | A resource id (issue, log line, rule, notification) owned by a service outside the scope, or missing (scoped user) | 404 `not_found`, same body for both |
 | `POST /api/notifications/read` without `service_id` (scoped developer) | Marks only the user's services |
 | `POST /api/services/{id}/deploys` with an `actor` in the body (not an admin) | The `actor` is ignored; the entry carries the caller's username |
+| `PUT` or `DELETE …/env/entries/{KEY}` on a secret key, or with `is_secret: true` (developer) | 403 `env_secret_restricted`, the same body whatever value was sent, and an `env.stage` failure audit row |
+| `PUT` or `DELETE …/env/entries/{KEY}` on a key with another user's pending change (developer) | 409 `env_pending_by_other` |
+| `GET …/env/diff`, `…/env/revisions` (not an admin) | The same lists without `rendered_sha256` |
 | A host-level route, for a user limited to selected services | 403 `forbidden` |
 | `GET /api/services`, `/api/notifications`, `/api/audit` | Only the rows of the user's services |
 | Any route but session, password and logout, on a temporary password | 403 `password_change_required` |

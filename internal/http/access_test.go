@@ -233,19 +233,21 @@ func TestHandleMeReportsScope(t *testing.T) {
 			allServices: false, services: []string{testfixture.GenericGranted},
 			holds: []authz.Capability{
 				authz.SessionSelf, authz.LogsRead, authz.DeployTrigger, authz.DeployRecord,
-				authz.AlertsManage, authz.NotificationsAck,
+				authz.AlertsManage, authz.NotificationsAck, authz.EnvStage,
 			},
 			doesNotHold: []authz.Capability{
-				authz.EnvStage, authz.EnvApply, authz.EnvReveal, authz.KeysManage, authz.HostRead,
+				authz.EnvApply, authz.EnvDiscard, authz.EnvImport, authz.EnvReveal, authz.KeysManage, authz.HostRead,
 				authz.ServicesManage, authz.UsersManage,
 			},
 		},
 		{
 			name: "all-services developer", cookie: fixture.cookieFor(t, testFleetDevUsername), role: string(model.RoleDeveloper),
 			allServices: true, services: []string{},
-			holds: []authz.Capability{authz.DeployTrigger, authz.AlertsManage, authz.HostRead, authz.AuditReadAll},
+			holds: []authz.Capability{
+				authz.DeployTrigger, authz.AlertsManage, authz.EnvStage, authz.HostRead, authz.AuditReadAll,
+			},
 			doesNotHold: []authz.Capability{
-				authz.EnvStage, authz.KeysManage, authz.HostManage, authz.SecurityManage,
+				authz.EnvApply, authz.EnvDiscard, authz.EnvImport, authz.EnvReveal, authz.KeysManage, authz.HostManage, authz.SecurityManage,
 				authz.DatabasesBackup, authz.ServicesManage, authz.UsersManage,
 			},
 		},

@@ -1568,6 +1568,8 @@ export interface EnvDiff {
   added: string[];
   changed: string[];
   removed: string[];
+  // Digest of the file an apply would write. The server sends it only
+  // to users who may apply; it is '' for everyone else.
   rendered_sha256: string;
 }
 
@@ -1669,7 +1671,9 @@ export async function importEnvFile(serviceId: string, replace = false): Promise
 
 export async function applyEnv(
   serviceId: string,
-  input: { confirm: string; summary: string },
+  // rendered_sha256 is the digest of the reviewed diff. The server
+  // refuses the apply (env_pending_changed) if anything was staged since.
+  input: { confirm: string; summary: string; rendered_sha256?: string },
 ): Promise<{ run_id: string }> {
   return request<{ run_id: string }>(envPath(serviceId, '/apply'), jsonBody(input));
 }
@@ -1684,7 +1688,10 @@ export async function fetchEnvRun(serviceId: string, runId: string): Promise<Env
 export async function fetchEnvRevisions(serviceId: string): Promise<EnvRevision[]> {
   const body = await request<EnvRevision[] | { revisions: EnvRevision[] }>(envPath(serviceId, '/revisions'));
 
-  return Array.isArray(body) ? body : (body.revisions ?? []);
+  const revisions = Array.isArray(body) ? body : (body.revisions ?? []);
+
+  // The digest is absent for users who may not apply.
+  return revisions.map((revision) => ({ ...revision, rendered_sha256: revision.rendered_sha256 ?? '' }));
 }
 
 export async function rollbackEnvRevision(

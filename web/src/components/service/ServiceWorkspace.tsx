@@ -12,7 +12,7 @@ import EnvironmentTab from './EnvironmentTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
 import OverviewTab from './OverviewTab.tsx';
 import PerformanceTab from './PerformanceTab.tsx';
-import { recordsAsSelf, type Can } from '@/lib/access.ts';
+import { envAccessFor, recordsAsSelf, type Can } from '@/lib/access.ts';
 import type { ServiceView, SessionInfo } from '@/lib/api.ts';
 
 export type ServiceTab =
@@ -115,7 +115,7 @@ export default function ServiceWorkspace({
           {tab === 'environment' && (
             <EnvironmentTab
               service={service}
-              isAdmin={can('env.apply', service.id)}
+              access={envAccessFor(can, service.id, session.username)}
               onUnauthorized={onUnauthorized}
             />
           )}

@@ -7,6 +7,9 @@
   ADR-0010 stand.
 - Amends: ADR-0013 (a new account and an admin's reset now also leave a
   temporary password)
+- Amended by: ADR-0016, which records one kind of refusal in the audit
+  table (a developer's attempt on a secret env key) although denied
+  requests otherwise go to the log only.
 - Amended by: ADR-0015, which defines the `developer` role this record
   reserved. Where the text below says the role holds nothing or that a
   scoped account is read-only, ADR-0015 is current.

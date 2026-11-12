@@ -96,11 +96,12 @@ container security monitoring.
 - **Escalation paths closed in S31.** Only admins reach any user or
   access route. The last enabled admin cannot lose the admin role by
   any route or to any role, and the schema refuses a scoped admin.
-- **The developer role (S32, ADR-0015).** A developer holds the
-  viewer's reads plus four service-scoped capabilities: deploy,
-  cutover and rollback; record a manual deploy; create and delete
-  alert and issue rules; mark notifications read. It holds no env
-  write, no key management, no user or service management and no
+- **The developer role (S32, ADR-0015; S33, ADR-0016).** A developer
+  holds the viewer's reads plus five service-scoped capabilities:
+  deploy, cutover and rollback; record a manual deploy; create and
+  delete alert and issue rules; mark notifications read; propose
+  non-secret env changes (see the env pillar section). It holds no
+  env apply, discard, import or reveal, no key management, no user or service management and no
   host, security or database mutation, whatever its scope. No
   account becomes a developer without an admin changing its role:
   no migration touches a role, and a checked-in matrix frozen at
@@ -112,14 +113,17 @@ container security monitoring.
   audit row under the session username on the service concerned
   (`deploy`, `cutover`, `rollback`, `deploy_record`,
   `alert_rule_create`, `alert_rule_delete`, `issue_rule_create`,
-  `issue_rule_delete`, `notification_read`). A manual deploy record
+  `issue_rule_delete`, `notification_read`, `env.stage`). A manual
+  deploy record
   from anyone but an admin always carries the session user; an
   `actor` in the body is ignored.
 - **What a grant gives away.** Granting a service grants its logs,
   occurrences and non-secret env values as they are: touchgrass does
   not redact log content, and the env import guesses which keys are
-  secret. Review a service's secret flags before granting it. SDK key
-  prefixes of a granted service are readable too.
+  secret. Review a service's secret flags before granting it: a key
+  that should be secret and is not flagged is readable by everyone in
+  scope and changeable by a developer in scope. SDK key prefixes of a
+  granted service are readable too.
 - **Not covered.** A developer who ships code to a service can make
   that service print its own environment. touchgrass cannot hide a
   service's secrets from the people who write its code; the goal is
@@ -244,7 +248,50 @@ scoped case: values of each managed service's runtime env file.
   as `.bak`, and a failed restart or probe restores it.
 - Validator output is stored as `last_validation` lines (bounded).
   A validator that echoes values would put them in SQLite in clear —
-  write validators that print key names and reasons only.
+  write validators that print key names and reasons only. The same
+  holds for `write_cmd` and `restart_cmd`: their output is stored with
+  the run and shown to everyone who can read that service's env.
+
+### Env proposals by developers (S33, ADR-0016)
+
+A developer may stage env changes for a service in scope; only an
+admin applies them.
+
+- **What a developer may stage.** A new key, and a change to or the
+  removal of a key whose applied and pending entries are both not
+  flagged secret. They may not stage, remove or re-flag a secret key,
+  may not set the secret flag on anything, and may not replace or
+  withdraw another user's pending change.
+- **No equality oracle.** Before S33 a stage of the applied value
+  answered `applied` with no audit row and any other value answered
+  `changed`, so whoever could stage could test guesses against a
+  secret. For a non-admin every attempt on a secret key now gets the
+  same 403 `env_secret_restricted`, the same body and the same
+  `env.stage` failure audit row, decided from flags alone before the
+  value is validated or anything is decrypted. An admin's stage still
+  reports `applied` for an unchanged value; an admin can reveal the
+  value anyway.
+- **No offline confirmation.** The SHA-256 of the rendered file is
+  returned only to a caller who may apply. It is absent from the diff
+  and the revision list for viewers and developers, is not written
+  into run steps or `env.apply` events, and is stripped from the steps
+  of older runs when a non-admin reads them. With every other value
+  known, that digest would let a short secret be confirmed by hashing
+  candidates.
+- **Applying a proposal is a review step.** An env value can change
+  what a service runs or where it connects: an interpreter option, a
+  preload path, a connection URL pointed at a host the proposer
+  controls. Whoever applies can make the service disclose its own
+  secrets, which is why apply, import, discard, reveal and revision
+  rollback stay admin-only. The pending bar and the apply dialog name
+  who staged each key. The apply request can carry the digest the
+  admin reviewed; a change staged after the review then stops the
+  apply (409 `env_pending_changed`). touchgrass cannot judge whether a
+  proposed value is safe. The admin who applies it does.
+- **Not covered.** A developer who may deploy a service can already
+  make it print its environment (see above). Env proposals do not
+  change that; they only keep touchgrass from handing a secret over,
+  and from changing a service's configuration without an admin.
 
 ## Operator-powered destruction (role-gated + audited)
 
@@ -317,8 +364,8 @@ which a developer may run for the services in its scope:
 - No TLS listener (terminate in nginx/Caddy/ALB in front).
 - No custom roles, no groups, no API tokens, no SSO: three fixed
   roles (admin/developer/viewer), each with a scope of all services
-  or a list (ADR-0014, ADR-0015). A developer cannot stage env
-  changes or manage SDK keys.
+  or a list (ADR-0014, ADR-0015, ADR-0016). A developer cannot apply
+  env changes, touch a secret env key or manage SDK keys.
 - No password rotation expiry and no session persistence across
   restarts (restart logs everyone out, same as before).
 - No webhook/email egress — alerts stay in-app, so a compromised box

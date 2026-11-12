@@ -3,6 +3,10 @@
 - Status: Accepted (2026-11-10)
 - Supersedes: threat-model boundary 5 ("no secrets at rest by design") for
   the values of managed services' env files only
+- Amended by: ADR-0016 (S33). A developer may stage non-secret keys for
+  an admin to apply, and the rendered file's SHA-256 is returned only to
+  callers who may apply. "Reveal is admin-only" and "the view never
+  returns a secret" are unchanged.
 
 ## Context
 

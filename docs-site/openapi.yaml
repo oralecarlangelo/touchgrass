@@ -2163,7 +2163,13 @@ paths:
       x-touchgrass-scope: service
       operationId: stageEnvEntry
       tags: [env]
-      summary: Stage an add or change (admin; does not touch the file)
+      summary: Stage an add or change (does not touch the file)
+      description: >-
+        An admin stages anything. A developer proposes: a new key, or a
+        change to a key whose applied and pending entries are not
+        flagged secret, with is_secret false. Anything that touches a
+        secret answers 403 env_secret_restricted with the same body and
+        the same env.stage failure audit row whatever value was sent.
       parameters:
         - $ref: '#/components/parameters/ServicePath'
         - $ref: '#/components/parameters/EnvKey'
@@ -2188,22 +2194,47 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403':
+          description: >-
+            forbidden (role or scope), or env_secret_restricted (a
+            caller who may not apply touched a secret key or set
+            is_secret)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: env_pending_by_other (the key carries another user's pending change and the caller may not apply)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
     delete:
       x-touchgrass-capability: env.stage
       x-touchgrass-scope: service
       operationId: removeEnvEntry
       tags: [env]
-      summary: Stage the removal of a key (admin)
+      summary: Stage the removal of a key
+      description: >-
+        A developer may remove a key that is not secret and carries no
+        pending change by someone else; the rules and refusals are those
+        of the PUT.
       parameters:
         - $ref: '#/components/parameters/ServicePath'
         - $ref: '#/components/parameters/EnvKey'
       responses:
         '204': { description: Removal staged }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403':
+          description: forbidden, or env_secret_restricted (a caller who may not apply named a secret key)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: env_pending_by_other
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
   /services/{id}/env/entries/{key}/reveal:
     post:
@@ -2243,7 +2274,7 @@ paths:
       x-touchgrass-scope: service
       operationId: getEnvDiff
       tags: [env]
-      summary: Pending versus applied keys plus the sha256 of the file an apply would write
+      summary: Pending versus applied keys; for a caller who may apply, also the sha256 of the file an apply would write
       parameters:
         - $ref: '#/components/parameters/ServicePath'
       responses:
@@ -2333,7 +2364,10 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: env_apply_in_progress or env_nothing_to_apply
+          description: >-
+            env_apply_in_progress, env_nothing_to_apply, or
+            env_pending_changed (rendered_sha256 was sent and the
+            pending set has changed since that diff)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2594,18 +2628,28 @@ components:
         active_run_id: { type: string, description: Present while apply_in_progress is true }
     EnvDiff:
       type: object
-      required: [added, changed, removed, rendered_sha256]
+      required: [added, changed, removed]
       properties:
         added: { type: array, items: { type: string } }
         changed: { type: array, items: { type: string } }
         removed: { type: array, items: { type: string } }
-        rendered_sha256: { type: string }
+        rendered_sha256:
+          type: string
+          description: >-
+            SHA-256 of the file an apply would write. Present only for a
+            caller who holds env.apply on the service.
     EnvApplyRequest:
       type: object
       required: [confirm]
       properties:
         confirm: { type: string, description: Must equal the service name }
         summary: { type: string }
+        rendered_sha256:
+          type: string
+          description: >-
+            Optional. The rendered_sha256 of the diff that was reviewed;
+            the apply is refused with env_pending_changed if the pending
+            set no longer renders to it.
     EnvRunAccepted:
       type: object
       required: [run_id]
@@ -2640,7 +2684,7 @@ components:
         restored: { type: boolean, description: True when the previous file was put back }
     EnvRevision:
       type: object
-      required: [id, created_at, created_by, summary, added, changed, removed, rendered_sha256, applied]
+      required: [id, created_at, created_by, summary, added, changed, removed, applied]
       properties:
         id: { type: integer }
         created_at: { type: string, format: date-time }
@@ -2649,7 +2693,9 @@ components:
         added: { type: array, items: { type: string } }
         changed: { type: array, items: { type: string } }
         removed: { type: array, items: { type: string } }
-        rendered_sha256: { type: string }
+        rendered_sha256:
+          type: string
+          description: Present only for a caller who holds env.apply on the service.
         applied: { type: boolean, description: True for the revision currently on disk }
     SecuritySummary:
       type: object

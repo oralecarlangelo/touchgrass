@@ -39,6 +39,7 @@ export default defineConfig({
           { text: 'Databases', link: '/databases' },
           { text: 'Environment & secrets', link: '/env' },
           { text: 'Users, roles & access', link: '/access' },
+          { text: 'Why was I denied?', link: '/access-denied' },
           { text: 'Self-hosting', link: '/self-hosting' },
           { text: 'Troubleshooting', link: '/troubleshooting' },
         ],

@@ -229,7 +229,9 @@ workflows for investigation.
   other way. A service out of scope answers 403; a foreign or
   missing resource id answers 404; lists and the SSE stream carry
   only the caller's services; host-level routes need the
-  all-services scope. Passwords are bcrypt-hashed
+  all-services scope. `GET /api/access/matrix` serves that table to
+  admins for the access overview on the Users screen. Failed logins
+  are limited per client address and per username (ADR-0017). Passwords are bcrypt-hashed
   in SQLite; sessions are server-side random tokens bound to a
   username, with role, scope and disabled state re-resolved per
   request.

@@ -44,7 +44,7 @@ func (l deniedLine) fields() map[string]any {
 	}
 
 	if l.serviceID != "" {
-		fields[deniedKeyServiceID] = l.serviceID
+		fields[deniedKeyService] = l.serviceID
 	}
 
 	return fields

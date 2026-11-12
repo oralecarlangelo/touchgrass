@@ -126,7 +126,7 @@ var scopes = []struct {
 	scope      Scope
 	summary    string
 }{
-	{capability: SessionSelf, scope: ScopeSelf, summary: "Sign out, read the own session, follow the live event stream, change the own password"},
+	{capability: SessionSelf, scope: ScopeSelf, summary: "Sign out, read their own session, follow the live event stream, change their own password"},
 	{capability: ServiceRead, scope: ScopeService, summary: "See a service in the list, with its health and containers"},
 	{capability: MetricsRead, scope: ScopeService, summary: "Read a service's metrics and performance"},
 	{capability: DeployRead, scope: ScopeService, summary: "Read deploy history"},

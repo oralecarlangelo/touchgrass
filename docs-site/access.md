@@ -162,7 +162,7 @@ the all-services scope. `self` applies to the user's own account.
 | `databases.backup` | Start and verify a backup | fleet | no | no | yes |
 | `databases.restore` | Restore a backup | fleet | no | no | yes |
 | `services.manage` | Create and delete a service, onboarding suggestion | fleet | no | no | yes |
-| `users.manage` | All user and access management | fleet | no | no | yes |
+| `users.manage` | All user and access management, and the access matrix | fleet | no | no | yes |
 
 Reading the table for a user limited to selected services: every `fleet`
 row is "no", whatever the role. The API key screen is a host screen in
@@ -205,7 +205,73 @@ reference every operation states its capability and scope as
 `x-touchgrass-capability` and `x-touchgrass-scope`.
 
 Refused requests are written to the server log as `access denied` with
-the user, capability, service and route. They are not audit rows.
+the user, role, capability, service, route and the reason. They are not
+audit rows. [Why was I denied?](/access-denied) explains how to read
+them.
+
+## Review who can do what
+
+At the bottom of **Users**, **Access review** answers the question from
+both sides.
+
+- **By service** lists every service with the accounts that can reach
+  it and their role. An account marked "all" has every service, so it
+  also reaches services added later; the others were granted that
+  service by name. A last row shows who sees the host screens, and
+  accounts that were granted nothing are listed below the table.
+  Disabled accounts are shown struck through: they keep their access on
+  paper and cannot sign in.
+- **What each role can do** is the matrix above as the server holds it,
+  grouped by where a capability applies. "Limited" marks a grant that
+  is narrower than its name, with the limit spelled out (a developer's
+  `env.stage` is a proposal).
+
+The matrix is served by `GET /api/access/matrix` (admin only) from the
+same table the server enforces, so the screen cannot disagree with what
+a request is actually allowed to do.
+
+```bash
+curl -b cookies https://touchgrass.example.com/api/access/matrix
+```
+
+```json
+{
+  "roles": ["viewer", "developer", "admin"],
+  "capabilities": [
+    {
+      "capability": "env.stage",
+      "scope": "service",
+      "summary": "Stage or remove an env entry",
+      "roles": { "viewer": false, "developer": true, "admin": true },
+      "limits": { "developer": "Proposes only: may add a key and change or remove a non-secret key. May not touch a secret key or another user's pending change. An admin applies." }
+    }
+  ]
+}
+```
+
+## Signing in: the attempt limits
+
+Failed logins are limited in two ways, and both answer
+`429 rate_limited` ("too many attempts, try again later"):
+
+- **5 failures a minute from one client address**, whoever the
+  usernames were.
+- **10 failures in 15 minutes for one username**, from any address.
+
+The limits count failures only, and an attempt refused with 429 is not
+counted, so waiting is always enough: 15 minutes after the last failed
+attempt the username is open again.
+
+A browser that has signed in as a user before (in the last 30 days) is
+counted separately from everyone else. If someone else is guessing at
+your username and has used up its limit, the browser you normally use
+still lets you in. A browser you have never used shares the limit with
+the guesser until it clears.
+
+Wrong passwords, unknown usernames and disabled accounts all get the
+same `401` in the same time, and reach the limit the same way. See
+[ADR-0017](https://github.com/oralecarlangelo/touchgrass/blob/develop/docs/adr/0017-per-username-login-throttle.md)
+for the reasoning.
 
 ## From the API
 

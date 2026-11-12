@@ -235,7 +235,7 @@ const (
 	deniedKeyUser       = "user"
 	deniedKeyRole       = "role"
 	deniedKeyCapability = "capability"
-	deniedKeyServiceID  = "service_id"
+	deniedKeyService    = "service"
 	deniedKeyMethod     = "method"
 	deniedKeyRoute      = "route"
 	deniedKeyStatus     = "status"
@@ -306,7 +306,7 @@ func (s *Server) logDenied(rt route, subject authz.Subject, decided decision, st
 	}
 
 	if decided.serviceID != "" {
-		attrs = append(attrs, deniedKeyServiceID, decided.serviceID)
+		attrs = append(attrs, deniedKeyService, decided.serviceID)
 	}
 
 	attrs = append(attrs,

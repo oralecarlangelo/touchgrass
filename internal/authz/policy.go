@@ -50,6 +50,19 @@ var grants = map[model.Role]map[Capability]bool{
 	model.RoleAdmin:     grantSet(Capabilities()),
 }
 
+// limits are the grants that are narrower than the capability's name
+// says, with the sentence the access overview shows beside them. A
+// limit is enforced where the capability is used, not here; this is
+// only its description, kept next to the grant so the two are reviewed
+// together.
+var limits = map[model.Role]map[Capability]string{
+	model.RoleDeveloper: {
+		EnvStage: "Proposes only: may add a key and change or remove a non-secret key. " +
+			"May not touch a secret key or another user's pending change. An admin applies.",
+		DeployRecord: "Always recorded under their own name.",
+	},
+}
+
 // grantSet indexes a capability list.
 func grantSet(capabilities []Capability) map[Capability]bool {
 	set := make(map[Capability]bool, len(capabilities))

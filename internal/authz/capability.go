@@ -114,45 +114,48 @@ const (
 	// ServicesManage covers creating and deleting a service, and the
 	// onboarding suggestion that probes a container.
 	ServicesManage Capability = "services.manage"
-	// UsersManage covers all user and access management.
+	// UsersManage covers all user and access management, and reading
+	// the access matrix.
 	UsersManage Capability = "users.manage"
 )
 
-// scopes is the scope class of every capability, in matrix order.
+// scopes is the scope class of every capability, in matrix order, with
+// the one-line summary the access overview shows an admin.
 var scopes = []struct {
 	capability Capability
 	scope      Scope
+	summary    string
 }{
-	{capability: SessionSelf, scope: ScopeSelf},
-	{capability: ServiceRead, scope: ScopeService},
-	{capability: MetricsRead, scope: ScopeService},
-	{capability: DeployRead, scope: ScopeService},
-	{capability: DeployTrigger, scope: ScopeService},
-	{capability: DeployRecord, scope: ScopeService},
-	{capability: LogsRead, scope: ScopeService},
-	{capability: IssuesRead, scope: ScopeService},
-	{capability: AlertsRead, scope: ScopeService},
-	{capability: AlertsManage, scope: ScopeService},
-	{capability: NotificationsAck, scope: ScopeService},
-	{capability: EnvReadKeys, scope: ScopeService},
-	{capability: EnvStage, scope: ScopeService},
-	{capability: EnvDiscard, scope: ScopeService},
-	{capability: EnvImport, scope: ScopeService},
-	{capability: EnvApply, scope: ScopeService},
-	{capability: EnvReveal, scope: ScopeService},
-	{capability: KeysRead, scope: ScopeService},
-	{capability: KeysManage, scope: ScopeService},
-	{capability: AuditRead, scope: ScopeService},
-	{capability: AuditReadAll, scope: ScopeFleet},
-	{capability: HostRead, scope: ScopeFleet},
-	{capability: HostManage, scope: ScopeFleet},
-	{capability: SecurityRead, scope: ScopeFleet},
-	{capability: SecurityManage, scope: ScopeFleet},
-	{capability: DatabasesRead, scope: ScopeFleet},
-	{capability: DatabasesBackup, scope: ScopeFleet},
-	{capability: DatabasesRestore, scope: ScopeFleet},
-	{capability: ServicesManage, scope: ScopeFleet},
-	{capability: UsersManage, scope: ScopeFleet},
+	{capability: SessionSelf, scope: ScopeSelf, summary: "Sign out, read the own session, follow the live event stream, change the own password"},
+	{capability: ServiceRead, scope: ScopeService, summary: "See a service in the list, with its health and containers"},
+	{capability: MetricsRead, scope: ScopeService, summary: "Read a service's metrics and performance"},
+	{capability: DeployRead, scope: ScopeService, summary: "Read deploy history"},
+	{capability: DeployTrigger, scope: ScopeService, summary: "Deploy, cut over and roll back"},
+	{capability: DeployRecord, scope: ScopeService, summary: "Record a manual deploy"},
+	{capability: LogsRead, scope: ScopeService, summary: "Search logs, read log statistics and the lines around one"},
+	{capability: IssuesRead, scope: ScopeService, summary: "Read issues and their occurrences"},
+	{capability: AlertsRead, scope: ScopeService, summary: "Read alert rules, issue rules and notifications"},
+	{capability: AlertsManage, scope: ScopeService, summary: "Create and delete alert rules and issue rules"},
+	{capability: NotificationsAck, scope: ScopeService, summary: "Mark notifications read"},
+	{capability: EnvReadKeys, scope: ScopeService, summary: "Read env key names, flags, non-secret values, the diff, revisions and runs"},
+	{capability: EnvStage, scope: ScopeService, summary: "Stage or remove an env entry"},
+	{capability: EnvDiscard, scope: ScopeService, summary: "Drop all pending env changes"},
+	{capability: EnvImport, scope: ScopeService, summary: "Import the env file from the host"},
+	{capability: EnvApply, scope: ScopeService, summary: "Apply pending env changes, and roll back to a revision"},
+	{capability: EnvReveal, scope: ScopeService, summary: "Decrypt one secret env value"},
+	{capability: KeysRead, scope: ScopeService, summary: "List SDK keys (prefix only)"},
+	{capability: KeysManage, scope: ScopeService, summary: "Mint and revoke SDK keys"},
+	{capability: AuditRead, scope: ScopeService, summary: "Read the audit rows of a service"},
+	{capability: AuditReadAll, scope: ScopeFleet, summary: "Read audit rows that belong to no service: logins, user management, host actions"},
+	{capability: HostRead, scope: ScopeFleet, summary: "Read the host: system snapshot and history, containers, images, collectors, fleet-wide performance"},
+	{capability: HostManage, scope: ScopeFleet, summary: "Prune images; approve and ignore containers"},
+	{capability: SecurityRead, scope: ScopeFleet, summary: "Read the security summary, findings and policies"},
+	{capability: SecurityManage, scope: ScopeFleet, summary: "Acknowledge, resolve and suppress findings; change security policies"},
+	{capability: DatabasesRead, scope: ScopeFleet, summary: "Read database health, the backup list and jobs"},
+	{capability: DatabasesBackup, scope: ScopeFleet, summary: "Start and verify a backup"},
+	{capability: DatabasesRestore, scope: ScopeFleet, summary: "Restore a database from a backup"},
+	{capability: ServicesManage, scope: ScopeFleet, summary: "Create and delete services; ask for an onboarding suggestion"},
+	{capability: UsersManage, scope: ScopeFleet, summary: "Manage users and their access; read the access matrix"},
 }
 
 // Capabilities returns every capability in matrix order.

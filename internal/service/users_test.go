@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -636,5 +637,72 @@ func TestWriteInitialPasswordReplacesAStaleFile(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil || len(entries) != 1 {
 		t.Errorf("directory entries = %d, %v, want only the password file (no temp left)", len(entries), err)
+	}
+}
+
+// fastestVerify returns the shortest of several Verify calls, which is
+// the cost of the work itself with scheduling noise taken out.
+func fastestVerify(t *testing.T, users *Users, username, password string) time.Duration {
+	t.Helper()
+
+	fastest := time.Duration(0)
+
+	for range 5 {
+		start := time.Now()
+
+		if _, err := users.Verify(context.Background(), username, password); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("Verify(%s) error = %v, want ErrUnauthorized", username, err)
+		}
+
+		if took := time.Since(start); fastest == 0 || took < fastest {
+			fastest = took
+		}
+	}
+
+	return fastest
+}
+
+// A login for a username that does not exist, or for a disabled
+// account, does the same password work as one with a wrong password,
+// so the response time does not say which usernames exist. Not
+// parallel: it compares wall-clock times.
+//
+//nolint:paralleltest // timing comparison; other tests would add noise.
+func TestUsersVerifyTakesAsLongForAnUnknownUsername(t *testing.T) {
+	users, _ := openUsers(t)
+	ctx := context.Background()
+
+	for _, username := range []string{"carol", "dave"} {
+		if _, err := users.Create(ctx, CreateUserInput{
+			Username: username, Password: testUserPassword, Role: model.RoleViewer, AllServices: true,
+		}, testAdminActor); err != nil {
+			t.Fatalf("Create(%s) error = %v, want nil", username, err)
+		}
+	}
+
+	dave, err := users.users.ByUsername(ctx, "dave")
+	if err != nil {
+		t.Fatalf("ByUsername(dave) error = %v, want nil", err)
+	}
+
+	if _, err := users.SetDisabled(ctx, dave.ID, true, testAdminActor); err != nil {
+		t.Fatalf("SetDisabled() error = %v, want nil", err)
+	}
+
+	wrongPassword := fastestVerify(t, users, "carol", "wrong-horse-22")
+
+	for _, tt := range []struct {
+		name     string
+		username string
+		password string
+	}{
+		{name: "unknown username", username: "nobody", password: "wrong-horse-22"},
+		{name: "disabled account, wrong password", username: "dave", password: "wrong-horse-22"},
+		{name: "disabled account, right password", username: "dave", password: testUserPassword},
+	} {
+		if took := fastestVerify(t, users, tt.username, tt.password); took < wrongPassword/2 {
+			t.Errorf("%s answered in %s, a wrong password in %s: the difference tells them apart",
+				tt.name, took, wrongPassword)
+		}
 	}
 }

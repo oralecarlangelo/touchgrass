@@ -21,6 +21,7 @@ PUT /api/users/{id}/access	403	403	403
 POST /api/users/{id}/disable	403	403	403
 POST /api/users/{id}/enable	403	403	403
 DELETE /api/users/{id}	403	403	403
+GET /api/access/matrix	403	403	403
 GET /api/services	reach	reach	403
 POST /api/services	403	403	403
 DELETE /api/services/{id}	403	403	403

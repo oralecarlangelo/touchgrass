@@ -100,6 +100,18 @@ var adminOnlySince31 = []string{
 	"PUT /api/users/{id}/access",
 }
 
+// adminOnlySince34 is the access matrix route S34 added. It shows how
+// every role is configured, so it is behind users.manage.
+var adminOnlySince34 = []string{
+	"GET /api/access/matrix",
+}
+
+// allAdminOnly is every route only an admin reaches, before any
+// developer operation is taken out.
+func allAdminOnly() []string {
+	return slices.Concat(legacyAdminOnly, adminOnlySince31, adminOnlySince34)
+}
+
 // scopedFixture is a server holding the generic two-service fixture,
 // one row of every resource kind in each, and the scoped logins.
 type scopedFixture struct {
@@ -406,8 +418,9 @@ func TestRouteTableIsConsistent(t *testing.T) {
 		}
 	}
 
-	if len(seen) != 93 {
-		t.Errorf("route table has %d routes, want 93 (the 92 before S31 plus PUT /api/users/{id}/access)", len(seen))
+	if len(seen) != 94 {
+		t.Errorf("route table has %d routes, want 94 (the 92 before S31, PUT /api/users/{id}/access "+
+			"and GET /api/access/matrix)", len(seen))
 	}
 }
 
@@ -546,7 +559,8 @@ func TestEveryRouteIsGuarded(t *testing.T) {
 }
 
 // An all-services viewer is refused exactly the routes requireAdmin
-// refused, plus the two S31 made admin-only. An admin reaches all.
+// refused, plus the two S31 made admin-only and the one S34 added. An
+// admin reaches all.
 func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 	t.Parallel()
 
@@ -555,7 +569,7 @@ func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 	viewer := viewerCookie(t, fixture.server)
 	admin := authCookie(t, fixture.server)
 
-	adminOnly := append(slices.Clone(legacyAdminOnly), adminOnlySince31...)
+	adminOnly := allAdminOnly()
 
 	for _, name := range adminOnly {
 		if !slices.ContainsFunc(fixture.server.routes(), func(rt route) bool { return routeName(rt) == name }) {

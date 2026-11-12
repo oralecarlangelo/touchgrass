@@ -6,7 +6,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: all build build-web build-docs test test-race test-int test-security-soak lint lint-fix fmt vet audit run dev migrate clean help
+.PHONY: all build build-web build-docs test test-affected test-race test-int test-security-soak lint lint-fix fmt vet audit run dev migrate clean help
 
 ## all: Vet, lint, test, and build
 all: vet lint test build
@@ -26,6 +26,11 @@ build-docs:
 ## test: Run unit tests
 test:
 	$(GO) test $(GO_PACKAGES)
+
+## test-affected: Test only the packages the change affects (BASE=origin/develop); see AGENTS.md
+BASE ?= origin/develop
+test-affected:
+	@./scripts/test-affected.sh $(BASE)
 
 ## test-race: Run tests with the race detector
 test-race:

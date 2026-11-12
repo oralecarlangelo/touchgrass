@@ -78,7 +78,10 @@ make run        # go run ./cmd/touchgrass serve
 make migrate    # go run ./cmd/touchgrass migrate up
 ```
 
-CI runs vet + lint + test (`-race`) + build. Keep every one green.
+CI runs vet + lint + test (`-race`) + build. A pull request tests only the
+packages its diff affects; a push to `develop`/`main` runs the full suite.
+Keep every one green. `make test-affected` is the local equivalent (see
+Testing).
 
 ## Go conventions (musts)
 
@@ -113,6 +116,33 @@ Lint (`golang-lint`):
   never suppress security linters without a strong reason
 
 ## Testing (`golang-testing`)
+
+**Test what the change affects, not everything, every time.** The full
+suite takes minutes and most changes touch a few packages.
+
+- While you work, and before each commit: `make test-affected`. It runs
+  `scripts/affected-packages.sh`, which takes every package with a
+  changed file (any file: SQL, fixtures and embedded assets count, not
+  only `.go`) and adds every package that depends on one of them, then
+  tests exactly those. Editing `internal/secret` tests `secret`,
+  `service`, `http` and `cmd/touchgrass`; editing `internal/model` tests
+  most of the tree; a docs-only change tests nothing.
+- `BASE=<ref> make test-affected` compares against another base; the
+  default is `origin/develop`. Uncommitted and untracked files count.
+  `scripts/test-affected.sh origin/develop -race` passes extra flags.
+- The selection answers `ALL` when `go.mod`, `go.sum`, the `Makefile`,
+  `.golangci.yml`, a workflow or the script itself changed, and the full
+  suite runs.
+- Run the full suite (`make test`, plus `-race` on the packages you
+  touched) **once, before you open or update a pull request**, not per
+  commit. CI makes the same split: affected packages on a pull request,
+  everything on the push to `develop`, so a cross-package break the
+  selection missed is still caught before a release.
+- Do not narrow further by hand (`-run`, one package) as your final
+  check: reverse dependencies are how a store change is caught breaking
+  an HTTP handler.
+- `web/`: `npx vitest run <path>` for the files you changed while
+  working; the whole `npx vitest run` once before the pull request.
 
 - Table-driven with named (lowercase) subtests; `foo.go` → `foo_test.go`
   in the same order as the source; assert behavior, not internals

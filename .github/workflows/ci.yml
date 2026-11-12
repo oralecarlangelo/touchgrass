@@ -22,11 +22,42 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The affected-package selection diffs against the base branch.
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
+
+      # A pull request tests only the packages its diff affects (the changed
+      # packages plus everything that depends on them). A push to develop or
+      # main, and any change to go.mod, the Makefile or CI itself, runs the
+      # full suite. See AGENTS.md, "Testing".
+      - name: Select packages to test
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            packages="$(./scripts/affected-packages.sh "origin/$BASE_REF")"
+          else
+            packages="ALL"
+          fi
+          if [ -z "$packages" ]; then
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            echo "No Go package is affected; skipping build and tests."
+          elif [ "$packages" = "ALL" ]; then
+            echo "mode=all" >> "$GITHUB_OUTPUT"
+            echo "Running the full suite."
+          else
+            echo "mode=affected" >> "$GITHUB_OUTPUT"
+            { echo "packages<<EOF"; echo "$packages"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            echo "Affected packages:"
+            echo "$packages"
+          fi
 
       - name: Verify dependencies
         run: |
@@ -43,6 +74,7 @@ jobs:
           fi
 
       - name: Set up Node
+        if: steps.select.outputs.mode != 'none'
         uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -50,6 +82,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Build web UI and docs site
+        if: steps.select.outputs.mode != 'none'
         run: |
           npm ci --prefix web
           npm run build --prefix web
@@ -57,13 +90,23 @@ jobs:
           npm run build --prefix docs-site
 
       - name: Build
+        if: steps.select.outputs.mode != 'none'
         run: make build
 
-      - name: Run tests
+      - name: Run tests (full suite)
+        if: steps.select.outputs.mode == 'all'
         run: go test -race -shuffle=on -coverprofile=coverage.out ./cmd/... ./internal/... ./migrations/... ./web ./docs-site
 
+      - name: Run tests (affected packages)
+        if: steps.select.outputs.mode == 'affected'
+        env:
+          PACKAGES: ${{ steps.select.outputs.packages }}
+        run: |
+          # shellcheck disable=SC2086 # one import path per line, split on purpose
+          go test -race -shuffle=on $PACKAGES
+
       - name: Upload coverage
-        if: matrix.go == 'stable'
+        if: matrix.go == 'stable' && steps.select.outputs.mode == 'all'
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.out

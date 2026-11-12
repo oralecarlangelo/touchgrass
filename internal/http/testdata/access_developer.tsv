@@ -1,0 +1,102 @@
+# What a developer gets from every route: the reviewed statement of the
+# role. It differs from the viewer's matrix in exactly ten routes
+# (deploy, cutover, rollback, manual deploy record, alert rule and
+# issue rule create and delete, mark one and mark all notifications
+# read), and a test holds it to that. A new route adds one line here,
+# written by hand.
+#
+# Columns: route, a developer with all services, a developer granted
+# one service calling it for that service, the same developer calling
+# it for a service outside the grant. "reach" means the request got
+# past the guard to the handler; a number is the status the guard
+# answered. Without service_id, POST /api/notifications/read is reached
+# by a scoped developer and marks only the granted services.
+POST /api/auth/logout	reach	reach	reach
+GET /api/auth/me	reach	reach	reach
+POST /api/auth/password	reach	reach	reach
+GET /api/events	reach	reach	reach
+GET /api/users	403	403	403
+POST /api/users	403	403	403
+POST /api/users/{id}/password	403	403	403
+POST /api/users/{id}/role	403	403	403
+PUT /api/users/{id}/access	403	403	403
+POST /api/users/{id}/disable	403	403	403
+POST /api/users/{id}/enable	403	403	403
+DELETE /api/users/{id}	403	403	403
+GET /api/services	reach	reach	403
+POST /api/services	403	403	403
+DELETE /api/services/{id}	403	403	403
+GET /api/onboarding/suggest	403	403	403
+GET /api/services/{id}/metrics	reach	reach	403
+GET /api/services/{id}/performance/summary	reach	reach	403
+GET /api/services/{id}/performance/timeline	reach	reach	403
+GET /api/services/{id}/performance/routes	reach	reach	403
+GET /api/services/{id}/performance/postgres	reach	reach	403
+GET /api/services/{id}/performance/redis	reach	reach	403
+GET /api/services/{id}/deploys	reach	reach	403
+POST /api/services/{id}/deploys	reach	reach	403
+POST /api/services/{id}/cutover	reach	reach	403
+POST /api/services/{id}/rollback	reach	reach	403
+POST /api/services/{id}/deploy	reach	reach	403
+GET /api/services/{id}/env	reach	reach	403
+PUT /api/services/{id}/env/entries/{key}	403	403	403
+DELETE /api/services/{id}/env/entries/{key}	403	403	403
+POST /api/services/{id}/env/entries/{key}/reveal	403	403	403
+GET /api/services/{id}/env/diff	reach	reach	403
+POST /api/services/{id}/env/discard	403	403	403
+POST /api/services/{id}/env/import	403	403	403
+POST /api/services/{id}/env/apply	403	403	403
+GET /api/services/{id}/env/runs/{run_id}	reach	reach	403
+GET /api/services/{id}/env/revisions	reach	reach	403
+POST /api/services/{id}/env/revisions/{rev}/rollback	403	403	403
+GET /api/logs	reach	reach	403
+GET /api/logs/stats	reach	reach	403
+GET /api/logs/{id}	reach	reach	404
+GET /api/issues	reach	reach	403
+GET /api/issues/occurrences	reach	reach	403
+GET /api/issues/{id}	reach	reach	404
+GET /api/issues/{id}/logs	reach	reach	404
+GET /api/alerts/rules	reach	reach	403
+POST /api/alerts/rules	reach	reach	403
+DELETE /api/alerts/rules/{id}	reach	reach	404
+GET /api/issues/rules	reach	reach	403
+POST /api/issues/rules	reach	reach	403
+DELETE /api/issues/rules/{id}	reach	reach	404
+GET /api/notifications	reach	reach	403
+POST /api/notifications/{id}/read	reach	reach	404
+POST /api/notifications/read	reach	reach	403
+GET /api/keys	reach	reach	403
+POST /api/keys	403	403	403
+POST /api/keys/{id}/revoke	403	403	403
+GET /api/audit	reach	reach	403
+GET /api/system	reach	403	403
+GET /api/system/history	reach	403	403
+GET /api/system/containers	reach	403	403
+GET /api/system/containers/{id}	reach	403	403
+POST /api/system/containers/{id}/approve	403	403	403
+POST /api/system/containers/{id}/ignore	403	403	403
+GET /api/docker/images	reach	403	403
+POST /api/docker/images/prune	403	403	403
+GET /api/performance/summary	reach	403	403
+GET /api/performance/timeline	reach	403	403
+GET /api/performance/routes	reach	403	403
+GET /api/performance/postgres	reach	403	403
+GET /api/performance/redis	reach	403	403
+GET /api/collectors/status	reach	403	403
+GET /api/security/summary	reach	403	403
+GET /api/security/findings	reach	403	403
+GET /api/security/findings/{id}	reach	403	403
+GET /api/security/policies	reach	403	403
+POST /api/security/findings/{id}/acknowledge	403	403	403
+POST /api/security/findings/{id}/resolve	403	403	403
+POST /api/security/findings/{id}/suppress	403	403	403
+POST /api/security/policies	403	403	403
+PATCH /api/security/policies/{id}	403	403	403
+DELETE /api/security/policies/{id}	403	403	403
+GET /api/databases	reach	403	403
+GET /api/databases/backups	reach	403	403
+POST /api/databases/backups	403	403	403
+GET /api/databases/jobs	reach	403	403
+GET /api/databases/jobs/{id}	reach	403	403
+POST /api/databases/backups/{name}/verify	403	403	403
+POST /api/databases/restore	403	403	403

@@ -1,6 +1,8 @@
 package authz
 
 import (
+	"slices"
+
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
 
@@ -22,17 +24,28 @@ var viewerGrants = []Capability{
 	DatabasesRead,
 }
 
-// grants is the one role-to-capability table. Enforcement, the session
-// payload the UI reads, and the documented matrix all come from it.
+// developerOperations is what a developer holds on top of a viewer's
+// reads: running what an admin configured for a service, and tending
+// its alerts. Every entry is service-scoped, so a developer never gains
+// a fleet-level mutation whatever their scope.
 //
-// A role with no entry holds nothing. model.RoleDeveloper is absent on
-// purpose: the schema already admits the value, but its rules (deploys
-// attributed to the caller, env staging limited to non-secret keys) are
-// not built yet, so an account carrying it is denied everything rather
-// than handed rights nobody has reviewed.
+// EnvStage is absent on purpose. Staging has rules of its own (a
+// non-admin must not touch a secret key) that are not built yet, so the
+// role is denied it rather than handed a right nobody has reviewed.
+var developerOperations = []Capability{
+	DeployTrigger,
+	DeployRecord,
+	AlertsManage,
+	NotificationsAck,
+}
+
+// grants is the one role-to-capability table. Enforcement, the session
+// payload the UI reads, and the documented matrix all come from it. A
+// role with no entry holds nothing.
 var grants = map[model.Role]map[Capability]bool{
-	model.RoleViewer: grantSet(viewerGrants),
-	model.RoleAdmin:  grantSet(Capabilities()),
+	model.RoleViewer:    grantSet(viewerGrants),
+	model.RoleDeveloper: grantSet(slices.Concat(viewerGrants, developerOperations)),
+	model.RoleAdmin:     grantSet(Capabilities()),
 }
 
 // grantSet indexes a capability list.

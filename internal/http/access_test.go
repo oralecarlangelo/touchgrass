@@ -198,36 +198,6 @@ func TestListsAreWholeForAnAllServicesViewer(t *testing.T) {
 	}
 }
 
-// Mark-all-read without a service touches only the caller's scope. No
-// role can reach that branch yet (only admins may mark read, and an
-// admin is never scoped), so the handler is called directly as the
-// scoped operator a later sprint will allow.
-func TestMarkNotificationsReadStaysInScope(t *testing.T) {
-	t.Parallel()
-
-	fixture := newScopedFixture(t)
-	notifications := store.NewNotificationStore(fixture.db)
-
-	seedGlobalNotification(t, fixture.db)
-
-	req := withIdentity(
-		newTestRequest(t, nethttp.MethodPost, "/api/notifications/read", nil),
-		Identity{Username: "operator", Role: model.RoleAdmin, Services: []string{testfixture.GenericGranted}},
-	)
-	rec := newRecorder()
-
-	fixture.server.handleMarkNotificationsRead(rec, req)
-
-	if marked := decodeBodyInto[markedResponse](t, rec.Body.String()); rec.Code != nethttp.StatusOK || marked.Marked != 1 {
-		t.Fatalf("mark read = %d %s, want 200 and 1 marked", rec.Code, rec.Body.String())
-	}
-
-	unread, err := notifications.CountUnread(t.Context(), "")
-	if err != nil || unread != 2 {
-		t.Errorf("unread after a scoped mark-all = %d, %v, want the foreign and the global row left", unread, err)
-	}
-}
-
 func TestHandleMeReportsScope(t *testing.T) {
 	t.Parallel()
 
@@ -257,6 +227,27 @@ func TestHandleMeReportsScope(t *testing.T) {
 			allServices: false, services: []string{testfixture.GenericGranted},
 			holds:       []authz.Capability{authz.SessionSelf, authz.LogsRead, authz.EnvReadKeys, authz.AuditRead},
 			doesNotHold: []authz.Capability{authz.HostRead, authz.AuditReadAll, authz.SecurityRead, authz.DeployTrigger},
+		},
+		{
+			name: "scoped developer", cookie: fixture.cookieFor(t, testDevUsername), role: string(model.RoleDeveloper),
+			allServices: false, services: []string{testfixture.GenericGranted},
+			holds: []authz.Capability{
+				authz.SessionSelf, authz.LogsRead, authz.DeployTrigger, authz.DeployRecord,
+				authz.AlertsManage, authz.NotificationsAck,
+			},
+			doesNotHold: []authz.Capability{
+				authz.EnvStage, authz.EnvApply, authz.EnvReveal, authz.KeysManage, authz.HostRead,
+				authz.ServicesManage, authz.UsersManage,
+			},
+		},
+		{
+			name: "all-services developer", cookie: fixture.cookieFor(t, testFleetDevUsername), role: string(model.RoleDeveloper),
+			allServices: true, services: []string{},
+			holds: []authz.Capability{authz.DeployTrigger, authz.AlertsManage, authz.HostRead, authz.AuditReadAll},
+			doesNotHold: []authz.Capability{
+				authz.EnvStage, authz.KeysManage, authz.HostManage, authz.SecurityManage,
+				authz.DatabasesBackup, authz.ServicesManage, authz.UsersManage,
+			},
 		},
 		{
 			name: "viewer with no services", cookie: fixture.cookieFor(t, testEmptyUsername), role: string(model.RoleViewer),
@@ -300,8 +291,8 @@ func TestHandleMeReportsScope(t *testing.T) {
 }
 
 // A guard that reads the service from the body checks it and hands the
-// body on untouched. No scoped role holds a body-keyed capability yet,
-// so the guard is exercised with a read capability the viewer has.
+// body on untouched. It is exercised here with a read capability the
+// viewer has; the developer matrix reaches it through the real routes.
 func TestGuardServiceBody(t *testing.T) {
 	t.Parallel()
 
@@ -325,7 +316,7 @@ func TestGuardServiceBody(t *testing.T) {
 		{name: "malformed body", identity: scoped, body: testMalformedJSON, status: nethttp.StatusBadRequest},
 		{
 			name:     "role without the capability is refused before the body is read",
-			identity: Identity{Username: testReservedUsername, Role: model.RoleDeveloper, AllServices: true},
+			identity: Identity{Username: testNobodyUsername, Role: testNobodyRole, AllServices: true},
 			body:     testMalformedJSON, status: nethttp.StatusForbidden,
 		},
 		{

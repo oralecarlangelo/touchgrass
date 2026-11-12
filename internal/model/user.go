@@ -13,8 +13,8 @@ const (
 	RoleUnknown Role = "unknown"
 	RoleAdmin   Role = "admin"
 	RoleViewer  Role = "viewer"
-	// RoleDeveloper is reserved: the schema admits it, but no account
-	// can be given it until its rules are built.
+	// RoleDeveloper reads like a viewer and may also deploy and tend
+	// the alerts of the services in its scope.
 	RoleDeveloper Role = "developer"
 )
 

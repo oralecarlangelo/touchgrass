@@ -387,10 +387,6 @@ func TestHandleUserAccessRejects(t *testing.T) {
 		code   string
 	}{
 		{
-			name: "reserved developer role", method: nethttp.MethodPut, target: viewerPath,
-			body: `{"role":"developer","all_services":true}`, status: nethttp.StatusBadRequest, code: testInvalidRequest,
-		},
-		{
 			name: "unknown role", method: nethttp.MethodPut, target: viewerPath,
 			body: `{"role":"owner","all_services":true}`, status: nethttp.StatusBadRequest, code: testInvalidRequest,
 		},
@@ -432,8 +428,13 @@ func TestHandleUserAccessRejects(t *testing.T) {
 			body: `{"role":"viewer","all_services":true}`, status: nethttp.StatusNotFound, code: codeNotFound,
 		},
 		{
-			name: "create with the developer role", method: nethttp.MethodPost, target: usersRoute,
-			body:   `{"username":"dev-a","password":"correct-horse-1","role":"developer"}`,
+			name: "last admin to a developer", method: nethttp.MethodPut, target: adminPath,
+			body:   `{"role":"developer","all_services":true}`,
+			status: nethttp.StatusConflict, code: "conflict",
+		},
+		{
+			name: "create with an unknown role", method: nethttp.MethodPost, target: usersRoute,
+			body:   `{"username":"dev-a","password":"correct-horse-1","role":"operator","all_services":true}`,
 			status: nethttp.StatusBadRequest, code: testInvalidRequest,
 		},
 		{

@@ -221,7 +221,7 @@ func TestAssignable(t *testing.T) {
 	}{
 		{role: model.RoleAdmin, want: true},
 		{role: model.RoleViewer, want: true},
-		{role: model.RoleDeveloper, want: false},
+		{role: model.RoleDeveloper, want: true},
 		{role: model.RoleUnknown, want: false},
 		{role: model.Role(""), want: false},
 	}
@@ -229,6 +229,70 @@ func TestAssignable(t *testing.T) {
 	for _, tt := range tests {
 		if got := authz.Assignable(tt.role); got != tt.want {
 			t.Errorf("Assignable(%q) = %t, want %t", tt.role, got, tt.want)
+		}
+	}
+}
+
+// The viewer's capabilities are frozen at what the role held in v0.6.0.
+// Enabling another role must not widen this one: an account only gains
+// a power when an admin changes its role.
+func TestViewerHoldsExactlyWhatItHeldBeforeDeveloper(t *testing.T) {
+	t.Parallel()
+
+	frozen := []authz.Capability{
+		authz.SessionSelf, authz.ServiceRead, authz.MetricsRead, authz.DeployRead, authz.LogsRead,
+		authz.IssuesRead, authz.AlertsRead, authz.EnvReadKeys, authz.KeysRead, authz.AuditRead,
+		authz.AuditReadAll, authz.HostRead, authz.SecurityRead, authz.DatabasesRead,
+	}
+
+	viewer := authz.Subject{Role: model.RoleViewer, AllServices: true, Services: []string{}}
+	if got := viewer.Capabilities(); !slices.Equal(got, frozen) {
+		t.Errorf("viewer holds %v, want exactly %v", got, frozen)
+	}
+}
+
+// A developer is a viewer plus four service-scoped operations, and
+// nothing else: no env write, no keys, no fleet-level mutation.
+func TestDeveloperHoldsViewerReadsPlusOperations(t *testing.T) {
+	t.Parallel()
+
+	operations := []authz.Capability{
+		authz.DeployTrigger, authz.DeployRecord, authz.AlertsManage, authz.NotificationsAck,
+	}
+
+	for _, capability := range authz.Capabilities() {
+		want := authz.RoleHolds(model.RoleViewer, capability) || slices.Contains(operations, capability)
+
+		if got := authz.RoleHolds(model.RoleDeveloper, capability); got != want {
+			t.Errorf("RoleHolds(developer, %s) = %t, want %t", capability, got, want)
+		}
+	}
+
+	for _, capability := range operations {
+		if authz.ScopeOf(capability) != authz.ScopeService {
+			t.Errorf("developer operation %s has scope %s, want service", capability, authz.ScopeOf(capability))
+		}
+	}
+
+	scoped := authz.Subject{Role: model.RoleDeveloper, AllServices: false, Services: []string{testGranted}}
+
+	if !scoped.Can(authz.DeployTrigger, testGranted) {
+		t.Error("scoped developer cannot deploy the granted service, want allowed")
+	}
+
+	if scoped.Can(authz.DeployTrigger, testOther) {
+		t.Error("scoped developer can deploy a service outside scope, want denied")
+	}
+
+	everywhere := authz.Subject{Role: model.RoleDeveloper, AllServices: true, Services: []string{}}
+
+	for _, capability := range []authz.Capability{
+		authz.EnvStage, authz.EnvDiscard, authz.EnvImport, authz.EnvApply, authz.EnvReveal, authz.KeysManage,
+		authz.HostManage, authz.SecurityManage, authz.DatabasesBackup, authz.DatabasesRestore,
+		authz.ServicesManage, authz.UsersManage,
+	} {
+		if everywhere.Can(capability, testGranted) || everywhere.CanFleet(capability) {
+			t.Errorf("all-services developer holds %s, want denied", capability)
 		}
 	}
 }
@@ -258,8 +322,13 @@ func TestVisibleServices(t *testing.T) {
 			wantAll: false, wantIDs: []string{},
 		},
 		{
-			name:    "reserved role sees nothing even with a scope",
-			subject: authz.Subject{Role: model.RoleDeveloper, AllServices: true, Services: []string{testGranted}},
+			name:    "scoped developer",
+			subject: authz.Subject{Role: model.RoleDeveloper, AllServices: false, Services: []string{testGranted}},
+			wantAll: false, wantIDs: []string{testGranted},
+		},
+		{
+			name:    "unknown role sees nothing even with a scope",
+			subject: authz.Subject{Role: model.Role("owner"), AllServices: true, Services: []string{testGranted}},
 			wantAll: false, wantIDs: []string{},
 		},
 	}
@@ -297,9 +366,9 @@ func TestCapabilitiesOmitsFleetForScopedSubject(t *testing.T) {
 	}
 }
 
-// The public docs page prints the same matrix. Its viewer and admin
-// columns and its scope column must match the policy, so the page
-// cannot promise something the code does not do.
+// The public docs page prints the same matrix. Its role columns and its
+// scope column must match the policy, so the page cannot promise
+// something the code does not do.
 func TestDocsPageMatchesPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -316,7 +385,7 @@ func TestDocsPageMatchesPolicy(t *testing.T) {
 		}
 
 		cells := strings.Split(strings.Trim(line, "| "), " | ")
-		if len(cells) != 5 {
+		if len(cells) != 6 {
 			continue
 		}
 
@@ -331,7 +400,10 @@ func TestDocsPageMatchesPolicy(t *testing.T) {
 			continue
 		}
 
-		want := []string{row.scope, yesNo(row.holds[model.RoleViewer]), yesNo(row.holds[model.RoleAdmin])}
+		want := []string{
+			row.scope,
+			yesNo(row.holds[model.RoleViewer]), yesNo(row.holds[model.RoleDeveloper]), yesNo(row.holds[model.RoleAdmin]),
+		}
 		if !slices.Equal(got, want) {
 			t.Errorf("docs-site/access.md says %s is %v, the policy says %v", row.capability, got, want)
 		}

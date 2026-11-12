@@ -263,8 +263,13 @@ func TestHubDeliversOnlyWhatTheSubscriberMaySee(t *testing.T) {
 			wants:   []string{},
 		},
 		{
-			name:    "reserved role",
-			subject: authz.Subject{Username: testReservedUsername, Role: model.RoleDeveloper, AllServices: true},
+			name:    "scoped developer",
+			subject: authz.Subject{Username: testDevUsername, Role: model.RoleDeveloper, Services: []string{granted}},
+			wants:   []string{deployInScope, envInScope, targetInScope},
+		},
+		{
+			name:    "role the policy does not know",
+			subject: authz.Subject{Username: testNobodyUsername, Role: testNobodyRole, AllServices: true},
 			wants:   []string{},
 		},
 	}

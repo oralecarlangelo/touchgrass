@@ -35,7 +35,10 @@ if printf '%s\n' "$changed" | grep -Eq '^(go\.mod|go\.sum|Makefile|\.golangci\.y
 fi
 
 # Directories that hold a Go package (or files one embeds), as import paths.
-all_packages="$(go list ./cmd/... ./internal/... ./migrations/... ./web ./docs-site 2>/dev/null)"
+# -e: a clean checkout has no built web/docs bundles yet, and go list refuses a
+# package whose //go:embed pattern matches nothing. The selection only needs import
+# paths and dependency edges, which -e still reports.
+all_packages="$(go list -e ./cmd/... ./internal/... ./migrations/... ./web ./docs-site 2>/dev/null)"
 
 changed_packages=""
 while IFS= read -r file; do
@@ -58,7 +61,7 @@ changed_packages="$(printf '%s' "$changed_packages" | sort -u)"
 # Every package whose dependency closure (itself included, test imports included)
 # meets a changed package.
 # shellcheck disable=SC2086 # one import path per line, split on purpose
-go list -test -deps -f '{{.ImportPath}} {{range .Deps}}{{.}} {{end}}' $all_packages 2>/dev/null \
+go list -e -test -deps -f '{{.ImportPath}} {{range .Deps}}{{.}} {{end}}' $all_packages 2>/dev/null \
   | awk -v changed="$changed_packages" -v module="$module" '
       BEGIN { n = split(changed, list, "\n"); for (i = 1; i <= n; i++) if (list[i] != "") want[list[i]] = 1 }
       {

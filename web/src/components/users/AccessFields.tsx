@@ -9,12 +9,33 @@ import {
 } from '@/components/ui/select';
 import type { ServiceView, UserAccess } from '@/lib/api.ts';
 
-// Roles an account can be given today. The developer role is reserved
-// on the server and not offered until it exists.
+// Roles an account can be given, each with one line saying what it may
+// do. The server's policy table is what enforces them (internal/authz).
 export const assignableRoles = [
-  { value: 'viewer', label: 'viewer (read-only)' },
-  { value: 'admin', label: 'admin (full power, every service)' },
+  {
+    value: 'viewer',
+    label: 'viewer (read-only)',
+    description:
+      'Reads services, logs, issues, metrics, deploy history, env key names and audit rows. Changes nothing.',
+  },
+  {
+    value: 'developer',
+    label: 'developer (read and deploy)',
+    description:
+      'Reads what a viewer reads, and can deploy, cut over and roll back, record a deploy, manage alert and issue rules, and mark notifications read. Cannot change env, keys, users or services.',
+  },
+  {
+    value: 'admin',
+    label: 'admin (full power, every service)',
+    description: 'Everything, on every service: env and secrets, keys, users, services and the host.',
+  },
 ] as const;
+
+// roleDescription is the one-line summary of a role, or '' for a role
+// this build does not know.
+export function roleDescription(role: string): string {
+  return assignableRoles.find((entry) => entry.value === role)?.description ?? '';
+}
 
 export function defaultAccess(): UserAccess {
   return { role: 'viewer', all_services: true, services: [] };
@@ -55,6 +76,7 @@ export default function AccessFields({
   services: ServiceView[];
 }) {
   const isAdmin = access.role === 'admin';
+  const isDeveloper = access.role === 'developer';
   const allServices = isAdmin || access.all_services;
 
   function toggleService(id: string, checked: boolean): void {
@@ -70,7 +92,7 @@ export default function AccessFields({
       <div className="space-y-1">
         <Label htmlFor={`${idPrefix}-role`}>Role</Label>
         <Select value={access.role} onValueChange={(role) => onChange({ ...access, role })}>
-          <SelectTrigger id={`${idPrefix}-role`}>
+          <SelectTrigger id={`${idPrefix}-role`} aria-describedby={`${idPrefix}-role-help`}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -81,6 +103,9 @@ export default function AccessFields({
             ))}
           </SelectContent>
         </Select>
+        <p id={`${idPrefix}-role-help`} className="text-muted-foreground text-xs">
+          {roleDescription(access.role)}
+        </p>
       </div>
 
       <fieldset className="space-y-2">
@@ -104,6 +129,7 @@ export default function AccessFields({
                 <span className="text-muted-foreground block text-xs">
                   Includes services added later and the host screens: Fleet, Security, Databases,
                   Images, API keys and the full audit trail.
+                  {isDeveloper && ' A developer can then deploy every service.'}
                 </span>
               </span>
             </label>
@@ -120,6 +146,7 @@ export default function AccessFields({
                 <span className="text-muted-foreground block text-xs">
                   Only these services: their logs, issues, metrics, deploy history, env keys and
                   audit rows. No host screens.
+                  {isDeveloper && ' A developer can deploy these services and no others.'}
                 </span>
               </span>
             </label>

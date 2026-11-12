@@ -9,6 +9,7 @@ import {
   isScoped,
   makeCan,
   needsAdmin,
+  recordsAsSelf,
   scopeLabel,
 } from './access.ts';
 import type { SessionInfo } from './api.ts';
@@ -171,5 +172,55 @@ describe('labels', () => {
     expect(describeScope({ all_services: false, services: [] })).toBe('No services');
     expect(describeScope({ all_services: false, services: ['a', 'b'] })).toBe('a, b');
     expect(describeScope({ all_services: false, services: ['a', 'b', 'c', 'd'] })).toBe('a, b +2 more');
+  });
+});
+
+describe('developer', () => {
+  const developer: SessionInfo = {
+    authenticated: true,
+    username: 'sam',
+    role: 'developer',
+    all_services: false,
+    services: ['billing-worker'],
+    capabilities: [...viewerCapabilities, 'deploy.trigger', 'deploy.record', 'alerts.manage', 'notifications.ack'],
+  };
+  const can = makeCan(developer);
+
+  it('operates the services in scope and no others', () => {
+    for (const capability of ['deploy.trigger', 'deploy.record', 'alerts.manage', 'notifications.ack'] as const) {
+      expect(can(capability, 'billing-worker')).toBe(true);
+      expect(can(capability, 'docs-site')).toBe(false);
+      expect(makeCan(scoped)(capability, 'billing-worker')).toBe(false);
+    }
+  });
+
+  it('holds no env write, key, user, service or host power', () => {
+    for (const capability of [
+      'env.stage',
+      'env.apply',
+      'env.reveal',
+      'keys.manage',
+      'users.manage',
+      'services.manage',
+      'host.manage',
+    ] as const) {
+      expect(can(capability, 'billing-worker')).toBe(false);
+      expect(can(capability)).toBe(false);
+    }
+  });
+
+  it('opens the same screens as a scoped viewer', () => {
+    const views = navGroups.flatMap((group) => group.items.map((item) => item.id));
+
+    for (const view of views) {
+      expect(canOpenView(view, developer, can)).toBe(canOpenView(view, scoped, makeCan(scoped)));
+    }
+  });
+
+  it('is labelled with its real role and records deploys under its own name', () => {
+    expect(accessLabel(developer)).toBe('developer · 1 service');
+    expect(recordsAsSelf(developer)).toBe(true);
+    expect(recordsAsSelf(scoped)).toBe(true);
+    expect(recordsAsSelf(admin)).toBe(false);
   });
 });

@@ -29,7 +29,8 @@ type deployIDResponse struct {
 	ID int64 `json:"id"`
 }
 
-// deployRequest is the manual-record body.
+// deployRequest is the manual-record body. Actor is honored only for
+// an admin; see recordActor.
 type deployRequest struct {
 	SHA        string `json:"sha"`
 	Actor      string `json:"actor"`
@@ -72,7 +73,7 @@ func (s *Server) handleRecordDeploy(w nethttp.ResponseWriter, r *nethttp.Request
 	record := model.DeployRecord{
 		ServiceID: r.PathValue("id"),
 		SHA:       body.SHA,
-		Actor:     body.Actor,
+		Actor:     recordActor(r, body.Actor),
 		Type:      body.Type,
 		Outcome:   body.Outcome,
 		Notes:     body.Notes,
@@ -98,7 +99,7 @@ func (s *Server) handleRecordDeploy(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 
-	id, err := s.deploys.Record(r.Context(), record)
+	id, err := s.deploys.RecordManual(r.Context(), record, requestActor(r))
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to record deploy")
 
@@ -106,6 +107,18 @@ func (s *Server) handleRecordDeploy(w nethttp.ResponseWriter, r *nethttp.Request
 	}
 
 	writeJSON(w, s.logger, nethttp.StatusCreated, deployIDResponse{ID: id})
+}
+
+// recordActor decides who a manual deploy record is attributed to. An
+// admin may name the person or system that ran the deploy, as before.
+// Anyone else is recorded as themselves whatever the body says, so a
+// record cannot be forged in another name.
+func recordActor(r *nethttp.Request, claimed string) string {
+	if subjectFrom(r).Role == model.RoleAdmin {
+		return claimed
+	}
+
+	return requestActor(r)
 }
 
 // parseOptionalTime parses an optional RFC3339 timestamp.

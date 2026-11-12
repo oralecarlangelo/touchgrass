@@ -237,17 +237,24 @@ func TestNotificationMarkAllReadForServices(t *testing.T) {
 
 	seedScopedNotifications(t, notifications)
 
-	if marked, err := notifications.MarkAllReadForServices(ctx, []string{}); err != nil || marked != 0 {
-		t.Errorf("MarkAllReadForServices(no services) = %d, %v, want 0", marked, err)
+	if marked, err := notifications.MarkAllReadForServices(ctx, []string{}); err != nil || len(marked) != 0 {
+		t.Errorf("MarkAllReadForServices(no services) = %v, %v, want nothing", marked, err)
 	}
 
 	marked, err := notifications.MarkAllReadForServices(ctx, []string{testfixture.GenericGranted})
-	if err != nil || marked != 2 {
-		t.Errorf("MarkAllReadForServices() = %d, %v, want 2", marked, err)
+	if err != nil || len(marked) != 1 || marked[testfixture.GenericGranted] != 2 {
+		t.Errorf("MarkAllReadForServices() = %v, %v, want 2 rows of %s", marked, err, testfixture.GenericGranted)
 	}
 
 	// The other service's row and the global row are still unread.
 	if total, err := notifications.CountUnread(ctx, ""); err != nil || total != 2 {
 		t.Errorf("CountUnread(all) = %d, %v, want 2 left untouched", total, err)
+	}
+
+	// A fleet-wide mark reports each service, and rows with no service
+	// under the empty id.
+	rest, err := notifications.MarkAllRead(ctx, "")
+	if err != nil || len(rest) != 2 || rest[testfixture.GenericOther] != 1 || rest[""] != 1 {
+		t.Errorf("MarkAllRead(all) = %v, %v, want one row of %s and one global", rest, err, testfixture.GenericOther)
 	}
 }

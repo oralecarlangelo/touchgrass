@@ -1,7 +1,7 @@
 # Threat model
 
 What touchgrass trusts, what it doesn't, and where the sharp edges
-are. v1 scope: single-host, managed users (admin/viewer),
+are. v1 scope: single-host, managed users (admin/developer/viewer),
 in-app notifications only, all-state container inventory, and read-only
 container security monitoring.
 
@@ -20,7 +20,7 @@ container security monitoring.
 ## Authentication and sessions
 
 - Managed users in SQLite (`users` table): username, bcrypt hash
-  (`DefaultCost`), role (`admin` or `viewer`), scope (all services,
+  (`DefaultCost`), role (`admin`, `developer` or `viewer`), scope (all services,
   or the rows of `user_services`), disabled flag.
   The bootstrap admin is seeded on first boot only. With
   `TOUCHGRASS_ADMIN_PASSWORD` set (optional, env-only) it is seeded
@@ -96,7 +96,25 @@ container security monitoring.
 - **Escalation paths closed in S31.** Only admins reach any user or
   access route. The last enabled admin cannot lose the admin role by
   any route or to any role, and the schema refuses a scoped admin.
-  The reserved `developer` role cannot be assigned and holds nothing.
+- **The developer role (S32, ADR-0015).** A developer holds the
+  viewer's reads plus four service-scoped capabilities: deploy,
+  cutover and rollback; record a manual deploy; create and delete
+  alert and issue rules; mark notifications read. It holds no env
+  write, no key management, no user or service management and no
+  host, security or database mutation, whatever its scope. No
+  account becomes a developer without an admin changing its role:
+  no migration touches a role, and a checked-in matrix frozen at
+  v0.6.0 proves a viewer is refused every route it was refused
+  before. Out of scope a developer is refused exactly as a scoped
+  viewer is: 403 for a service, the same 404 for a foreign and a
+  missing rule or notification id.
+- **Attribution.** Every mutation a developer can make writes an
+  audit row under the session username on the service concerned
+  (`deploy`, `cutover`, `rollback`, `deploy_record`,
+  `alert_rule_create`, `alert_rule_delete`, `issue_rule_create`,
+  `issue_rule_delete`, `notification_read`). A manual deploy record
+  from anyone but an admin always carries the session user; an
+  `actor` in the body is ignored.
 - **What a grant gives away.** Granting a service grants its logs,
   occurrences and non-secret env values as they are: touchgrass does
   not redact log content, and the env import guesses which keys are
@@ -228,15 +246,46 @@ scoped case: values of each managed service's runtime env file.
   A validator that echoes values would put them in SQLite in clear —
   write validators that print key names and reasons only.
 
-## Operator-powered destruction (all admin-gated + audited)
+## Operator-powered destruction (role-gated + audited)
 
-These exist so the operator can act fast; the control is the admin
-session plus confirm-gating in the UI, with an audit entry per run:
+These exist so the operator can act fast; the control is the role
+and scope of the session plus confirm-gating in the UI, with an
+audit entry per run. Everything here is admin-only except deploys,
+which a developer may run for the services in its scope:
 
 - **Deploys** run service scripts with the process's privileges
   (cutover/rollback/deploy). Blast radius is one service by
   construction — scripts live outside touchgrass and stay
   team-reviewed.
+  - *Who.* An admin, for any service. A developer, for a service
+    in its scope and no other; the API answers 403 for the rest
+    before anything is looked up.
+  - *What a developer controls.* The service id and, for a
+    cutover, `auto`, `blue` or `green`. Nothing else in the
+    request reaches the script. The script path, its arguments,
+    `validate_cmd`, `restart_cmd`, `sudo` and the service
+    definition are stored configuration that only an admin can
+    create or delete, and no route edits them. A developer can
+    run the configured script for an in-scope service and nothing
+    else.
+  - *What that still allows.* Whatever the script does. A
+    developer who can also push to the repository the script
+    builds from decides what code runs on the host as the
+    touchgrass process, and can take the service down with a bad
+    release or a rollback. Grant the role on a service only to
+    people you would let run its deploy script by hand.
+  - *Limits that remain.* One run per service at a time. Each run
+    is a `deploy`, `cutover` or `rollback` audit row under the
+    developer's own username, with the outcome.
+  - *Output.* Script output is broadcast line by line to every
+    user who may read that service's deploys. Scripts must not
+    echo secrets.
+- **Alert and issue rules** can be deleted by a developer in scope,
+  which silences an alert. The control is the `alert_rule_delete`
+  or `issue_rule_delete` audit row; there is no approval step.
+- **Marking notifications read** clears a flag shared by every
+  user, so a developer can dismiss an alert an admin has not seen.
+  Each change is a `notification_read` audit row on the service.
 - **Database restore** drains app backends and replaces table
   contents; the app errors until verify completes. Typed-filename
   confirm, auto safety backup first, `db_restore` audit entry.
@@ -257,15 +306,19 @@ session plus confirm-gating in the UI, with an audit entry per run:
   them, so treat that scope as team-wide. A viewer limited to
   selected services cannot open them at all.
 - **User management** creates admins, who are root-equivalent via
-  the deploy engine. Only trust operators with admin; hand devs
-  the viewer role, limited to the services they work on.
+  the deploy engine and the env pillar, and developers, who can run
+  the deploy scripts of the services they are given. Only trust
+  operators with admin. Hand devs the viewer role, or the developer
+  role if they release the service, limited to the services they
+  work on.
 
 ## What v1 deliberately lacks
 
 - No TLS listener (terminate in nginx/Caddy/ALB in front).
-- No operator/deployer role, no custom roles, no groups, no API
-  tokens, no SSO: two roles (admin/viewer), each with a scope of all
-  services or a list (ADR-0014). A scoped account is read-only.
+- No custom roles, no groups, no API tokens, no SSO: three fixed
+  roles (admin/developer/viewer), each with a scope of all services
+  or a list (ADR-0014, ADR-0015). A developer cannot stage env
+  changes or manage SDK keys.
 - No password rotation expiry and no session persistence across
   restarts (restart logs everyone out, same as before).
 - No webhook/email egress — alerts stay in-app, so a compromised box

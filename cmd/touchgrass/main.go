@@ -316,10 +316,10 @@ func runServe(args []string) error {
 		Metrics:  store.NewMetricStore(db),
 		Deploys:  deployStore,
 	})
-	sampler := newSampler(wiring, performance)
-	deploys := service.NewDeploys(serviceStore, deployStore)
 	audit := service.NewAudit(serviceStore, store.NewAuditStore(db))
-	ingestor := newIngestor(serviceStore, db, cfg.MaxOccurrences, logger)
+	sampler := newSampler(wiring, performance, audit)
+	deploys := service.NewDeploys(serviceStore, deployStore).WithAudit(audit)
+	ingestor := newIngestor(serviceStore, db, audit, cfg.MaxOccurrences, logger)
 	collector := newLogCollector(wiring)
 	sdkLogs := newLogIngestor(serviceStore, db)
 	sys := newServeSystem(dockerClient, cfg.DB, cfg.HostRoot, logger)
@@ -483,7 +483,7 @@ func newOnboarding(wiring serveWiring, prober *probe.Prober, audit *service.Audi
 }
 
 // newSampler wires metrics sampling, alerting, and retention.
-func newSampler(wiring serveWiring, performance *service.Performance) *service.Sampler {
+func newSampler(wiring serveWiring, performance *service.Performance, audit *service.Audit) *service.Sampler {
 	return service.NewSampler(service.SamplerConfig{
 		Services:      wiring.services,
 		Docker:        wiring.docker,
@@ -498,6 +498,7 @@ func newSampler(wiring serveWiring, performance *service.Performance) *service.S
 		SDKLogs:       store.NewSDKLogStore(wiring.db),
 		Fleet:         store.NewFleetStore(wiring.db),
 		Performance:   performance,
+		Audit:         audit,
 		Interval:      wiring.cfg.MetricsInterval,
 		HostRoot:      wiring.cfg.HostRoot,
 		Retention: service.Retention{
@@ -665,6 +666,7 @@ func newLogIngestor(serviceStore *store.ServiceStore, db *store.DB) *service.Log
 func newIngestor(
 	serviceStore *store.ServiceStore,
 	db *store.DB,
+	audit *service.Audit,
 	maxOccurrences int,
 	logger *slog.Logger,
 ) *service.Ingestor {
@@ -675,6 +677,7 @@ func newIngestor(
 		Issues:         store.NewIssueStore(db),
 		IssueRules:     store.NewIssueRuleStore(db),
 		Logs:           store.NewLogStore(db),
+		Audit:          audit,
 		MaxOccurrences: maxOccurrences,
 		Logger:         logger,
 	})

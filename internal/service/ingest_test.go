@@ -25,6 +25,7 @@ func testIngestor(t *testing.T, maxOccurrences int) (*Ingestor, *store.DB) {
 		Issues:         store.NewIssueStore(db),
 		IssueRules:     store.NewIssueRuleStore(db),
 		Logs:           store.NewLogStore(db),
+		Audit:          NewAudit(services, store.NewAuditStore(db)),
 		MaxOccurrences: maxOccurrences,
 		Logger:         slog.New(slog.DiscardHandler),
 	})

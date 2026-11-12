@@ -1194,7 +1194,7 @@ roles-and-access plan picks those up (S31+).
 
 ### S31 — Service-scoped access: authorization core + scoped read-only users (2026-11-10)
 
-**Status**: IMPLEMENTED on `claude/roles-s31-scoped-access-aea3ac`; PR open.
+**Status**: SHIPPED in v0.6.0 (PR #6).
 **Goal**: an admin can create a read-only account limited to chosen
 services; that account sees nothing else, on any route, list or
 stream. Existing admin and viewer accounts behave as before
@@ -1259,6 +1259,88 @@ stream. Existing admin and viewer accounts behave as before
 SCOPE GUARD: the `developer` role is not enabled, no deploy or env
 write rights for non-admins, no custom roles, no groups, no API
 tokens — S32–S34 of the plan pick those up.
+
+### S32 — Developer role: deploy and operate in scope (2026-11-12)
+
+**Status**: IMPLEMENTED on `claude/roles-s32-developer-role-18f861`; PR open.
+**Goal**: an admin can give an account the `developer` role with a
+service scope; that developer can deploy, cut over and roll back the
+services in scope, record a manual deploy, manage their alert and
+issue rules and mark their notifications read, with every action
+audited under their own name (ADR-0015). Outside scope they are
+refused exactly as a scoped viewer is. Existing admin and viewer
+accounts behave as in v0.6.0. Second of four sprints in the
+roles-and-access plan.
+
+- S32.1 Enable the role (0.5pd) [FR-P1, NFR-5]
+  Acceptance: the policy table gives `developer` the viewer's
+  capabilities plus `deploy.trigger`, `deploy.record`,
+  `alerts.manage` and `notifications.ack` (all service-scoped; no
+  `env.stage`); `testdata/matrix.tsv` and its exhaustive test are
+  updated; create, `PUT …/access` and the older role route accept
+  the role; the last-admin guard refuses demotion to it.
+- S32.2 Deploy rights (1pd) [FR-P1]
+  Acceptance: an in-scope deploy answers 202, runs the configured
+  script with only the stored arguments and is audited under the
+  developer; out of scope 403; a manual deploy record from anyone
+  but an admin carries the session user and ignores a body `actor`;
+  an admin may still attribute a record, and the audit row names
+  the admin.
+- S32.3 Alerts and notifications (1pd) [FR-P1, NFR-2]
+  Acceptance: migration 0024 rebuilds the audit table for
+  `deploy_record`, `alert_rule_create`, `alert_rule_delete`,
+  `issue_rule_create`, `issue_rule_delete` and `notification_read`
+  (a v0.6.0 database keeps every row, id and grant); rule and
+  mark-read service methods take an actor; a rule delete loads the
+  rule first so the row lands on its service; a foreign or missing
+  rule or notification id answers the same 404; a scoped mark-all
+  touches only in-scope rows and writes one row per service.
+- S32.4 UI (1pd) [NFR-6]
+  Acceptance: the role picker offers Developer with one line on what
+  it may do; deploy, rollback and cutover panels follow
+  `can('deploy.trigger', id)`, the record form follows
+  `can('deploy.record', id)` and shows "Recorded as <user>" for
+  non-admins; rules and mark-read already followed `can()`; the
+  header shows `developer · N services`.
+- S32.5 Docs (0.5pd) [NFR-6]
+  Acceptance: ADR-0015; threat model (operator-powered section: a
+  developer can run the configured deploy script for an in-scope
+  service and nothing else); `docs-site/access.md` matrix with a
+  developer column held to the policy by a test; ARCHITECTURE;
+  OpenAPI role enums, audit actions and operation descriptions, with
+  the capability parity test still green.
+- Standards in play: `golang-security` (opt-in power, attribution
+  forced server-side, no existence oracle), `golang-database` (audit
+  rebuild inside the migration transaction, `UPDATE … RETURNING` for
+  an atomic mark-read), `golang-testing` (frozen and reviewed route
+  matrices checked in as data; generic non-dogfood fixtures).
+- Validation: `go build`/`vet`/`test` green (also `-race` on
+  `internal/http` and `internal/service`), lint 0 new issues, web
+  `verify` + vitest green, docs build + redocly lint clean. Safety
+  tests: `access_viewer_v060.tsv` (what a viewer got from all 89
+  non-public routes, produced against the v0.6.0 tag) still holds for
+  an all-services and a scoped viewer; `access_developer.tsv` lists
+  every route a developer is allowed and refused, with all services,
+  in scope and out of scope, and may differ from the viewer's file in
+  exactly ten routes; 32 routes stay admin-only for a developer of
+  any scope. Exercised against the real binary on a loopback port
+  with a throwaway database, two generic recreate services with
+  harmless local scripts and a developer scoped to one of them: 187
+  raw-HTTP checks (own-service deploy, rollback, record, rules and
+  mark-read audited as the developer; a forged body `actor` and
+  injected script fields ignored; every deploy, rule and
+  notification route of the other service refused; every env write,
+  key, user, service-management and host mutation refused for a
+  scoped and an all-services developer; a scoped viewer still
+  read-only; a role change applying to the next request), then the
+  Users screen (assigning Developer) and a developer's session in a
+  browser with no refused request. Not exercised: a blue-green
+  cutover by a developer on a real service (the fixtures are
+  recreate services), and a host behind a reverse proxy.
+
+SCOPE GUARD: no env write rights for non-admins (`env.stage` is
+S33), no SDK key management, no host or security mutations, no API
+tokens, no custom roles, no groups.
 
 ## Working agreements
 

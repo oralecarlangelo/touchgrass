@@ -30,6 +30,12 @@ const (
 	AuditEnvApply             = "env.apply"
 	AuditEnvApplyFailed       = "env.apply_failed"
 	AuditEnvRollback          = "env.rollback"
+	AuditDeployRecord         = "deploy_record"
+	AuditAlertRuleCreate      = "alert_rule_create"
+	AuditAlertRuleDelete      = "alert_rule_delete"
+	AuditIssueRuleCreate      = "issue_rule_create"
+	AuditIssueRuleDelete      = "issue_rule_delete"
+	AuditNotificationRead     = "notification_read"
 )
 
 // Audit results recorded in the append-only log.

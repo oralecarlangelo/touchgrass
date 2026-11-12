@@ -29,8 +29,17 @@ const (
 	testScopedUsername = "scoped"
 	// testEmptyUsername is a viewer granted no service at all.
 	testEmptyUsername = "unassigned"
-	// testReservedUsername carries the reserved developer role.
-	testReservedUsername = "reserved"
+	// testDevUsername is a developer granted testfixture.GenericGranted.
+	testDevUsername = "scoped-dev"
+	// testFleetDevUsername is a developer with every service.
+	testFleetDevUsername = "fleet-dev"
+	// testEmptyDevUsername is a developer granted no service at all.
+	testEmptyDevUsername = "unassigned-dev"
+	// testNobodyUsername and testNobodyRole are an identity whose role
+	// the policy does not know. No account can be stored with it (the
+	// schema refuses), so it only ever reaches a guard directly.
+	testNobodyUsername = "nobody"
+	testNobodyRole     = model.Role("operator")
 	// testReachedHeader marks a response written by a route's handler,
 	// as opposed to its guard.
 	testReachedHeader = "X-Test-Reached"
@@ -104,7 +113,14 @@ type scopedFixture struct {
 func newScopedFixture(t *testing.T) scopedFixture {
 	t.Helper()
 
-	server, db := fullTestServer(t)
+	return newScopedFixtureWith(t, testServerOptions{})
+}
+
+// newScopedFixtureWith is newScopedFixture with server options.
+func newScopedFixtureWith(t *testing.T, opts testServerOptions) scopedFixture {
+	t.Helper()
+
+	server, db := fullTestServerWith(t, opts)
 	ctx := context.Background()
 	services := store.NewServiceStore(db)
 
@@ -127,7 +143,12 @@ func newScopedFixture(t *testing.T) scopedFixture {
 			Services: []string{testfixture.GenericGranted},
 		},
 		{Username: testEmptyUsername, PasswordHash: string(hash), Role: model.RoleViewer},
-		{Username: testReservedUsername, PasswordHash: string(hash), Role: model.RoleDeveloper, AllServices: true},
+		{
+			Username: testDevUsername, PasswordHash: string(hash), Role: model.RoleDeveloper,
+			Services: []string{testfixture.GenericGranted},
+		},
+		{Username: testFleetDevUsername, PasswordHash: string(hash), Role: model.RoleDeveloper, AllServices: true},
+		{Username: testEmptyDevUsername, PasswordHash: string(hash), Role: model.RoleDeveloper},
 	} {
 		if _, err := users.Create(ctx, user, defaultLoginUsername); err != nil {
 			t.Fatalf("Create(%s) error = %v, want nil", user.Username, err)
@@ -241,6 +262,28 @@ func guardHarness(server *Server) nethttp.Handler {
 	}
 
 	return server.auth.Middleware(slog.New(slog.DiscardHandler), mux)
+}
+
+// guardsOnly serves every non-public route's guard with a marker
+// handler and no auth middleware, so a guard can be called as an
+// identity no stored account could have.
+func guardsOnly(server *Server) nethttp.Handler {
+	mux := nethttp.NewServeMux()
+
+	for _, rt := range server.routes() {
+		if rt.kind == guardPublic {
+			continue
+		}
+
+		rt.handler = func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+			w.Header().Set(testReachedHeader, "1")
+			w.WriteHeader(nethttp.StatusNoContent)
+		}
+
+		mux.HandleFunc(rt.method+" "+rt.pattern, server.guard(rt))
+	}
+
+	return mux
 }
 
 // routeTarget fills a route pattern's placeholders. serviceID fills
@@ -459,7 +502,8 @@ func TestEveryRouteIsGuarded(t *testing.T) {
 
 	fixture := newScopedFixture(t)
 	handler := guardHarness(fixture.server)
-	reserved := fixture.cookieFor(t, testReservedUsername)
+	guards := guardsOnly(fixture.server)
+	nobody := Identity{Username: testNobodyUsername, Role: testNobodyRole, AllServices: true}
 
 	for _, rt := range fixture.server.routes() {
 		t.Run(routeName(rt), func(t *testing.T) {
@@ -482,12 +526,20 @@ func TestEveryRouteIsGuarded(t *testing.T) {
 				t.Errorf("without a session: status %d reached=%t, want 401", status, reached)
 			}
 
-			// An account whose role holds nothing is refused everywhere,
-			// its own session routes included: nothing is open by default.
-			status, reached, response := call(t, handler, reserved, rt.method, target, body)
-			if reached || status != nethttp.StatusForbidden || !strings.Contains(response, `"code":"forbidden"`) {
-				t.Errorf("role with no capabilities: status %d reached=%t body %s, want 403 forbidden",
-					status, reached, response)
+			// A role the policy does not know is refused everywhere, its
+			// own session routes included, whatever scope it carries:
+			// nothing is open by default.
+			var reader io.Reader
+			if body != "" {
+				reader = strings.NewReader(body)
+			}
+
+			rec := newRecorder()
+			guards.ServeHTTP(rec, withIdentity(newTestRequest(t, rt.method, target, reader), nobody))
+
+			if rec.Header().Get(testReachedHeader) != "" || rec.Code != nethttp.StatusForbidden ||
+				!strings.Contains(rec.Body.String(), `"code":"forbidden"`) {
+				t.Errorf("role with no capabilities: status %d body %s, want 403 forbidden", rec.Code, rec.Body.String())
 			}
 		})
 	}
@@ -551,11 +603,11 @@ type scopedExpectation struct {
 	reached bool
 }
 
-// scopedExpectations derives, from a route's declaration alone, what a
-// viewer granted only GenericGranted must get from it.
-func scopedExpectations(fixture scopedFixture, rt route) []scopedExpectation {
+// scopedExpectations derives, from a route's declaration alone, what an
+// account of role granted only GenericGranted must get from it.
+func scopedExpectations(fixture scopedFixture, rt route, role model.Role) []scopedExpectation {
 	granted, other, unknown := testfixture.GenericGranted, testfixture.GenericOther, "no-such-service"
-	holds := authz.RoleHolds(model.RoleViewer, rt.capability)
+	holds := authz.RoleHolds(role, rt.capability)
 
 	forbidden := func(label, serviceID string, resourceID int64) scopedExpectation {
 		return scopedExpectation{
@@ -615,26 +667,38 @@ func scopedExpectations(fixture scopedFixture, rt route) []scopedExpectation {
 	}
 }
 
-// The scoped-viewer matrix: every route, called in scope, out of scope,
-// with an unknown service, and with a foreign or missing resource id.
-func TestScopedViewerMatrix(t *testing.T) {
+// The scoped matrix: every route, called by a scoped viewer and a
+// scoped developer, in scope, out of scope, with an unknown service,
+// and with a foreign, missing or malformed resource id.
+func TestScopedAccountMatrix(t *testing.T) {
 	t.Parallel()
 
 	fixture := newScopedFixture(t)
 	handler := guardHarness(fixture.server)
-	cookie := fixture.cookieFor(t, testScopedUsername)
 
-	for _, rt := range fixture.server.routes() {
-		for _, want := range scopedExpectations(fixture, rt) {
-			t.Run(routeName(rt)+"/"+want.label, func(t *testing.T) {
-				t.Parallel()
+	accounts := []struct {
+		username string
+		role     model.Role
+	}{
+		{username: testScopedUsername, role: model.RoleViewer},
+		{username: testDevUsername, role: model.RoleDeveloper},
+	}
 
-				status, reached, body := call(t, handler, cookie, rt.method, want.target, want.body)
-				if status != want.status || reached != want.reached {
-					t.Errorf("%s %s = %d reached=%t (%s), want %d reached=%t",
-						rt.method, want.target, status, reached, strings.TrimSpace(body), want.status, want.reached)
-				}
-			})
+	for _, account := range accounts {
+		cookie := fixture.cookieFor(t, account.username)
+
+		for _, rt := range fixture.server.routes() {
+			for _, want := range scopedExpectations(fixture, rt, account.role) {
+				t.Run(string(account.role)+"/"+routeName(rt)+"/"+want.label, func(t *testing.T) {
+					t.Parallel()
+
+					status, reached, body := call(t, handler, cookie, rt.method, want.target, want.body)
+					if status != want.status || reached != want.reached {
+						t.Errorf("%s %s = %d reached=%t (%s), want %d reached=%t",
+							rt.method, want.target, status, reached, strings.TrimSpace(body), want.status, want.reached)
+					}
+				})
+			}
 		}
 	}
 }
@@ -697,33 +761,45 @@ func TestScopedDenialsDoNotRevealWhatExists(t *testing.T) {
 	}
 }
 
-// A viewer granted no service reaches only their own session routes
-// and the three lists, which come back empty.
-func TestViewerWithNoServices(t *testing.T) {
+// An account granted no service reaches only its own session routes
+// and the lists its role may ask for, which come back empty. For a
+// developer that adds the mark-all route, which then marks nothing.
+func TestAccountWithNoServices(t *testing.T) {
 	t.Parallel()
 
 	fixture := newScopedFixture(t)
 	handler := guardHarness(fixture.server)
-	cookie := fixture.cookieFor(t, testEmptyUsername)
 
-	for _, rt := range fixture.server.routes() {
-		if rt.kind == guardPublic {
-			continue
-		}
+	accounts := []struct {
+		username string
+		role     model.Role
+	}{
+		{username: testEmptyUsername, role: model.RoleViewer},
+		{username: testEmptyDevUsername, role: model.RoleDeveloper},
+	}
 
-		t.Run(routeName(rt), func(t *testing.T) {
-			t.Parallel()
+	for _, account := range accounts {
+		cookie := fixture.cookieFor(t, account.username)
 
-			wantReached := rt.kind == guardSession ||
-				(rt.listScoped && authz.RoleHolds(model.RoleViewer, rt.capability))
-
-			target := routeTarget(rt, "", fixture.granted[rt.resource])
-
-			status, reached, _ := call(t, handler, cookie, rt.method, target, routeBody(rt, testfixture.GenericGranted))
-			if reached != wantReached {
-				t.Errorf("status %d reached=%t, want reached=%t", status, reached, wantReached)
+		for _, rt := range fixture.server.routes() {
+			if rt.kind == guardPublic {
+				continue
 			}
-		})
+
+			t.Run(string(account.role)+"/"+routeName(rt), func(t *testing.T) {
+				t.Parallel()
+
+				wantReached := rt.kind == guardSession ||
+					(rt.listScoped && authz.RoleHolds(account.role, rt.capability))
+
+				target := routeTarget(rt, "", fixture.granted[rt.resource])
+
+				status, reached, _ := call(t, handler, cookie, rt.method, target, routeBody(rt, testfixture.GenericGranted))
+				if reached != wantReached {
+					t.Errorf("status %d reached=%t, want reached=%t", status, reached, wantReached)
+				}
+			})
+		}
 	}
 }
 

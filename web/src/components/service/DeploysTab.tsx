@@ -62,12 +62,20 @@ export default function DeploysTab({
   service,
   onServiceChanged,
   onUnauthorized,
-  isAdmin,
+  canTrigger,
+  canRecord,
+  recordAs,
 }: {
   service: ServiceView;
   onServiceChanged: () => void;
   onUnauthorized: () => void;
-  isAdmin: boolean;
+  // canTrigger shows deploy, cutover and rollback; canRecord shows the
+  // manual record form. Both are asked of this service.
+  canTrigger: boolean;
+  canRecord: boolean;
+  // recordAs is the username a manual record is filed under when the
+  // server decides it (anyone but an admin); null lets the user type one.
+  recordAs: string | null;
 }) {
   const [deploys, setDeploys] = useState<Deploy[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -105,8 +113,10 @@ export default function DeploysTab({
   }, [load, onServiceChanged]);
 
   async function handleRecordDeploy(): Promise<void> {
-    if (sha.trim() === '' || actor.trim() === '') {
-      setFormError('SHA and actor are required.');
+    const recordedActor = recordAs ?? actor.trim();
+
+    if (sha.trim() === '' || recordedActor === '') {
+      setFormError(recordAs === null ? 'SHA and actor are required.' : 'SHA is required.');
       return;
     }
 
@@ -116,7 +126,7 @@ export default function DeploysTab({
     try {
       await recordDeploy(service.id, {
         sha: sha.trim(),
-        actor: actor.trim(),
+        actor: recordedActor,
         outcome,
         notes: notes.trim(),
       });
@@ -163,15 +173,15 @@ export default function DeploysTab({
 
   return (
     <div className="space-y-4">
-      {isAdmin && service.strategy === 'bluegreen' && (
+      {canTrigger && service.strategy === 'bluegreen' && (
         <CutoverPanel service={service} onFinished={handleOperationFinished} />
       )}
 
-      {isAdmin && service.strategy === 'recreate' && (
+      {canTrigger && service.strategy === 'recreate' && (
         <DeployPanel service={service} onFinished={handleOperationFinished} />
       )}
 
-      {isAdmin && (service.strategy === 'bluegreen' || service.strategy === 'recreate') && (
+      {canTrigger && (service.strategy === 'bluegreen' || service.strategy === 'recreate') && (
         <RollbackPanel service={service} onFinished={handleOperationFinished} />
       )}
 
@@ -282,13 +292,13 @@ export default function DeploysTab({
             </div>
           )}
 
-          {isAdmin && formError !== null && (
+          {canRecord && formError !== null && (
             <p role="alert" className="text-destructive text-sm">
               {formError}
             </p>
           )}
 
-          {isAdmin && (
+          {canRecord && (
           <div className="flex flex-wrap items-end gap-2 border-t pt-4">
             <div className="space-y-1">
               <Label htmlFor={`sha-${service.id}`}>Image SHA</Label>
@@ -299,15 +309,24 @@ export default function DeploysTab({
                 className="w-36 font-mono"
               />
             </div>
-            <div className="space-y-1">
-              <Label htmlFor={`actor-${service.id}`}>Actor</Label>
-              <Input
-                id={`actor-${service.id}`}
-                value={actor}
-                onChange={(event) => setActor(event.target.value)}
-                className="w-32"
-              />
-            </div>
+            {recordAs === null ? (
+              <div className="space-y-1">
+                <Label htmlFor={`actor-${service.id}`}>Actor</Label>
+                <Input
+                  id={`actor-${service.id}`}
+                  value={actor}
+                  onChange={(event) => setActor(event.target.value)}
+                  className="w-32"
+                />
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <p className="text-sm leading-none font-medium">Actor</p>
+                <p className="text-muted-foreground flex h-9 items-center text-sm">
+                  Recorded as {recordAs}
+                </p>
+              </div>
+            )}
             <div className="space-y-1">
               <Label htmlFor={`outcome-${service.id}`}>Outcome</Label>
               <Select value={outcome} onValueChange={setOutcome}>

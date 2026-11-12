@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
@@ -83,8 +84,8 @@ func migrateFromV040(t *testing.T) *UserStore {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
-	if len(applied) != 2 || applied[0] != "0022" || applied[1] != "0023" {
-		t.Fatalf("MigrateUp() applied = %v, want [0022 0023]", applied)
+	if !slices.Equal(applied, []string{"0022", "0023", "0024"}) {
+		t.Fatalf("MigrateUp() applied = %v, want [0022 0023 0024]", applied)
 	}
 
 	return NewUserStore(db)

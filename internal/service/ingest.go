@@ -38,12 +38,14 @@ const (
 
 // IngestorConfig wires an Ingestor.
 type IngestorConfig struct {
-	Services       *store.ServiceStore
-	Keys           *store.KeyStore
-	Occurrences    *store.OccurrenceStore
-	Issues         *store.IssueStore
-	IssueRules     *store.IssueRuleStore
-	Logs           *store.LogStore
+	Services    *store.ServiceStore
+	Keys        *store.KeyStore
+	Occurrences *store.OccurrenceStore
+	Issues      *store.IssueStore
+	IssueRules  *store.IssueRuleStore
+	Logs        *store.LogStore
+	// Audit records who created or deleted an issue rule.
+	Audit          *Audit
 	MaxOccurrences int
 	Logger         *slog.Logger
 }
@@ -57,6 +59,7 @@ type Ingestor struct {
 	issues         *store.IssueStore
 	issueRules     *store.IssueRuleStore
 	logs           *store.LogStore
+	audit          *Audit
 	maxOccurrences int
 	logger         *slog.Logger
 }
@@ -70,6 +73,7 @@ func NewIngestor(cfg IngestorConfig) *Ingestor {
 		issues:         cfg.Issues,
 		issueRules:     cfg.IssueRules,
 		logs:           cfg.Logs,
+		audit:          cfg.Audit,
 		maxOccurrences: cfg.MaxOccurrences,
 		logger:         cfg.Logger,
 	}

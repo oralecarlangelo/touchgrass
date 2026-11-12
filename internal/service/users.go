@@ -715,11 +715,10 @@ func checkUserInput(
 	return checkPassword(input.Password)
 }
 
-// checkRole rejects a role no account may be given. The reserved
-// developer role is rejected here until its rules exist.
+// checkRole rejects a role no account may be given.
 func checkRole(role model.Role) error {
 	if !authz.Assignable(role) {
-		return fmt.Errorf("%w: role %q (want admin or viewer)", ErrInvalidInput, role)
+		return fmt.Errorf("%w: role %q (want admin, developer, or viewer)", ErrInvalidInput, role)
 	}
 
 	return nil

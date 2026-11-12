@@ -215,7 +215,7 @@ func TestIssueRulesRoundTrip(t *testing.T) {
 
 	created, err := ingestor.CreateIssueRule(ctx, model.IssueRuleCreate{
 		ServiceID: testServiceAPI, Kind: model.IssueRuleSpike, Threshold: 10, WindowSecs: 300,
-	})
+	}, testAdminActor)
 	if err != nil {
 		t.Fatalf("CreateIssueRule() error = %v, want nil", err)
 	}
@@ -233,11 +233,11 @@ func TestIssueRulesRoundTrip(t *testing.T) {
 		t.Fatalf("IssueRules() = %d rules, want 1", len(rules))
 	}
 
-	if err := ingestor.DeleteIssueRule(ctx, created.ID); err != nil {
+	if err := ingestor.DeleteIssueRule(ctx, created.ID, testAdminActor); err != nil {
 		t.Fatalf("DeleteIssueRule() error = %v, want nil", err)
 	}
 
-	if err := ingestor.DeleteIssueRule(ctx, created.ID); !errors.Is(err, store.ErrIssueRuleNotFound) {
+	if err := ingestor.DeleteIssueRule(ctx, created.ID, testAdminActor); !errors.Is(err, store.ErrIssueRuleNotFound) {
 		t.Errorf("DeleteIssueRule() error = %v, want ErrIssueRuleNotFound", err)
 	}
 }
@@ -274,7 +274,7 @@ func TestCreateIssueRuleRejects(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := ingestor.CreateIssueRule(ctx, tt.create); err == nil {
+			if _, err := ingestor.CreateIssueRule(ctx, tt.create, testAdminActor); err == nil {
 				t.Error("CreateIssueRule() error = nil, want error")
 			}
 		})
@@ -282,7 +282,7 @@ func TestCreateIssueRuleRejects(t *testing.T) {
 
 	created, err := ingestor.CreateIssueRule(ctx, model.IssueRuleCreate{
 		ServiceID: testServiceAPI, Kind: model.IssueRuleNewIssue, Threshold: 99, WindowSecs: 60,
-	})
+	}, testAdminActor)
 	if err != nil {
 		t.Fatalf("CreateIssueRule() error = %v, want nil", err)
 	}

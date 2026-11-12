@@ -124,6 +124,13 @@ export function firstAllowedView(session: SessionInfo | null, can: Can): ViewId 
   return landingOrder.find((view) => canOpenView(view, session, can)) ?? 'help';
 }
 
+// recordsAsSelf reports a user whose manual deploy records always carry
+// their own name: the server ignores an "actor" from anyone but an
+// admin, so the form does not offer the field.
+export function recordsAsSelf(session: SessionInfo): boolean {
+  return session.role !== 'admin';
+}
+
 function countServices(count: number): string {
   if (count === 0) {
     return 'no services';
@@ -141,7 +148,7 @@ export function scopeLabel(access: { all_services?: boolean; services?: string[]
   return countServices((access.services ?? []).length);
 }
 
-// accessLabel is the header's one-line summary, e.g. "viewer · 2 services".
+// accessLabel is the header's one-line summary, e.g. "developer · 2 services".
 export function accessLabel(session: SessionInfo): string {
   return `${session.role} · ${scopeLabel(session)}`;
 }

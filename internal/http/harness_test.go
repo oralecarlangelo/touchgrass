@@ -177,6 +177,9 @@ type testServerOptions struct {
 	envHost service.EnvHost
 	// envKeyMissing builds the env pillar without an encryption key.
 	envKeyMissing bool
+	// deployRunner replaces the deploy engine's script runner; nil keeps
+	// the engine's own, which executes the configured script.
+	deployRunner service.Runner
 }
 
 // fullTestServer builds a Server with every service on a seeded store.
@@ -218,10 +221,9 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 		Deploys:  store.NewDeployStore(db),
 	})
 
-	sampler := testSampler(db, services, performance, logger)
-
-	deploys := service.NewDeploys(services, store.NewDeployStore(db))
 	audit := service.NewAudit(services, store.NewAuditStore(db))
+	sampler := testSampler(db, services, performance, audit, logger)
+	deploys := service.NewDeploys(services, store.NewDeployStore(db)).WithAudit(audit)
 	managedUsers := service.NewUsers(store.NewUserStore(db), audit)
 	hub := NewHub(logger)
 	securityStore := store.NewSecurityStore(db)
@@ -253,6 +255,7 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 			Audit:         audit,
 			Prober:        stubProber{},
 			Emit:          func(model.Event) {},
+			Run:           opts.deployRunner,
 			Timeout:       time.Minute,
 			ProbeInterval: time.Millisecond,
 			Logger:        logger,
@@ -269,6 +272,7 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 			Issues:         store.NewIssueStore(db),
 			IssueRules:     store.NewIssueRuleStore(db),
 			Logs:           store.NewLogStore(db),
+			Audit:          audit,
 			MaxOccurrences: 1000,
 			Logger:         logger,
 		}),
@@ -308,6 +312,7 @@ func testSampler(
 	db *store.DB,
 	services *store.ServiceStore,
 	performance *service.Performance,
+	audit *service.Audit,
 	logger *slog.Logger,
 ) *service.Sampler {
 	return service.NewSampler(service.SamplerConfig{
@@ -324,6 +329,7 @@ func testSampler(
 		SDKLogs:       store.NewSDKLogStore(db),
 		Fleet:         store.NewFleetStore(db),
 		Performance:   performance,
+		Audit:         audit,
 		Interval:      time.Hour,
 		Retention: service.Retention{
 			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,

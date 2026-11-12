@@ -70,6 +70,7 @@ func testSampler(t *testing.T, lister StatsLister) (*Sampler, *store.DB) {
 		Logs:          store.NewLogStore(db),
 		SDKLogs:       store.NewSDKLogStore(db),
 		Fleet:         store.NewFleetStore(db),
+		Audit:         NewAudit(store.NewServiceStore(db), store.NewAuditStore(db)),
 		Interval:      5 * time.Millisecond,
 		Retention: Retention{
 			Metrics: time.Hour, Notifications: time.Hour, Deploys: time.Hour, Errors: time.Hour, Logs: time.Hour,
@@ -402,7 +403,7 @@ func TestCreateRuleValidation(t *testing.T) {
 
 	created, err := sampler.CreateRule(ctx, model.RuleCreate{
 		ServiceID: testServiceAPI, Metric: model.MetricDisk, Threshold: 1000, DurationSecs: 60,
-	})
+	}, testAdminActor)
 	if err != nil {
 		t.Fatalf("CreateRule() error = %v, want nil", err)
 	}
@@ -425,13 +426,13 @@ func TestCreateRuleValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if _, err := sampler.CreateRule(ctx, tt.create); err == nil {
+			if _, err := sampler.CreateRule(ctx, tt.create, testAdminActor); err == nil {
 				t.Errorf("CreateRule(%+v) error = nil, want error", tt.create)
 			}
 		})
 	}
 
-	if err := sampler.DeleteRule(ctx, created.ID); err != nil {
+	if err := sampler.DeleteRule(ctx, created.ID, testAdminActor); err != nil {
 		t.Errorf("DeleteRule() error = %v, want nil", err)
 	}
 }

@@ -207,7 +207,8 @@ export default function App() {
     }
 
     // Read-only users live in the logs; land them there unless a deep link says otherwise.
-    if (!can('services.manage') && can('logs.read') && sessionStorage.getItem('tg-landed') === null) {
+    // Anyone who can deploy starts on the dashboard, like an admin.
+    if (!can('deploy.trigger') && can('logs.read') && sessionStorage.getItem('tg-landed') === null) {
       sessionStorage.setItem('tg-landed', '1');
 
       if (window.location.hash === '' || window.location.hash === '#/dashboard') {
@@ -429,6 +430,7 @@ export default function App() {
             onServiceChanged={() => void load()}
             onUnauthorized={handleUnauthorized}
             can={can}
+            session={session}
             initialTab={serviceTab}
             onTabChange={setServiceTab}
           />
@@ -443,7 +445,7 @@ export default function App() {
         ) : view === 'audit' ? (
           <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
         ) : view === 'help' ? (
-          <HelpScreen isAdmin={can('services.manage')} onView={handleView} />
+          <HelpScreen can={can} onView={handleView} />
         ) : view === 'notifications' ? (
           <NotificationsScreen
             services={services ?? []}

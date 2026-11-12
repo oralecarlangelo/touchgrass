@@ -261,7 +261,8 @@ export default function UsersScreen({
         <CardHeader>
           <CardTitle className="text-sm font-medium">
             A role decides what a user may do; the services decide where. Admins run everything,
-            everywhere. Viewers read, on every service or only the ones you select.
+            everywhere. Viewers read, and developers also deploy, on every service or only the ones
+            you select.
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -375,9 +376,10 @@ export default function UsersScreen({
           <DialogHeader>
             <DialogTitle>New user</DialogTitle>
             <DialogDescription>
-              Viewers are read-only: good for developers who need the logs. Admins can deploy and
-              manage users. The password you set is temporary: the user must replace it at their
-              first login, so pass it to them directly.
+              Viewers are read-only: good for people who need the logs. Developers can also deploy
+              the services you give them. Admins can do everything, including manage users. The
+              password you set is temporary: the user must replace it at their first login, so pass
+              it to them directly.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

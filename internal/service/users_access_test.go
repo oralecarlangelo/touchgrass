@@ -100,11 +100,6 @@ func TestUsersAccessRejects(t *testing.T) {
 		wantErr  error
 	}{
 		{
-			name: "the reserved developer role", username: "new-developer",
-			access:  model.UserAccess{Role: model.RoleDeveloper, AllServices: true},
-			wantErr: ErrInvalidInput,
-		},
-		{
 			name: "an unknown role", username: "new-owner",
 			access:  model.UserAccess{Role: model.Role("owner"), AllServices: true},
 			wantErr: ErrInvalidInput,
@@ -166,8 +161,8 @@ func TestUsersAccessRejects(t *testing.T) {
 		t.Errorf("SetAccess(unknown user) error = %v, want ErrUserNotFound", err)
 	}
 
-	if _, err := users.SetRole(ctx, existing.ID, model.RoleDeveloper, testAdminActor); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("SetRole(developer) error = %v, want ErrInvalidInput", err)
+	if _, err := users.SetRole(ctx, existing.ID, model.Role("owner"), testAdminActor); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("SetRole(owner) error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -216,6 +211,69 @@ func TestUsersSetAccessRoundTrip(t *testing.T) {
 	if stored.AllServices || !slices.Equal(stored.Services, []string{testfixture.GenericGranted}) {
 		t.Errorf("Lookup() = %+v, want the stored scope", stored)
 	}
+}
+
+// wantAccess fails unless user has the given role and exactly the
+// listed services.
+func wantAccess(t *testing.T, label string, user model.User, role model.Role, services ...string) {
+	t.Helper()
+
+	if user.Role != role || user.AllServices || !slices.Equal(user.Services, services) {
+		t.Errorf("%s = %+v, want role %s scoped to %v", label, user, role, services)
+	}
+}
+
+// wantLatestAudit fails unless the newest audit row is action with detail.
+func wantLatestAudit(t *testing.T, db *store.DB, action, detail string) {
+	t.Helper()
+
+	if gotAction, gotDetail := latestAuditDetail(t, db); gotAction != action || gotDetail != detail {
+		t.Errorf("audit = %s %q, want %s %q", gotAction, gotDetail, action, detail)
+	}
+}
+
+// The developer role is assignable on create, through the access
+// route's service method, and through the older role-only method, and
+// it keeps whatever scope it is given.
+func TestUsersDeveloperRoleRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	users, db := openScopedUsers(t)
+	ctx := context.Background()
+
+	created, err := users.Create(ctx, CreateUserInput{
+		Username: "ops-dev", Password: testUserPassword, Role: model.RoleDeveloper,
+		Services: []string{testfixture.GenericGranted},
+	}, testAdminActor)
+	if err != nil {
+		t.Fatalf("Create(developer) error = %v, want nil", err)
+	}
+
+	wantAccess(t, "Create()", created, model.RoleDeveloper, testfixture.GenericGranted)
+	wantLatestAudit(t, db, model.AuditUserCreate, "created user ops-dev (role developer, services [billing-worker])")
+
+	viewer := createDev(t, users)
+
+	promoted, err := users.SetAccess(ctx, viewer.ID, model.UserAccess{
+		Role: model.RoleDeveloper, Services: []string{testfixture.GenericOther},
+	}, testAdminActor)
+	if err != nil {
+		t.Fatalf("SetAccess(developer) error = %v, want nil", err)
+	}
+
+	wantAccess(t, "SetAccess()", promoted, model.RoleDeveloper, testfixture.GenericOther)
+	wantLatestAudit(t, db, model.AuditUserUpdate, "set access of user dev: role developer, services [docs-site]")
+
+	if _, err := users.SetRole(ctx, viewer.ID, model.RoleViewer, testAdminActor); err != nil {
+		t.Fatalf("SetRole(viewer) error = %v, want nil", err)
+	}
+
+	again, err := users.SetRole(ctx, viewer.ID, model.RoleDeveloper, testAdminActor)
+	if err != nil {
+		t.Fatalf("SetRole(developer) error = %v, want nil", err)
+	}
+
+	wantAccess(t, "SetRole()", again, model.RoleDeveloper, testfixture.GenericOther)
 }
 
 // A viewer may be left with no service at all.
@@ -309,9 +367,11 @@ func TestUsersLastAdminGuardCoversEveryAccessChange(t *testing.T) {
 	}
 
 	demotions := map[string]model.UserAccess{
-		"all-services viewer": {Role: model.RoleViewer, AllServices: true},
-		"scoped viewer":       {Role: model.RoleViewer, Services: []string{testfixture.GenericGranted}},
-		"viewer with nothing": {Role: model.RoleViewer},
+		"all-services viewer":    {Role: model.RoleViewer, AllServices: true},
+		"scoped viewer":          {Role: model.RoleViewer, Services: []string{testfixture.GenericGranted}},
+		"viewer with nothing":    {Role: model.RoleViewer},
+		"all-services developer": {Role: model.RoleDeveloper, AllServices: true},
+		"scoped developer":       {Role: model.RoleDeveloper, Services: []string{testfixture.GenericGranted}},
 	}
 
 	for name, access := range demotions {
@@ -322,6 +382,10 @@ func TestUsersLastAdminGuardCoversEveryAccessChange(t *testing.T) {
 
 	if _, err := users.SetRole(ctx, admin.ID, model.RoleViewer, testAdminActor); !errors.Is(err, ErrConflict) {
 		t.Errorf("SetRole(last admin to viewer) error = %v, want ErrConflict", err)
+	}
+
+	if _, err := users.SetRole(ctx, admin.ID, model.RoleDeveloper, testAdminActor); !errors.Is(err, ErrConflict) {
+		t.Errorf("SetRole(last admin to developer) error = %v, want ErrConflict", err)
 	}
 
 	still, err := users.Lookup(ctx, "solo")

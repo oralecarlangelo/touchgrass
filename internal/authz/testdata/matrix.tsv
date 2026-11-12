@@ -1,32 +1,33 @@
 # The access matrix, checked in so a policy change shows up in review.
 # Columns: capability, scope class, viewer, developer, admin.
-# "developer" is reserved and holds nothing until its rules are built.
-session.self	self	yes	no	yes
-service.read	service	yes	no	yes
-metrics.read	service	yes	no	yes
-deploy.read	service	yes	no	yes
-deploy.trigger	service	no	no	yes
-deploy.record	service	no	no	yes
-logs.read	service	yes	no	yes
-issues.read	service	yes	no	yes
-alerts.read	service	yes	no	yes
-alerts.manage	service	no	no	yes
-notifications.ack	service	no	no	yes
-env.read_keys	service	yes	no	yes
+# "developer" is a viewer plus deploy.trigger, deploy.record, alerts.manage
+# and notifications.ack. It does not hold env.stage yet.
+session.self	self	yes	yes	yes
+service.read	service	yes	yes	yes
+metrics.read	service	yes	yes	yes
+deploy.read	service	yes	yes	yes
+deploy.trigger	service	no	yes	yes
+deploy.record	service	no	yes	yes
+logs.read	service	yes	yes	yes
+issues.read	service	yes	yes	yes
+alerts.read	service	yes	yes	yes
+alerts.manage	service	no	yes	yes
+notifications.ack	service	no	yes	yes
+env.read_keys	service	yes	yes	yes
 env.stage	service	no	no	yes
 env.discard	service	no	no	yes
 env.import	service	no	no	yes
 env.apply	service	no	no	yes
 env.reveal	service	no	no	yes
-keys.read	service	yes	no	yes
+keys.read	service	yes	yes	yes
 keys.manage	service	no	no	yes
-audit.read	service	yes	no	yes
-audit.read_all	fleet	yes	no	yes
-host.read	fleet	yes	no	yes
+audit.read	service	yes	yes	yes
+audit.read_all	fleet	yes	yes	yes
+host.read	fleet	yes	yes	yes
 host.manage	fleet	no	no	yes
-security.read	fleet	yes	no	yes
+security.read	fleet	yes	yes	yes
 security.manage	fleet	no	no	yes
-databases.read	fleet	yes	no	yes
+databases.read	fleet	yes	yes	yes
 databases.backup	fleet	no	no	yes
 databases.restore	fleet	no	no	yes
 services.manage	fleet	no	no	yes

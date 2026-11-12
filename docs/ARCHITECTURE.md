@@ -128,7 +128,7 @@ and private runbooks do not require an ADR because they are not product logic.
 - Errors: internal chain with `%w`; boundary translates to
   `{error: <user-safe message>, code: <machine code>}` + status;
   technical detail goes to logs only.
-- Middleware: multi-user auth (session cookie, admin/viewer roles),
+- Middleware: multi-user auth (session cookie, admin/developer/viewer roles),
   structured request logging (method, path, status, duration).
 
 ## Data
@@ -217,7 +217,8 @@ workflows for investigation.
 ## Auth (v1)
 
 - UI/API: managed users with a role and a scope (ADR-0014). The
-  role decides what a user may do: `admin` (full power) or `viewer`
+  role decides what a user may do: `admin` (full power), `developer`
+  (read, plus deploy and alert management; ADR-0015) or `viewer`
   (read-only; every mutating route answers 403). The scope decides
   on which services: all of them, or a list in `user_services`.
   `internal/authz` holds the one role-to-capability table; every
@@ -315,6 +316,5 @@ Single binary, subcommands via stdlib `flag` (no Cobra in v1):
   browser/mobile SDKs, custom roles, groups, SSO, and a general
   secrets manager are explicitly out — don't half-build them. The env
   pillar (ADR-0012) manages one env file per service and nothing more.
-  Two roles plus a per-user service scope (ADR-0010, ADR-0014) are the
-  whole access model; a third `developer` role is reserved in the
-  schema and deliberately holds nothing yet.
+  Three fixed roles plus a per-user service scope (ADR-0010, ADR-0014,
+  ADR-0015) are the whole access model.

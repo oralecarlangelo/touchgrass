@@ -355,8 +355,8 @@ func TestSecretKeyRefusalDoesNotDependOnTheValueSent(t *testing.T) {
 	target := envRoute(granted, "/entries/"+testProposalSecretKey)
 
 	callers := map[string]*nethttp.Cookie{
-		testLabelScopedDev:      fixture.cookieFor(t, testDevUsername),
-		testLabelFleetDev:        fixture.cookieFor(t, testFleetDevUsername),
+		testLabelScopedDev: fixture.cookieFor(t, testDevUsername),
+		testLabelFleetDev:  fixture.cookieFor(t, testFleetDevUsername),
 	}
 
 	attempts := []struct {
@@ -510,10 +510,10 @@ func TestRenderedHashIsAbsentForViewersAndDevelopers(t *testing.T) {
 	reads := []string{"", "/diff", "/revisions", "/runs/" + runID}
 
 	nonAppliers := map[string]*nethttp.Cookie{
-		"scoped viewer":          fixture.cookieFor(t, testScopedUsername),
-		testLabelFleetViewer:     viewerCookie(t, fixture.server),
-		testLabelScopedDev:      fixture.cookieFor(t, testDevUsername),
-		testLabelFleetDev:        fixture.cookieFor(t, testFleetDevUsername),
+		"scoped viewer":      fixture.cookieFor(t, testScopedUsername),
+		testLabelFleetViewer: viewerCookie(t, fixture.server),
+		testLabelScopedDev:   fixture.cookieFor(t, testDevUsername),
+		testLabelFleetDev:    fixture.cookieFor(t, testFleetDevUsername),
 	}
 
 	for label, cookie := range nonAppliers {

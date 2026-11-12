@@ -139,7 +139,7 @@ the all-services scope. `self` applies to the user's own account.
 | `alerts.manage` | Create and delete alert and issue rules | service | no | yes | yes |
 | `notifications.ack` | Mark notifications read | service | no | yes | yes |
 | `env.read_keys` | Env key names, flags, non-secret values, diff, revisions, runs | service | yes | yes | yes |
-| `env.stage` | Stage or remove an env entry | service | no | no | yes |
+| `env.stage` | Stage or remove an env entry. A developer proposes: new keys and non-secret keys only | service | no | yes | yes |
 | `env.discard` | Drop all pending env changes | service | no | no | yes |
 | `env.import` | Import the env file from the host | service | no | no | yes |
 | `env.apply` | Apply env changes, roll back to a revision | service | no | no | yes |

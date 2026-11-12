@@ -13,6 +13,7 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import type { Can, Capability } from '@/lib/access.ts';
 import type { ViewId } from '@/lib/views.ts';
 
 interface HelpFaq {
@@ -27,7 +28,8 @@ interface Playbook {
   action: string;
   view: ViewId;
   icon: ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
-  adminOnly?: boolean;
+  // The capability the task needs; a playbook without one is for everyone.
+  needs?: Capability;
 }
 
 const operatorLoop = [
@@ -73,7 +75,7 @@ const playbooks: Playbook[] = [
     action: 'Open rules',
     view: 'rules',
     icon: BellRing,
-    adminOnly: true,
+    needs: 'alerts.manage',
   },
   {
     title: 'Protect database recovery',
@@ -81,7 +83,7 @@ const playbooks: Playbook[] = [
     action: 'Open databases',
     view: 'databases',
     icon: DatabaseBackup,
-    adminOnly: true,
+    needs: 'databases.backup',
   },
 ];
 
@@ -105,6 +107,11 @@ const helpFaqs: HelpFaq[] = [
     category: 'Access',
     question: 'What can a read-only user do?',
     answer: 'Read-only users can inspect services, fleet state, metrics, logs, issues, notifications, security evidence, and audit history. They cannot change policies, infrastructure, users, keys, or finding workflow state.',
+  },
+  {
+    category: 'Access',
+    question: 'What can a developer do?',
+    answer: 'A developer reads everything a read-only user reads. On the services in their scope they can also deploy, cut over and roll back (this runs the deploy script an admin configured, with nothing added), record a manual deploy under their own name, create and delete alert and issue rules, and mark notifications read. Each of those is written to the audit trail under their username. A developer cannot change environment values or secrets, API keys, users, services, or anything on the host.',
   },
   {
     category: 'Access',
@@ -150,15 +157,19 @@ export function filterHelpFaqs(query: string): HelpFaq[] {
 }
 
 export default function HelpScreen({
-  isAdmin,
+  can,
   onView,
 }: {
-  isAdmin: boolean;
+  can: Can;
   onView: (view: ViewId) => void;
 }) {
   const [query, setQuery] = useState('');
   const visibleFaqs = useMemo(() => filterHelpFaqs(query), [query]);
-  const visiblePlaybooks = playbooks.filter((playbook) => !playbook.adminOnly || isAdmin);
+  const visiblePlaybooks = playbooks.filter(
+    (playbook) => playbook.needs === undefined || can(playbook.needs),
+  );
+  const isAdmin = can('services.manage');
+  const canOperate = can('deploy.trigger');
 
   return (
     <div className="space-y-10 pb-10">
@@ -203,7 +214,13 @@ export default function HelpScreen({
             Start with the closest task. Each path opens the evidence you need first.
           </p>
         </div>
-        {!isAdmin && (
+        {!isAdmin && canOperate && (
+          <p className="border-border bg-muted/40 rounded-lg border px-4 py-3 text-sm">
+            You can deploy and roll back your services, manage their alert rules, and mark their
+            notifications read. Ask an admin to change env, keys, users, or infrastructure.
+          </p>
+        )}
+        {!isAdmin && !canOperate && (
           <p className="border-border bg-muted/40 rounded-lg border px-4 py-3 text-sm">
             You have read-only access. Investigate and share evidence here. Ask an admin to change policy or infrastructure.
           </p>

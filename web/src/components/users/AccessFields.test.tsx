@@ -1,7 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import AccessFields, { accessProblem, defaultAccess, normalizeAccess } from './AccessFields.tsx';
+import AccessFields, {
+  accessProblem,
+  assignableRoles,
+  defaultAccess,
+  normalizeAccess,
+  roleDescription,
+} from './AccessFields.tsx';
 import type { ServiceView } from '@/lib/api.ts';
 
 const services = [
@@ -59,6 +65,44 @@ describe('AccessFields', () => {
     expect(scoped).toContain('Services this user can see');
     expect(everywhere).not.toContain('Services this user can see');
     expect(everywhere).toContain('host screens');
+  });
+
+  it('offers the developer role and says what each role may do', () => {
+    expect(assignableRoles.map((role) => role.value)).toEqual(['viewer', 'developer', 'admin']);
+    expect(roleDescription('developer')).toContain('deploy, cut over and roll back');
+    expect(roleDescription('developer')).toContain('Cannot change env, keys, users or services');
+    expect(roleDescription('viewer')).toContain('Changes nothing');
+    expect(roleDescription('owner')).toBe('');
+
+    const developer = renderToStaticMarkup(
+      <AccessFields
+        idPrefix="t"
+        access={{ role: 'developer', all_services: false, services: ['billing-worker'] }}
+        onChange={() => undefined}
+        services={services}
+      />,
+    );
+    const viewer = renderToStaticMarkup(
+      <AccessFields
+        idPrefix="t"
+        access={{ role: 'viewer', all_services: false, services: ['billing-worker'] }}
+        onChange={() => undefined}
+        services={services}
+      />,
+    );
+
+    expect(developer).toContain(roleDescription('developer'));
+    expect(developer).toContain('A developer can deploy these services and no others.');
+    expect(developer).toContain('Services this user can see');
+    expect(viewer).toContain(roleDescription('viewer'));
+    expect(viewer).not.toContain('A developer can deploy');
+  });
+
+  it('keeps a scoped developer scoped when normalized', () => {
+    expect(
+      normalizeAccess({ role: 'developer', all_services: false, services: ['docs-site', 'billing-worker'] }),
+    ).toEqual({ role: 'developer', all_services: false, services: ['billing-worker', 'docs-site'] });
+    expect(accessProblem({ role: 'developer', all_services: false, services: [] })).toContain('at least one');
   });
 
   it('locks an admin to every service', () => {

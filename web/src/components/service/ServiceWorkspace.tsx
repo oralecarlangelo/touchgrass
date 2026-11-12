@@ -12,8 +12,8 @@ import EnvironmentTab from './EnvironmentTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
 import OverviewTab from './OverviewTab.tsx';
 import PerformanceTab from './PerformanceTab.tsx';
-import type { Can } from '@/lib/access.ts';
-import type { ServiceView } from '@/lib/api.ts';
+import { recordsAsSelf, type Can } from '@/lib/access.ts';
+import type { ServiceView, SessionInfo } from '@/lib/api.ts';
 
 export type ServiceTab =
   | 'overview'
@@ -32,6 +32,7 @@ export default function ServiceWorkspace({
   onServiceChanged,
   onUnauthorized,
   can,
+  session,
   initialTab = 'overview',
   onTabChange,
 }: {
@@ -40,6 +41,7 @@ export default function ServiceWorkspace({
   onServiceChanged: () => void;
   onUnauthorized: () => void;
   can: Can;
+  session: SessionInfo;
   initialTab?: ServiceTab;
   onTabChange?: (tab: ServiceTab) => void;
 }) {
@@ -103,7 +105,9 @@ export default function ServiceWorkspace({
               service={service}
               onServiceChanged={onServiceChanged}
               onUnauthorized={onUnauthorized}
-              isAdmin={can('deploy.trigger', service.id)}
+              canTrigger={can('deploy.trigger', service.id)}
+              canRecord={can('deploy.record', service.id)}
+              recordAs={recordsAsSelf(session) ? session.username : null}
             />
           )}
         </TabsContent>

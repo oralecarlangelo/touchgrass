@@ -220,7 +220,10 @@ func runEnvSet(args []string) error {
 		return errors.New("env set argument must be KEY=VALUE")
 	}
 
-	entry, err := cmd.env.Stage(context.Background(), cmd.service.ID, key, value, isSecret, cmd.actor)
+	entry, err := cmd.env.Stage(context.Background(), service.EnvChange{
+		ServiceID: cmd.service.ID, Key: key, Value: value, IsSecret: isSecret,
+		By: service.EnvActor{Name: cmd.actor, Reviewer: true},
+	})
 	if err != nil {
 		return err
 	}
@@ -247,7 +250,9 @@ func runEnvApply(args []string) error {
 
 	ctx := context.Background()
 
-	runID, err := cmd.env.Apply(ctx, cmd.service.ID, cmd.service.Name, summary, cmd.actor)
+	runID, err := cmd.env.Apply(ctx, service.EnvApplyRequest{
+		ServiceID: cmd.service.ID, Confirm: cmd.service.Name, Summary: summary, Actor: cmd.actor,
+	})
 	if err != nil {
 		return err
 	}

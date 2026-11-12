@@ -218,6 +218,20 @@ func requireIs(t *testing.T, label string, err, want error) {
 	}
 }
 
+// testEnvReviewer is the full-authority author the existing suites use.
+var testEnvReviewer = EnvActor{Name: testEnvActor, Reviewer: true}
+
+// reviewerChange builds a staged change by the reviewer.
+func reviewerChange(key, value string, isSecret bool) EnvChange {
+	return EnvChange{ServiceID: testEnvServiceID, Key: key, Value: value, IsSecret: isSecret, By: testEnvReviewer}
+}
+
+// applyRequest builds an apply of the fixture service confirmed with
+// confirm.
+func applyRequest(confirm, summary string) EnvApplyRequest {
+	return EnvApplyRequest{ServiceID: testEnvServiceID, Confirm: confirm, Summary: summary, Actor: testEnvActor}
+}
+
 // healthyProber answers healthy for the fixture probe URL.
 func healthyProber() stubProber {
 	return stubProber{healthy: map[string]bool{testEnvProbeURL: true}}
@@ -227,7 +241,7 @@ func healthyProber() stubProber {
 func (f *envFixture) stage(t *testing.T, key, value string, isSecret bool) model.EnvEntryView {
 	t.Helper()
 
-	view, err := f.env.Stage(context.Background(), testEnvServiceID, key, value, isSecret, testEnvActor)
+	view, err := f.env.Stage(context.Background(), reviewerChange(key, value, isSecret))
 	requireNoError(t, err, "Stage("+key+")")
 
 	return view
@@ -237,7 +251,7 @@ func (f *envFixture) stage(t *testing.T, key, value string, isSecret bool) model
 func (f *envFixture) remove(t *testing.T, key string) {
 	t.Helper()
 
-	requireNoError(t, f.env.Remove(context.Background(), testEnvServiceID, key, testEnvActor), "Remove("+key+")")
+	requireNoError(t, f.env.Remove(context.Background(), testEnvServiceID, key, testEnvReviewer), "Remove("+key+")")
 }
 
 // apply runs an apply to completion and returns the finished run.
@@ -246,7 +260,7 @@ func (f *envFixture) apply(t *testing.T, summary string) model.EnvRun {
 
 	ctx := context.Background()
 
-	runID, err := f.env.Apply(ctx, testEnvServiceID, testEnvServiceID, summary, testEnvActor)
+	runID, err := f.env.Apply(ctx, applyRequest(testEnvServiceID, summary))
 	requireNoError(t, err, "Apply()")
 
 	return f.await(t, runID)
@@ -279,7 +293,7 @@ func (f *envFixture) view(t *testing.T) model.EnvView {
 func (f *envFixture) diff(t *testing.T) model.EnvDiff {
 	t.Helper()
 
-	diff, err := f.env.Diff(context.Background(), testEnvServiceID)
+	diff, err := f.env.Diff(context.Background(), testEnvServiceID, true)
 	requireNoError(t, err, "Diff()")
 
 	return diff
@@ -375,7 +389,7 @@ func TestEnvViewUnconfigured(t *testing.T) {
 	requireEqual(t, "View(tn-api).Reason", view.Reason, model.EnvReasonNotConfigured)
 	requireEqual(t, "View(tn-api) entries", len(view.Entries), 0)
 
-	_, err = fixture.env.Stage(ctx, "tn-api", "A", "b", false, testEnvActor)
+	_, err = fixture.env.Stage(ctx, EnvChange{ServiceID: testServiceAPI, Key: "A", Value: "b", By: testEnvReviewer})
 	requireIs(t, "Stage(tn-api)", err, ErrEnvNotConfigured)
 
 	disabled := NewEnv(EnvConfig{
@@ -389,7 +403,7 @@ func TestEnvViewUnconfigured(t *testing.T) {
 	requireEqual(t, "View(disabled).Reason", view.Reason, model.EnvReasonKeyMissing)
 	requireEqual(t, "Enabled()", disabled.Enabled(), false)
 
-	_, err = disabled.Stage(ctx, testEnvServiceID, "A", "b", false, testEnvActor)
+	_, err = disabled.Stage(ctx, reviewerChange("A", "b", false))
 	requireIs(t, "Stage(disabled)", err, ErrEnvKeyMissing)
 
 	_, err = fixture.env.View(ctx, "nope")
@@ -423,7 +437,7 @@ func TestEnvStageValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := fixture.env.Stage(context.Background(), testEnvServiceID, tt.key, tt.value, false, testEnvActor)
+			_, err := fixture.env.Stage(context.Background(), reviewerChange(tt.key, tt.value, false))
 			requireIs(t, "Stage()", err, tt.wantErr)
 		})
 	}
@@ -449,7 +463,7 @@ func TestEnvStageStates(t *testing.T) {
 	fixture.remove(t, "DROP") // idempotent
 	fixture.remove(t, "NEW")
 
-	err := fixture.env.Remove(context.Background(), testEnvServiceID, "MISSING", testEnvActor)
+	err := fixture.env.Remove(context.Background(), testEnvServiceID, "MISSING", testEnvReviewer)
 	requireIs(t, "Remove(MISSING)", err, store.ErrEnvEntryNotFound)
 
 	requireEqual(t, "re-add removed", fixture.stage(t, "DROP", "y", true).State, model.EnvStateChanged)

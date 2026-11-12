@@ -1,7 +1,8 @@
 # The access matrix, checked in so a policy change shows up in review.
 # Columns: capability, scope class, viewer, developer, admin.
-# "developer" is a viewer plus deploy.trigger, deploy.record, alerts.manage
-# and notifications.ack. It does not hold env.stage yet.
+# "developer" is a viewer plus deploy.trigger, deploy.record, alerts.manage,
+# notifications.ack and env.stage. For a developer env.stage means proposing:
+# new keys and non-secret keys only, enforced in service.Env.Stage.
 session.self	self	yes	yes	yes
 service.read	service	yes	yes	yes
 metrics.read	service	yes	yes	yes
@@ -14,7 +15,7 @@ alerts.read	service	yes	yes	yes
 alerts.manage	service	no	yes	yes
 notifications.ack	service	no	yes	yes
 env.read_keys	service	yes	yes	yes
-env.stage	service	no	no	yes
+env.stage	service	no	yes	yes
 env.discard	service	no	no	yes
 env.import	service	no	no	yes
 env.apply	service	no	no	yes

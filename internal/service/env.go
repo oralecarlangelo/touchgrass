@@ -31,7 +31,37 @@ var (
 	ErrEnvNothingToApply       = errors.New("service: no pending env changes")
 	ErrEnvConfirmationMismatch = errors.New("service: confirmation does not match the service name")
 	ErrEnvRevealRateLimited    = errors.New("service: env reveal rate limit exceeded")
+	// ErrEnvSecretRestricted refuses a proposer anything that touches a
+	// secret. It never depends on the value sent.
+	ErrEnvSecretRestricted = errors.New("service: secret env keys are changed by a reviewer only")
+	// ErrEnvPendingByOther refuses a proposer a key that carries someone
+	// else's pending change.
+	ErrEnvPendingByOther = errors.New("service: env key has a pending change by another user")
+	// ErrEnvPendingChanged refuses an apply whose reviewed file is no
+	// longer the file that would be written.
+	ErrEnvPendingChanged = errors.New("service: pending env changes differ from the reviewed set")
 )
+
+// EnvActor is who makes an env change and how far their authority goes.
+// The zero value is a proposer: the restricted case is the default, so a
+// caller has to state that it is a reviewer.
+type EnvActor struct {
+	// Name is the username recorded on the entry and in the audit trail.
+	Name string
+	// Reviewer is true for a caller who may apply env changes. A
+	// reviewer may stage secrets and replace anyone's pending change; a
+	// proposer may do neither.
+	Reviewer bool
+}
+
+// EnvChange is one staged add or change.
+type EnvChange struct {
+	ServiceID string
+	Key       string
+	Value     string
+	IsSecret  bool
+	By        EnvActor
+}
 
 // Env pillar limits and defaults.
 const (
@@ -407,17 +437,18 @@ func requiredKeys(lines []string) map[string]bool {
 }
 
 // Stage records a pending add or change without touching the file.
-func (e *Env) Stage(
-	ctx context.Context,
-	serviceID, key, value string,
-	isSecret bool,
-	actor string,
-) (model.EnvEntryView, error) {
+//
+// A proposer (change.By.Reviewer false) may add a new key and change a
+// key that is not secret. Anything touching a secret is refused before
+// the value is looked at, so the answer cannot depend on it.
+func (e *Env) Stage(ctx context.Context, change EnvChange) (model.EnvEntryView, error) {
+	serviceID, key, value, actor := change.ServiceID, change.Key, change.Value, change.By.Name
+
 	if _, err := e.resolve(ctx, serviceID); err != nil {
 		return model.EnvEntryView{}, err
 	}
 
-	if err := validateEnvPair(key, value); err != nil {
+	if err := validateEnvKey(key); err != nil {
 		return model.EnvEntryView{}, err
 	}
 
@@ -428,7 +459,15 @@ func (e *Env) Stage(
 
 	exists := err == nil
 
-	restored, err := e.cancelPending(ctx, current, exists, value, isSecret, actor)
+	if err := e.authorizeChange(ctx, change, current, exists); err != nil {
+		return model.EnvEntryView{}, err
+	}
+
+	if err := validateEnvValue(value); err != nil {
+		return model.EnvEntryView{}, err
+	}
+
+	restored, err := e.cancelPending(ctx, current, exists, value, change.IsSecret, actor)
 	if err != nil {
 		return model.EnvEntryView{}, err
 	}
@@ -437,7 +476,7 @@ func (e *Env) Stage(
 		return e.entryView(*restored, false)
 	}
 
-	state, unchanged, err := e.stageState(current, exists, value, isSecret)
+	state, unchanged, err := e.stageState(current, exists, value, change.IsSecret)
 	if err != nil {
 		return model.EnvEntryView{}, err
 	}
@@ -446,7 +485,7 @@ func (e *Env) Stage(
 		return e.entryView(current, false)
 	}
 
-	entry, err := e.encryptEntry(serviceID, key, value, isSecret, state, actor)
+	entry, err := e.encryptEntry(serviceID, key, value, change.IsSecret, state, actor)
 	if err != nil {
 		return model.EnvEntryView{}, err
 	}
@@ -460,13 +499,48 @@ func (e *Env) Stage(
 	return e.entryView(entry, false)
 }
 
-// validateEnvPair checks a key and its value together.
-func validateEnvPair(key, value string) error {
-	if err := validateEnvKey(key); err != nil {
+// authorizeChange applies the proposer rules to one add, change or
+// removal; a reviewer passes untouched. change.IsSecret is the flag the
+// caller asked for (false for a removal).
+//
+// The secret check runs first and reads only flags: the working entry's
+// and the applied revision's. It never decrypts and never sees the
+// proposed value, and every refusal writes the same audit row, so a
+// proposer cannot use this path to compare a guess with a secret.
+func (e *Env) authorizeChange(ctx context.Context, change EnvChange, current model.EnvEntry, exists bool) error {
+	if change.By.Reviewer {
+		return nil
+	}
+
+	appliedSecret, err := e.appliedIsSecret(ctx, change.ServiceID, change.Key)
+	if err != nil {
 		return err
 	}
 
-	return validateEnvValue(value)
+	if change.IsSecret || appliedSecret || (exists && current.IsSecret) {
+		e.logger.Warn("env change on a secret key refused",
+			"service", change.ServiceID, "key", change.Key, "actor", change.By.Name)
+		e.record(ctx, change.ServiceID, change.By.Name, model.AuditEnvStage, model.AuditFailure,
+			"refused secret "+change.Key)
+
+		return fmt.Errorf("%w: %s", ErrEnvSecretRestricted, change.Key)
+	}
+
+	if exists && current.Pending() && current.UpdatedBy != change.By.Name {
+		return fmt.Errorf("%w: %s", ErrEnvPendingByOther, change.Key)
+	}
+
+	return nil
+}
+
+// appliedIsSecret reports whether the applied revision flags key secret.
+func (e *Env) appliedIsSecret(ctx context.Context, serviceID, key string) (bool, error) {
+	snapshot, err := e.appliedSnapshot(ctx, serviceID)
+	if err != nil {
+		return false, err
+	}
+
+	return snapshot[key].IsSecret, nil
 }
 
 // cancelPending handles the undo case: staging the applied value again on a
@@ -569,8 +643,10 @@ func (e *Env) sameValue(entry model.EnvEntry, value string) (bool, error) {
 	return string(plaintext) == value, nil
 }
 
-// Remove stages the removal of a key. Added keys vanish outright.
-func (e *Env) Remove(ctx context.Context, serviceID, key, actor string) error {
+// Remove stages the removal of a key. Added keys vanish outright. A
+// proposer is held to the same rules as in Stage: no secret key, and no
+// key carrying someone else's pending change.
+func (e *Env) Remove(ctx context.Context, serviceID, key string, by EnvActor) error {
 	if _, err := e.resolve(ctx, serviceID); err != nil {
 		return err
 	}
@@ -579,6 +655,13 @@ func (e *Env) Remove(ctx context.Context, serviceID, key, actor string) error {
 	if err != nil {
 		return err
 	}
+
+	change := EnvChange{ServiceID: serviceID, Key: key, By: by}
+	if err := e.authorizeChange(ctx, change, current, true); err != nil {
+		return err
+	}
+
+	actor := by.Name
 
 	switch current.State {
 	case model.EnvStateAdded:
@@ -660,7 +743,11 @@ func (e *Env) allowReveal(actor string) bool {
 }
 
 // Diff compares pending entries with the applied set by key name.
-func (e *Env) Diff(ctx context.Context, serviceID string) (model.EnvDiff, error) {
+//
+// withHash adds the SHA-256 of the file an apply would write. Pass it
+// only for a caller who may apply: with every other value known, the
+// hash lets a short secret be confirmed offline.
+func (e *Env) Diff(ctx context.Context, serviceID string, withHash bool) (model.EnvDiff, error) {
 	if _, err := e.resolve(ctx, serviceID); err != nil {
 		return model.EnvDiff{}, err
 	}
@@ -671,6 +758,9 @@ func (e *Env) Diff(ctx context.Context, serviceID string) (model.EnvDiff, error)
 	}
 
 	diff := diffEntries(entries)
+	if !withHash {
+		return diff, nil
+	}
 
 	rendered, err := e.render(entries)
 	if err != nil {

@@ -1,8 +1,10 @@
 # What a developer gets from every route: the reviewed statement of the
-# role. It differs from the viewer's matrix in exactly ten routes
+# role. It differs from the viewer's matrix in exactly twelve routes
 # (deploy, cutover, rollback, manual deploy record, alert rule and
 # issue rule create and delete, mark one and mark all notifications
-# read), and a test holds it to that. A new route adds one line here,
+# read, env stage and env remove-entry), and a test holds it to that.
+# Reaching the two env routes is not the whole story: past the guard a
+# developer is a proposer, refused every secret key by the handler. A new route adds one line here,
 # written by hand.
 #
 # Columns: route, a developer with all services, a developer granted
@@ -39,8 +41,8 @@ POST /api/services/{id}/cutover	reach	reach	403
 POST /api/services/{id}/rollback	reach	reach	403
 POST /api/services/{id}/deploy	reach	reach	403
 GET /api/services/{id}/env	reach	reach	403
-PUT /api/services/{id}/env/entries/{key}	403	403	403
-DELETE /api/services/{id}/env/entries/{key}	403	403	403
+PUT /api/services/{id}/env/entries/{key}	reach	reach	403
+DELETE /api/services/{id}/env/entries/{key}	reach	reach	403
 POST /api/services/{id}/env/entries/{key}/reveal	403	403	403
 GET /api/services/{id}/env/diff	reach	reach	403
 POST /api/services/{id}/env/discard	403	403	403

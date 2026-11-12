@@ -171,6 +171,7 @@ type EnvRevisionSummary struct {
 
 // EnvRevisionView is one revision in the history list with its key-level
 // diff against the previous revision. Values are never included.
+// RenderedSHA256 is set only for a caller who may apply.
 type EnvRevisionView struct {
 	ID             int64     `json:"id"`
 	CreatedAt      time.Time `json:"created_at"`
@@ -179,16 +180,18 @@ type EnvRevisionView struct {
 	Added          []string  `json:"added"`
 	Changed        []string  `json:"changed"`
 	Removed        []string  `json:"removed"`
-	RenderedSHA256 string    `json:"rendered_sha256"`
+	RenderedSHA256 string    `json:"rendered_sha256,omitempty"`
 	Applied        bool      `json:"applied"`
 }
 
-// EnvDiff is the pending-versus-applied key diff.
+// EnvDiff is the pending-versus-applied key diff. RenderedSHA256, the
+// digest of the file an apply would write, is set only for a caller who
+// may apply.
 type EnvDiff struct {
 	Added          []string `json:"added"`
 	Changed        []string `json:"changed"`
 	Removed        []string `json:"removed"`
-	RenderedSHA256 string   `json:"rendered_sha256"`
+	RenderedSHA256 string   `json:"rendered_sha256,omitempty"`
 }
 
 // EnvRunStep is one logged step of an apply run. Name is the pipeline

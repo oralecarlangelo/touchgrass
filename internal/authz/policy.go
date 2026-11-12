@@ -25,18 +25,20 @@ var viewerGrants = []Capability{
 }
 
 // developerOperations is what a developer holds on top of a viewer's
-// reads: running what an admin configured for a service, and tending
-// its alerts. Every entry is service-scoped, so a developer never gains
-// a fleet-level mutation whatever their scope.
+// reads: running what an admin configured for a service, tending its
+// alerts, and proposing env changes. Every entry is service-scoped, so
+// a developer never gains a fleet-level mutation whatever their scope.
 //
-// EnvStage is absent on purpose. Staging has rules of its own (a
-// non-admin must not touch a secret key) that are not built yet, so the
-// role is denied it rather than handed a right nobody has reviewed.
+// EnvStage is a narrower right for a developer than for an admin. The
+// capability only opens the stage routes; a caller without EnvApply is
+// a proposer there and may not touch a secret key or another user's
+// pending change (service.Env.Stage). Applying stays with EnvApply.
 var developerOperations = []Capability{
 	DeployTrigger,
 	DeployRecord,
 	AlertsManage,
 	NotificationsAck,
+	EnvStage,
 }
 
 // grants is the one role-to-capability table. Enforcement, the session

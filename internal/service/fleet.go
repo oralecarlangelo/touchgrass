@@ -105,7 +105,14 @@ func (c *ContainerEventCollector) runStream(ctx context.Context) error {
 	if !cursor.LastRecordedAt.IsZero() {
 		since = cursor.LastRecordedAt.UTC().Format(time.RFC3339Nano)
 	}
-	events, streamErrors := c.docker.EventStream(ctx, since)
+	// The stream gets its own context so every return path below closes the
+	// Docker /events connection. Without it, an early return (a failed
+	// persist) left the stream open on the long-lived Run context, and each
+	// 1 s reconnect leaked one more daemon connection.
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+
+	events, streamErrors := c.docker.EventStream(streamCtx, since)
 	for events != nil || streamErrors != nil {
 		select {
 		case <-ctx.Done():

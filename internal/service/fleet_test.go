@@ -261,6 +261,89 @@ func (blockingEventStreamer) EventStream(ctx context.Context, _ string) (<-chan 
 	return events, errorsOut
 }
 
+// openEventStreamer delivers its events, then holds the stream open until
+// the stream context is cancelled, like the daemon /events endpoint. It
+// records each stream context so a test can see whether it was released.
+type openEventStreamer struct {
+	mu     sync.Mutex
+	events []docker.Event
+	ctxs   []context.Context
+}
+
+func (s *openEventStreamer) EventStream(ctx context.Context, _ string) (<-chan docker.Event, <-chan error) {
+	s.mu.Lock()
+	s.ctxs = append(s.ctxs, ctx)
+	s.mu.Unlock()
+	events := make(chan docker.Event, len(s.events))
+	errorsOut := make(chan error)
+
+	for _, event := range s.events {
+		events <- event
+	}
+
+	go func() {
+		<-ctx.Done()
+		close(events)
+		close(errorsOut)
+	}()
+
+	return events, errorsOut
+}
+
+func (s *openEventStreamer) streamContexts() []context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]context.Context{}, s.ctxs...)
+}
+
+// failingEventWriter fails every event insert; cursor reads and writes pass
+// through, so only the persist path fails.
+type failingEventWriter struct {
+	ContainerEventWriter
+}
+
+func (failingEventWriter) UpsertContainerEvent(context.Context, model.ContainerEvent) error {
+	return errors.New("database is locked")
+}
+
+func TestContainerEventCollectorClosesStreamOnPersistFailure(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	streamer := &openEventStreamer{events: []docker.Event{{
+		SourceEventID: "event-1", OccurredAt: time.Date(2026, 11, 10, 6, 54, 0, 0, time.UTC),
+		Action: "start", ContainerID: "generic-container", ContainerName: "web-1",
+		ComposeProject: testOnboardProject, ComposeService: "web",
+	}}}
+	collector := NewContainerEventCollector(ContainerEventCollectorConfig{
+		Services: store.NewServiceStore(db), Docker: streamer,
+		Writer:      failingEventWriter{ContainerEventWriter: store.NewPerformanceStore(db)},
+		Environment: "prod", Logger: slog.New(slog.DiscardHandler),
+	})
+
+	parent := t.Context()
+
+	if err := collector.runStream(parent); err == nil {
+		t.Fatal("runStream() error = nil, want persist failure")
+	}
+
+	if parent.Err() != nil {
+		t.Fatal("parent context cancelled, want only the stream context released")
+	}
+
+	ctxs := streamer.streamContexts()
+	if len(ctxs) != 1 {
+		t.Fatalf("stream opens = %d, want 1", len(ctxs))
+	}
+
+	select {
+	case <-ctxs[0].Done():
+	default:
+		t.Fatal("stream context still open after runStream returned: the daemon connection leaks")
+	}
+}
+
 // testFleetLister fakes stats for the shared fixture containers,
 // optionally failing the managed blue container.
 func testFleetLister(containers []docker.Container, failBlue bool) stubStatsLister {

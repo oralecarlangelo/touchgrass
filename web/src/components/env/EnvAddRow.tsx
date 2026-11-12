@@ -9,6 +9,11 @@ import { looksLikeDotenvPaste, looksSecret, validateEnvKey, validateEnvValue } f
 
 // EnvAddRow is the inline "add entry" row above the table. Pasting one or
 // more KEY=VALUE lines into the key field hands the text to the paste sheet.
+//
+// A proposer (allowSecret false) stages plain values only: there is no
+// Secret box and no bulk paste, a name that looks like a secret gets a
+// warning, and a key they may not change is refused here with the reason
+// the server would give.
 export default function EnvAddRow({
   serviceId,
   disabled,
@@ -16,6 +21,8 @@ export default function EnvAddRow({
   serverError,
   prefillKey,
   existingKeys,
+  allowSecret = true,
+  lockedReason,
   onStage,
   onPaste,
 }: {
@@ -25,6 +32,8 @@ export default function EnvAddRow({
   serverError: string | null;
   prefillKey: string | null;
   existingKeys: Set<string>;
+  allowSecret?: boolean;
+  lockedReason?: (key: string) => string | null;
   onStage: (key: string, value: string, isSecret: boolean) => void;
   onPaste: (text: string) => void;
 }) {
@@ -37,24 +46,24 @@ export default function EnvAddRow({
   useEffect(() => {
     if (prefillKey !== null && prefillKey !== '') {
       setKey(prefillKey);
-      setSecret(looksSecret(prefillKey));
+      setSecret(allowSecret && looksSecret(prefillKey));
       setSecretTouched(false);
       setError(null);
     }
-  }, [prefillKey]);
+  }, [prefillKey, allowSecret]);
 
   function handleKeyChange(next: string): void {
     setKey(next);
     setError(null);
     if (!secretTouched) {
-      setSecret(looksSecret(next));
+      setSecret(allowSecret && looksSecret(next));
     }
   }
 
   function handleKeyPaste(event: ClipboardEvent<HTMLInputElement>): void {
     const text = event.clipboardData.getData('text');
 
-    if (looksLikeDotenvPaste(text)) {
+    if (allowSecret && looksLikeDotenvPaste(text)) {
       event.preventDefault();
       onPaste(text);
     }
@@ -69,6 +78,13 @@ export default function EnvAddRow({
       return;
     }
 
+    const locked = lockedReason?.(trimmedKey) ?? null;
+
+    if (locked !== null) {
+      setError(locked);
+      return;
+    }
+
     const valueError = validateEnvValue(value);
 
     if (valueError !== null) {
@@ -76,7 +92,7 @@ export default function EnvAddRow({
       return;
     }
 
-    onStage(trimmedKey, value, secret);
+    onStage(trimmedKey, value, allowSecret && secret);
     setKey('');
     setValue('');
     setSecret(false);
@@ -92,6 +108,7 @@ export default function EnvAddRow({
   }
 
   const overwrites = key.trim() !== '' && existingKeys.has(key.trim());
+  const plainSecretWarning = !allowSecret && key.trim() !== '' && looksSecret(key.trim());
   const message = error ?? serverError;
   const keyId = `env-add-key-${serviceId}`;
   const valueId = `env-add-value-${serviceId}`;
@@ -99,7 +116,9 @@ export default function EnvAddRow({
 
   return (
     <div className="border-border bg-muted/30 space-y-2 border-b px-4 py-3" aria-label="Add an entry">
-      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto_auto] md:items-end">
+      <div
+        className={`grid gap-2 md:items-end ${allowSecret ? 'md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto_auto]' : 'md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto]'}`}
+      >
         <div className="space-y-1">
           <Label htmlFor={keyId} className="text-xs">
             Key
@@ -110,7 +129,7 @@ export default function EnvAddRow({
             disabled={disabled || busy}
             autoComplete="off"
             spellCheck={false}
-            placeholder="DATABASE_URL — or paste .env lines"
+            placeholder={allowSecret ? 'DATABASE_URL — or paste .env lines' : 'FEATURE_FLAG'}
             aria-invalid={error !== null && key.trim() !== '' && validateEnvKey(key.trim()) !== null}
             className="font-mono text-xs"
             onChange={(event) => handleKeyChange(event.target.value)}
@@ -138,29 +157,36 @@ export default function EnvAddRow({
             onKeyDown={handleEnter}
           />
         </div>
-        <div className="flex h-8 items-center gap-2">
-          <Checkbox
-            id={secretId}
-            checked={secret}
-            disabled={disabled || busy}
-            onCheckedChange={(checked) => {
-              setSecret(checked === true);
-              setSecretTouched(true);
-            }}
-          />
-          <Label htmlFor={secretId} className="text-xs font-normal">
-            <Lock className="size-3" aria-hidden />
-            Secret
-          </Label>
-        </div>
+        {allowSecret && (
+          <div className="flex h-8 items-center gap-2">
+            <Checkbox
+              id={secretId}
+              checked={secret}
+              disabled={disabled || busy}
+              onCheckedChange={(checked) => {
+                setSecret(checked === true);
+                setSecretTouched(true);
+              }}
+            />
+            <Label htmlFor={secretId} className="text-xs font-normal">
+              <Lock className="size-3" aria-hidden />
+              Secret
+            </Label>
+          </div>
+        )}
         <Button type="button" size="sm" disabled={disabled || busy} onClick={submit} aria-label="Stage this entry">
           <Plus aria-hidden />
-          {busy ? 'Staging…' : 'Stage'}
+          {busy ? 'Staging…' : allowSecret ? 'Stage' : 'Propose'}
         </Button>
       </div>
       {message !== null ? (
         <p role="alert" className="text-destructive text-xs">
           {message}
+        </p>
+      ) : plainSecretWarning ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          {key.trim()} looks like a secret. You can only stage plain values, which everyone with access
+          to this service can read. Ask an admin to add secrets.
         </p>
       ) : overwrites ? (
         <p className="text-xs text-amber-700 dark:text-amber-300">
@@ -168,8 +194,9 @@ export default function EnvAddRow({
         </p>
       ) : (
         <p className="text-muted-foreground text-xs">
-          Staging keeps the change here until you review and apply it. Paste a block of KEY=VALUE
-          lines into the key field to stage several at once.
+          {allowSecret
+            ? 'Staging keeps the change here until you review and apply it. Paste a block of KEY=VALUE lines into the key field to stage several at once.'
+            : 'Proposing keeps the change here, under your name, until an admin reviews and applies it. Values you propose are plain text.'}
         </p>
       )}
     </div>

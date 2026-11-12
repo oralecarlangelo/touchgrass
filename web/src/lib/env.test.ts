@@ -2,23 +2,31 @@ import { describe, expect, it } from 'vitest';
 
 import type { EnvEntry, EnvRun } from './api.ts';
 import {
+  describeAuthors,
   describePending,
   elapsedSeconds,
+  entryLockReason,
   envShortcut,
   filterEnvEntries,
+  fullEnvAccess,
   initialRevealState,
   initialRunState,
+  isProposer,
   looksLikeDotenvPaste,
   looksSecret,
   mergeRun,
   missingRequiredKeys,
   parseDotenvLines,
   parseEnvApplyEvent,
+  pendingAuthorByKey,
+  pendingAuthors,
   pendingCounts,
+  readOnlyEnvAccess,
   reduceRunEvent,
   revealReducer,
   revealSeconds,
   secondsLeft,
+  secretLockReason,
   shortSha,
   sortEnvEntries,
   suggestSummary,
@@ -27,6 +35,7 @@ import {
   validateEnvKey,
   validateEnvValue,
   type ApplyRunState,
+  type EnvAccess,
   type EnvApplyEvent,
 } from './env.ts';
 
@@ -332,6 +341,47 @@ describe('reveal state machine', () => {
   it('ignores a reveal result for a key that is no longer in flight', () => {
     const state = revealReducer(initialRevealState, { type: 'revealed', key: 'K', value: 'shh', now: 0 });
     expect(state.value).toBeNull();
+  });
+});
+
+describe('proposer access', () => {
+  const proposer: EnvAccess = { ...readOnlyEnvAccess, stage: true, username: 'ben' };
+  const base: EnvEntry = {
+    key: 'K', is_secret: false, value: 'v', masked: false, updated_by: 'ana',
+    updated_at: '2026-11-10T00:00:00Z', state: 'applied', required: false,
+  };
+
+  it('tells proposers from readers and admins', () => {
+    expect(isProposer(proposer)).toBe(true);
+    expect(isProposer(readOnlyEnvAccess)).toBe(false);
+    expect(isProposer(fullEnvAccess('ana'))).toBe(false);
+  });
+
+  it('locks secrets and other people\'s pending changes for a proposer only', () => {
+    expect(entryLockReason(base, proposer)).toBeNull();
+    expect(entryLockReason({ ...base, is_secret: true, value: null }, proposer)).toBe(secretLockReason);
+    expect(entryLockReason({ ...base, state: 'changed', updated_by: 'ben' }, proposer)).toBeNull();
+    expect(entryLockReason({ ...base, state: 'changed', updated_by: 'ana' }, proposer)).toContain('ana staged');
+    expect(entryLockReason({ ...base, state: 'removed', updated_by: '' }, proposer)).toContain('Someone else');
+    expect(entryLockReason(base, readOnlyEnvAccess)).not.toBeNull();
+
+    const admin = fullEnvAccess('ana');
+    expect(entryLockReason({ ...base, is_secret: true, value: null }, admin)).toBeNull();
+    expect(entryLockReason({ ...base, state: 'changed', updated_by: 'ben' }, admin)).toBeNull();
+  });
+
+  it('lists who staged the pending changes', () => {
+    const entries: EnvEntry[] = [
+      base,
+      { ...base, key: 'A', state: 'added', updated_by: 'ben' },
+      { ...base, key: 'B', state: 'removed', updated_by: 'ben' },
+      { ...base, key: 'C', state: 'changed', updated_by: 'ana' },
+    ];
+
+    expect(pendingAuthors(entries)).toEqual([{ name: 'ben', count: 2 }, { name: 'ana', count: 1 }]);
+    expect(describeAuthors(pendingAuthors(entries))).toBe('ben (2), ana (1)');
+    expect(describeAuthors([{ name: 'ben', count: 3 }])).toBe('ben');
+    expect(pendingAuthorByKey(entries)).toEqual({ A: 'ben', B: 'ben', C: 'ana' });
   });
 });
 

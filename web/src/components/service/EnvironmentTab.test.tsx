@@ -4,7 +4,15 @@ import { describe, expect, it } from 'vitest';
 import { EnvironmentTabView, type EnvironmentTabViewProps } from './EnvironmentTab.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { EnvEntry, EnvOverview, ServiceView } from '@/lib/api.ts';
-import { defaultEnvFilters, initialRevealState, initialRunState, reduceRunEvent } from '@/lib/env.ts';
+import {
+  defaultEnvFilters,
+  fullEnvAccess,
+  initialRevealState,
+  initialRunState,
+  readOnlyEnvAccess,
+  reduceRunEvent,
+  type EnvAccess,
+} from '@/lib/env.ts';
 
 const service: ServiceView = {
   id: 'shop-api',
@@ -37,10 +45,13 @@ const configured: EnvOverview = {
 
 const noop = () => undefined;
 
+// A developer: may stage, and nothing else.
+const proposer: EnvAccess = { ...readOnlyEnvAccess, stage: true, username: 'ben' };
+
 function render(overrides: Partial<EnvironmentTabViewProps>): string {
   const props: EnvironmentTabViewProps = {
     service,
-    isAdmin: true,
+    access: fullEnvAccess('ana'),
     overview: configured,
     loading: false,
     error: null,
@@ -102,7 +113,7 @@ describe('EnvironmentTabView states', () => {
   it('explains a missing target with the config snippet for admins only', () => {
     const base: EnvOverview = { ...configured, configured: false, reason: 'no_target', target: null, entries: [] };
     const admin = render({ overview: base });
-    const viewer = render({ overview: base, isAdmin: false });
+    const viewer = render({ overview: base, access: readOnlyEnvAccess });
 
     expect(admin).toContain('Configure the env target');
     expect(admin).toContain('validate_cmd');
@@ -122,7 +133,7 @@ describe('EnvironmentTabView states', () => {
   it('offers import when configured with zero entries, admins only', () => {
     const empty: EnvOverview = { ...configured, entries: [], pending_count: 0, last_validation: null };
     const admin = render({ overview: empty });
-    const viewer = render({ overview: empty, isAdmin: false });
+    const viewer = render({ overview: empty, access: readOnlyEnvAccess });
 
     expect(admin).toContain('Import the current file');
     expect(admin).toContain('/srv/shop-api/.env');
@@ -135,7 +146,7 @@ describe('EnvironmentTabView states', () => {
 
   it('never renders a masked secret value and hides the eye from viewers', () => {
     const admin = render({});
-    const viewer = render({ isAdmin: false });
+    const viewer = render({ access: readOnlyEnvAccess });
 
     for (const html of [admin, viewer]) {
       expect(html).toContain('GCASH_KEY');
@@ -166,7 +177,7 @@ describe('EnvironmentTabView states', () => {
 
   it('shows the pending bar with counts and the state chips', () => {
     const admin = render({});
-    const viewer = render({ isAdmin: false });
+    const viewer = render({ access: readOnlyEnvAccess });
 
     expect(admin).toContain('3 changes not applied');
     expect(admin).toContain('1 added');
@@ -178,7 +189,47 @@ describe('EnvironmentTabView states', () => {
     expect(admin).toContain('line-through');
     expect(viewer).toContain('3 changes not applied');
     expect(viewer).not.toContain('Review &amp; apply');
-    expect(viewer).toContain('An admin applies these.');
+    expect(viewer).not.toContain('>Discard<');
+    expect(viewer).toContain('Awaiting an admin');
+    // Both see who staged what is pending.
+    expect(admin).toContain('Staged by ben (2), ana (1)');
+    expect(viewer).toContain('Staged by ben (2), ana (1)');
+  });
+
+  it('gives a developer a proposer view: plain keys editable, secrets locked, an admin applies', () => {
+    const html = render({ access: proposer });
+
+    expect(html).toContain('You can propose changes');
+    // Where an admin sees Apply.
+    expect(html).toContain('Awaiting an admin');
+    expect(html).not.toContain('Review &amp; apply');
+    expect(html).not.toContain('>Discard<');
+    // Import, reveal, copy and re-flagging stay with admins.
+    expect(html).not.toContain('More actions');
+    expect(html).not.toContain('Reveal GCASH_KEY');
+    expect(html).not.toContain('Copy GCASH_KEY');
+    expect(html).not.toContain('as secret"');
+    expect(html).not.toContain(secretValue);
+    // A plain applied key and the developer's own pending keys are theirs to change.
+    expect(html).toContain('aria-label="Edit DATABASE_URL"');
+    expect(html).toContain('aria-label="Remove DATABASE_URL"');
+    expect(html).toContain('aria-label="Undo the staged change to NEW_FLAG"');
+    // A secret is shown as not editable, with the reason.
+    expect(html).toContain('GCASH_KEY is not editable: Secret keys can only be changed by an admin.');
+    expect(html).toContain('Admin only');
+    expect(html).not.toContain('Set a new value for GCASH_KEY');
+    // The add row proposes plain values only.
+    expect(html).toContain('>Propose<');
+    expect(html).not.toContain('env-add-secret');
+  });
+
+  it('locks a key that carries someone else\'s pending change for a developer', () => {
+    const html = render({ access: { ...proposer, username: 'cy' } });
+
+    expect(html).toContain('NEW_FLAG is not editable: ben staged a change to this key.');
+    expect(html).toContain('Not yours');
+    expect(html).not.toContain('aria-label="Edit NEW_FLAG"');
+    expect(html).toContain('aria-label="Edit DATABASE_URL"');
   });
 
   it('shows the missing-required callout with Add shortcuts and the required badge', () => {
@@ -211,7 +262,7 @@ describe('EnvironmentTabView states', () => {
   });
 
   it('shows the viewer notice after a 403', () => {
-    expect(render({ isAdmin: false, viewerNotice: true })).toContain('Read-only account');
+    expect(render({ access: readOnlyEnvAccess, viewerNotice: true })).toContain('Read-only account');
   });
 
   it('keeps a refresh error inline when data is already on screen', () => {

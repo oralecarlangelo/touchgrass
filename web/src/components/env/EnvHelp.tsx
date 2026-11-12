@@ -32,6 +32,7 @@ export default function EnvHelp({ target }: { target: EnvTarget | null }) {
         <p>
           Secrets are masked for everyone. Admins can reveal one for 20 seconds or copy it without
           showing it; every reveal is audited and rate limited. Viewers see keys and plain values only.
+          Developers can propose a new key or a change to a plain one; an admin reviews and applies it.
         </p>
         <p>
           <a href={envDocsHref} target="_blank" rel="noreferrer" className="text-primary underline-offset-4 hover:underline">

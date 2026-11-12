@@ -17,11 +17,13 @@ import EnvSecretValue from './EnvSecretValue.tsx';
 import EnvStateChip, { gutterClass } from './EnvStateChip.tsx';
 import type { EnvEntry } from '@/lib/api.ts';
 import {
+  entryLockReason,
   longValueThreshold,
   secondsLeft,
   truncateValue,
   undoPlan,
   validateEnvValue,
+  type EnvAccess,
   type EnvSort,
   type RevealState,
 } from '@/lib/env.ts';
@@ -44,7 +46,7 @@ interface EditState {
 }
 
 interface RowContext extends EnvEntryActions {
-  isAdmin: boolean;
+  access: EnvAccess;
   readOnly: boolean;
   busyKey: string | null;
   reveal: RevealState;
@@ -135,12 +137,12 @@ function ValueCell({ entry, ctx }: { entry: EnvEntry; ctx: RowContext }) {
     return (
       <EnvSecretValue
         entryKey={entry.key}
-        canReveal={ctx.isAdmin}
+        canReveal={ctx.access.reveal}
         revealedValue={revealed}
         secondsLeft={secondsLeft(ctx.reveal.expiresAt, ctx.now)}
         busy={ctx.reveal.busyKey === entry.key || busy}
         rateLimitSeconds={secondsLeft(ctx.reveal.rateLimitedUntil, ctx.now)}
-        disabled={ctx.readOnly && !ctx.isAdmin}
+        disabled={ctx.readOnly && !ctx.access.reveal}
         onReveal={() => ctx.onReveal(entry.key)}
         onHide={ctx.onHideReveal}
         onCopy={() => ctx.onCopy(entry.key)}
@@ -201,9 +203,37 @@ function UpdatedCell({ entry }: { entry: EnvEntry }) {
   );
 }
 
+// LockedCell stands in for the row actions when a proposer may not
+// change the entry, with the reason in a tooltip.
+function LockedCell({ entry, reason }: { entry: EnvEntry; reason: string }) {
+  return (
+    <div className="flex items-center justify-end">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            tabIndex={0}
+            className="text-muted-foreground inline-flex items-center gap-1 text-xs"
+            aria-label={`${entry.key} is not editable: ${reason}`}
+          >
+            <Lock className="size-3" aria-hidden />
+            {entry.is_secret ? 'Admin only' : 'Not yours'}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{reason}</TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
 function ActionsCell({ entry, ctx }: { entry: EnvEntry; ctx: RowContext }) {
-  if (!ctx.isAdmin) {
+  if (!ctx.access.stage) {
     return null;
+  }
+
+  const lock = entryLockReason(entry, ctx.access);
+
+  if (lock !== null) {
+    return <LockedCell entry={entry} reason={lock} />;
   }
 
   const busy = ctx.busyKey === entry.key;
@@ -226,7 +256,7 @@ function ActionsCell({ entry, ctx }: { entry: EnvEntry; ctx: RowContext }) {
           <Pencil aria-hidden />
         </Button>
       )}
-      {!removed && (
+      {!removed && ctx.access.apply && (
         <Button
           type="button"
           variant="ghost"
@@ -310,7 +340,7 @@ function SortButton({
 
 export default function EnvEntriesTable({
   entries,
-  isAdmin,
+  access,
   readOnly,
   busyKey,
   reveal,
@@ -321,7 +351,7 @@ export default function EnvEntriesTable({
   emptyMessage,
 }: {
   entries: EnvEntry[];
-  isAdmin: boolean;
+  access: EnvAccess;
   readOnly: boolean;
   busyKey: string | null;
   reveal: RevealState;
@@ -336,7 +366,7 @@ export default function EnvEntriesTable({
 
   const ctx: RowContext = {
     ...actions,
-    isAdmin,
+    access,
     readOnly,
     busyKey,
     reveal,
@@ -389,7 +419,7 @@ export default function EnvEntriesTable({
                 <SortButton label="Updated" active={sort === 'updated'} onClick={() => onSort('updated')} />
               </TableHead>
               <TableHead className="w-[9%]">State</TableHead>
-              {isAdmin && (
+              {access.stage && (
                 <TableHead className="w-[12%] text-right">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -416,7 +446,7 @@ export default function EnvEntriesTable({
                 <TableCell className="align-top">
                   <EnvStateChip state={entry.state} />
                 </TableCell>
-                {isAdmin && (
+                {access.stage && (
                   <TableCell className="align-top">
                     <ActionsCell entry={entry} ctx={ctx} />
                   </TableCell>

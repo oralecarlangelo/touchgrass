@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import EnvEntriesTable, { type EnvEntryActions } from './EnvEntriesTable.tsx';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { EnvEntry } from '@/lib/api.ts';
-import { initialRevealState, type RevealState } from '@/lib/env.ts';
+import { fullEnvAccess, initialRevealState, readOnlyEnvAccess, type EnvAccess, type RevealState } from '@/lib/env.ts';
 
 const noop = () => undefined;
 const actions: EnvEntryActions = {
@@ -38,12 +38,12 @@ function entry(overrides: Partial<EnvEntry> & { key: string }): EnvEntry {
   };
 }
 
-function render(entries: EnvEntry[], opts: { isAdmin?: boolean; readOnly?: boolean; reveal?: RevealState } = {}): string {
+function render(entries: EnvEntry[], opts: { access?: EnvAccess; readOnly?: boolean; reveal?: RevealState } = {}): string {
   return renderToStaticMarkup(
     <TooltipProvider>
       <EnvEntriesTable
         entries={entries}
-        isAdmin={opts.isAdmin ?? true}
+        access={opts.access ?? fullEnvAccess('ana')}
         readOnly={opts.readOnly ?? false}
         busyKey={null}
         reveal={opts.reveal ?? initialRevealState}
@@ -104,11 +104,35 @@ describe('EnvEntriesTable', () => {
   });
 
   it('renders viewers a read-only table without an actions column', () => {
-    const html = render([entry({ key: 'PLAIN', value: 'hello' })], { isAdmin: false });
+    const html = render([entry({ key: 'PLAIN', value: 'hello' })], { access: readOnlyEnvAccess });
     expect(html).toContain('hello');
     expect(html).not.toContain('aria-label="Edit PLAIN"');
     expect(html).not.toContain('aria-label="Remove PLAIN"');
     expect(html).not.toContain('>Actions<');
+  });
+
+  it('shows a proposer which rows are theirs to change and why the rest are not', () => {
+    const proposer: EnvAccess = { ...readOnlyEnvAccess, stage: true, username: 'ben' };
+    const html = render(
+      [
+        entry({ key: 'PLAIN', value: 'hello' }),
+        entry({ key: 'TOKEN', is_secret: true, value: null, masked: true }),
+        entry({ key: 'MINE', state: 'added', updated_by: 'ben' }),
+        entry({ key: 'THEIRS', state: 'changed', updated_by: 'ana', applied_value: 'old' }),
+      ],
+      { access: proposer },
+    );
+
+    expect(html).toContain('aria-label="Edit PLAIN"');
+    expect(html).toContain('aria-label="Remove PLAIN"');
+    expect(html).not.toContain('aria-label="Mark PLAIN as secret"');
+    expect(html).toContain('aria-label="Undo the staged change to MINE"');
+    expect(html).toContain('TOKEN is not editable: Secret keys can only be changed by an admin.');
+    expect(html).not.toContain('Reveal TOKEN');
+    expect(html).not.toContain('aria-label="Set a new value for TOKEN"');
+    expect(html).toContain('THEIRS is not editable: ana staged a change to this key.');
+    expect(html).not.toContain('aria-label="Edit THEIRS"');
+    expect(html).not.toContain('aria-label="Undo the staged change to THEIRS"');
   });
 
   it('disables row actions while read-only', () => {

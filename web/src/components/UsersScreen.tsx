@@ -24,6 +24,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
+import AccessReview from './users/AccessReview.tsx';
 import AccessFields, {
   accessProblem,
   defaultAccess,
@@ -370,6 +371,10 @@ export default function UsersScreen({
           )}
         </CardContent>
       </Card>
+
+      {users !== null && (
+        <AccessReview services={services} users={users} onUnauthorized={onUnauthorized} />
+      )}
 
       <Dialog open={creating} onOpenChange={(open) => !open && setCreating(false)}>
         <DialogContent>

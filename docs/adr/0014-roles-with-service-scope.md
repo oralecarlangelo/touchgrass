@@ -10,6 +10,9 @@
 - Amended by: ADR-0016, which records one kind of refusal in the audit
   table (a developer's attempt on a secret env key) although denied
   requests otherwise go to the log only.
+- Amended by: S34, which adds `status` and `reason` to the denial log
+  line and leaves `service` out when the request concerned none
+  (`docs-site/access-denied.md`).
 - Amended by: ADR-0015, which defines the `developer` role this record
   reserved. Where the text below says the role holds nothing or that a
   scoped account is read-only, ADR-0015 is current.

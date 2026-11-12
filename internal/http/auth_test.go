@@ -135,18 +135,26 @@ func TestHandleLoginSuccess(t *testing.T) {
 		t.Fatalf("status = %d, want 204", res.StatusCode)
 	}
 
+	// The session cookie comes first, then the device cookie the
+	// login throttle reads (ADR-0017).
 	cookies := res.Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("cookies = %d, want 1", len(cookies))
+	if len(cookies) != 2 {
+		t.Fatalf("cookies = %d, want 2", len(cookies))
 	}
 
 	cookie := cookies[0]
-	if !cookie.HttpOnly || cookie.SameSite != nethttp.SameSiteLaxMode || cookie.Path != "/" {
-		t.Errorf("cookie = %+v, want HttpOnly Lax Path=/", cookie)
+	if cookie.Name != sessionCookie || !cookie.HttpOnly || cookie.SameSite != nethttp.SameSiteLaxMode || cookie.Path != "/" {
+		t.Errorf("cookie = %+v, want the session cookie, HttpOnly Lax Path=/", cookie)
 	}
 
 	if cookie.Secure {
 		t.Error("cookie Secure set without opt-in")
+	}
+
+	remembered := cookies[1]
+	if remembered.Name != deviceCookie || !remembered.HttpOnly || remembered.SameSite != nethttp.SameSiteStrictMode ||
+		remembered.Path != deviceCookiePath || remembered.Value == "" || remembered.Value == cookie.Value {
+		t.Errorf("device cookie = %+v, want HttpOnly Strict, limited to the login route, with its own value", remembered)
 	}
 
 	entries := loginAuditEntries(t, db)

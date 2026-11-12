@@ -106,9 +106,23 @@ paths:
                   type: string
                   description: Defaults to admin when empty
                 password: { type: string }
+      description: |
+        Failed attempts are limited twice: 5 a minute per client
+        address, and 10 in 15 minutes per username from any address.
+        Both limits answer the same `429 rate_limited` before the
+        password is checked, for a username that exists and for one
+        that does not. A successful login also sets
+        `touchgrass_device`, a cookie sent only to this route: a
+        browser that presents it is counted on its own and is not
+        held up by other clients' failures on the same username.
       responses:
-        '204': { description: Session cookie set }
+        '204': { description: Session cookie set, with the device cookie }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429':
+          description: rate_limited — too many failed attempts from this address or for this username
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /auth/logout:
     post:
       x-touchgrass-capability: session.self
@@ -470,6 +484,25 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+  /access/matrix:
+    get:
+      x-touchgrass-capability: users.manage
+      x-touchgrass-scope: fleet
+      operationId: getAccessMatrix
+      tags: [auth]
+      summary: The role-to-capability table (admin only)
+      description: |
+        The access policy as the server enforces it: every capability
+        with its scope class and the roles that hold it. It is read
+        from the same table the route guards use. Pair it with
+        `GET /api/users` to answer who can do what on which service.
+      responses:
+        '200':
+          description: The access matrix
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccessMatrix' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /ingest:
     post:
       x-touchgrass-capability: none
@@ -2868,6 +2901,41 @@ components:
           description: True while the account is on a temporary password.
         disabled: { type: boolean }
         created_at: { type: string, format: date-time }
+    AccessMatrix:
+      type: object
+      required: [roles, capabilities]
+      properties:
+        roles:
+          type: array
+          description: Every role, from the least to the most powerful.
+          items: { type: string, enum: [viewer, developer, admin] }
+        capabilities:
+          type: array
+          description: Every capability, in the order of the documented matrix.
+          items:
+            type: object
+            required: [capability, scope, summary, roles, limits]
+            properties:
+              capability: { type: string, example: env.stage }
+              scope:
+                type: string
+                enum: [self, service, fleet]
+                description: >-
+                  `self` applies to the caller's own account, `service`
+                  to the services in the user's scope, `fleet` only to
+                  a user with every service.
+              summary: { type: string, description: What the capability covers. }
+              roles:
+                type: object
+                description: For each role, whether it holds the capability.
+                additionalProperties: { type: boolean }
+              limits:
+                type: object
+                description: >-
+                  For a role whose grant is narrower than the name
+                  says, the sentence that states the limit. Empty for
+                  most capabilities.
+                additionalProperties: { type: string }
     StackFrame:
       type: object
       required: [function, file, line, column]

@@ -223,11 +223,10 @@ func TestDeveloperIsRefusedEveryAdminOnlyRoute(t *testing.T) {
 	handler := guardHarness(fixture.server)
 	granted := testfixture.GenericGranted
 
-	adminOnly := append(slices.Clone(legacyAdminOnly), adminOnlySince31...)
-	adminOnly = slices.DeleteFunc(adminOnly, func(name string) bool { return slices.Contains(developerGains, name) })
+	adminOnly := slices.DeleteFunc(allAdminOnly(), func(name string) bool { return slices.Contains(developerGains, name) })
 
-	if len(adminOnly) != 30 {
-		t.Fatalf("admin-only routes after the developer's twelve = %d, want 30", len(adminOnly))
+	if len(adminOnly) != 31 {
+		t.Fatalf("admin-only routes after the developer's twelve = %d, want 31", len(adminOnly))
 	}
 
 	cookies := map[string]*nethttp.Cookie{

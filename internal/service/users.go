@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -26,6 +28,8 @@ const (
 	maxPasswordLength = 72
 	// maxUsernameLength bounds usernames for audit readability.
 	maxUsernameLength = 64
+	// decoySecretBytes is the size of the value behind decoyHash.
+	decoySecretBytes = 32
 )
 
 // usernamePattern constrains managed usernames to the service-id shape.
@@ -134,21 +138,49 @@ func (u *Users) Verify(ctx context.Context, username, password string) (model.Us
 	user, err := u.users.ByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, store.ErrUserNotFound) {
+			spendPasswordCheck(password)
+
 			return model.User{}, ErrUnauthorized
 		}
 
 		return model.User{}, fmt.Errorf("looking up user: %w", err)
 	}
 
-	if user.Disabled() {
-		return model.User{}, ErrUnauthorized
-	}
+	// The hash is compared before the disabled flag is read, so a
+	// disabled account takes as long to refuse as an enabled one.
+	mismatch := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+	if user.Disabled() || mismatch != nil {
 		return model.User{}, ErrUnauthorized
 	}
 
 	return user, nil
+}
+
+// decoyHash is a bcrypt hash of a random value nobody knows, at the
+// cost new passwords are hashed with.
+var decoyHash = sync.OnceValue(func() []byte {
+	secret := make([]byte, decoySecretBytes)
+
+	if _, err := rand.Read(secret); err != nil {
+		return nil
+	}
+
+	hash, err := bcrypt.GenerateFromPassword(secret, bcrypt.DefaultCost)
+	if err != nil {
+		return nil
+	}
+
+	return hash
+})
+
+// spendPasswordCheck does the work of checking password against a
+// hash that cannot match. A login for a username that does not exist
+// then takes about as long as one with a wrong password, so the
+// response time does not say which usernames exist.
+func spendPasswordCheck(password string) {
+	//nolint:errcheck,gosec // the comparison cannot succeed; only the time it takes matters.
+	bcrypt.CompareHashAndPassword(decoyHash(), []byte(password))
 }
 
 // Lookup returns one enabled user for session validation. Unknown and

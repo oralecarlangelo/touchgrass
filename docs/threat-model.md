@@ -53,9 +53,35 @@ container security monitoring.
   sessions. A new account also starts on a temporary password.
 - Session cookie: `HttpOnly`, `SameSite=Lax`, `Secure` behind
   `TOUCHGRASS_COOKIE_SECURE=true` (set it whenever TLS terminates in
-  front). Logout destroys the token. Per-IP login rate limiting
-  (5/minute) with 429s; every attempt is audited with the
-  attempted username.
+  front). Logout destroys the token.
+- Login rate limiting (ADR-0017), two limits with one 429 answer,
+  both checked before the password is looked at; every attempt is
+  audited with the attempted username and the client address.
+  - Per client address: 5 failures a minute. The address is the TCP
+    peer; proxy headers are not trusted, so behind a reverse proxy
+    all users share it. Rate-limit the login route at the proxy too.
+  - Per username, from all addresses together: 10 failures in a
+    sliding 15 minutes. Refused attempts are not counted, so the
+    limit cannot be stretched by hammering it.
+  - A successful login sets `touchgrass_device` (`HttpOnly`,
+    `SameSite=Strict`, sent only to the login route, 30 days). A
+    browser presenting the token issued for that username is counted
+    on its own, so strangers who fill a username's limit shut out
+    other strangers, not the user's known browser. The token is not
+    a credential: it grants nothing, its lane has the same budget,
+    and an admin's password reset forgets it.
+  - A username that does not exist is counted, limited and answered
+    exactly like one that does, and its password check costs the
+    same (a decoy bcrypt comparison), as does a disabled account's.
+    Neither the status, the body nor the response time says which
+    usernames exist.
+  - All counters are in memory, at most 10,000 keys per map and
+    4,096 remembered browsers, and are dropped when their window
+    passes. A restart clears them.
+  - Residual: a user on a browser that never signed in, while an
+    attacker keeps their username's limit full, is refused until the
+    attack pauses for up to 15 minutes. It shows as `rate-limited
+    login for this username` rows in the audit trail.
 - Every `/api/*` route except `/api/health`, login, and ingest
   requires the session. The last-enabled-admin guard rejects
   demotes, disables, and deletes that would orphan management.
@@ -93,6 +119,19 @@ container security monitoring.
   may read that service's deploys. A user's streams are closed when
   their role, scope, password or disabled state changes. An event
   type with no declared capability reaches nobody.
+- **Refusals are logged, not audited.** Each 403 from a guard, and
+  each 404 a scoped user gets for a resource id, writes one `access
+  denied` log line: user, role, capability, service id when there is
+  one, method, route pattern, status and a reason (`role`,
+  `service_out_of_scope`, `all_services_required`,
+  `resource_out_of_scope`, `resource_not_found`). Every field comes
+  from the route declaration and the decision; the path, query,
+  headers, cookies and body of the request are never written. The
+  reason stays in the log: the response is the same whatever it was.
+- **The policy is readable by admins only.** `GET /api/access/matrix`
+  returns the role-to-capability table from `internal/authz` (the
+  same table the guards use) behind `users.manage`. It contains no
+  usernames and no service names.
 - **Escalation paths closed in S31.** Only admins reach any user or
   access route. The last enabled admin cannot lose the admin role by
   any route or to any role, and the schema refuses a scoped admin.
@@ -362,6 +401,8 @@ which a developer may run for the services in its scope:
 ## What v1 deliberately lacks
 
 - No TLS listener (terminate in nginx/Caddy/ALB in front).
+- No 2FA and no CAPTCHA on login: guessing is bounded by the two
+  rate limits and the 12-character minimum only.
 - No custom roles, no groups, no API tokens, no SSO: three fixed
   roles (admin/developer/viewer), each with a scope of all services
   or a list (ADR-0014, ADR-0015, ADR-0016). A developer cannot apply

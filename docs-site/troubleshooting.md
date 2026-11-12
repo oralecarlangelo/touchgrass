@@ -159,6 +159,9 @@ name, for example `viewer · 2 services` or `developer · 1 service`.
 - **"No services assigned yet"** means the account exists but has no service.
 - The API answers 403 `forbidden` for the same cases, and 404 for an issue or
   log line of a service outside the scope. The server log has one `access
-  denied` line per refusal with the user, capability, service and route.
+  denied` line per refusal with the user, role, capability, service, route
+  and reason.
 
-See [Users, roles & access](/access) for the full matrix.
+See [Why was I denied?](/access-denied) for every refusal the API gives
+and how to read the `access denied` log line, and
+[Users, roles & access](/access) for the full matrix.

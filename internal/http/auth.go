@@ -45,6 +45,10 @@ const (
 	// codePasswordChangeRequired is the envelope code clients switch on
 	// to show the change-password screen.
 	codePasswordChangeRequired = "password_change_required"
+	// errThrottledMessage and codeRateLimited are the one answer of
+	// both login limits, so a client cannot tell which one it met.
+	errThrottledMessage = "too many attempts, try again later"
+	codeRateLimited     = "rate_limited"
 	// unknownActor attributes requests that never passed auth.
 	unknownActor = "unknown"
 )
@@ -87,7 +91,14 @@ type Authenticator struct {
 	secureCookie bool
 	mutex        sync.Mutex
 	sessions     map[string]session
-	failures     map[string][]time.Time
+	// failures counts failed logins and password changes per client
+	// address; lanes counts failed logins per username, or per
+	// remembered browser (see LoginLane).
+	failures *attemptLimiter
+	lanes    *attemptLimiter
+	devices  map[string]device
+	// now is the clock, replaced in tests.
+	now func() time.Time
 }
 
 // NewAuthenticator builds an Authenticator over managed users.
@@ -96,7 +107,10 @@ func NewAuthenticator(users *service.Users, secureCookie bool) *Authenticator {
 		users:        users,
 		secureCookie: secureCookie,
 		sessions:     map[string]session{},
-		failures:     map[string][]time.Time{},
+		failures:     newAttemptLimiter(maxFailures, failureWindow, maxTrackedKeys),
+		lanes:        newAttemptLimiter(maxUsernameFailures, usernameFailureWindow, maxTrackedKeys),
+		devices:      map[string]device{},
+		now:          time.Now,
 	}
 }
 
@@ -172,9 +186,20 @@ func (a *Authenticator) DropOtherSessions(username, keep string) {
 }
 
 // DropSessions ends every session of username, so an admin's password
-// reset logs out whoever held the old password.
+// reset logs out whoever held the old password. It also forgets the
+// browsers remembered for the login throttle: whoever signed in with
+// the old password is a stranger again.
 func (a *Authenticator) DropSessions(username string) {
 	a.DropOtherSessions(username, "")
+
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	for token, known := range a.devices {
+		if known.username == username {
+			delete(a.devices, token)
+		}
+	}
 }
 
 // Logout drops a session token.
@@ -205,18 +230,7 @@ func (a *Authenticator) AttemptsExceeded(ip string) bool {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
-	cutoff := time.Now().Add(-failureWindow)
-	recent := a.failures[ip][:0]
-
-	for _, failure := range a.failures[ip] {
-		if failure.After(cutoff) {
-			recent = append(recent, failure)
-		}
-	}
-
-	a.failures[ip] = recent
-
-	return len(recent) >= maxFailures
+	return a.failures.exceeded(ip, a.now())
 }
 
 // RegisterFailure records a failed login, clearing on success.
@@ -225,12 +239,174 @@ func (a *Authenticator) RegisterFailure(ip string, failed bool) {
 	defer a.mutex.Unlock()
 
 	if !failed {
-		delete(a.failures, ip)
+		a.failures.clear(ip)
 
 		return
 	}
 
-	a.failures[ip] = append(a.failures[ip], time.Now())
+	a.failures.fail(ip, a.now())
+}
+
+// LoginLane returns the throttle key for a login as username. A
+// browser that presents the device token of an earlier successful
+// login as that username gets a lane of its own; every other attempt
+// at the username, from any address, shares one. Failures in the
+// shared lane therefore cannot shut out a browser the user has already
+// signed in from. The answer does not depend on whether the account
+// exists: an unknown username has a shared lane like any other.
+func (a *Authenticator) LoginLane(username, deviceToken string) string {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	if a.rememberedLocked(username, deviceToken) {
+		return deviceLanePrefix + deviceToken
+	}
+
+	return usernameLane(username)
+}
+
+// LaneExceeded reports whether a login lane has used up its failures.
+func (a *Authenticator) LaneExceeded(lane string) bool {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	return a.lanes.exceeded(lane, a.now())
+}
+
+// RegisterLaneFailure records a failed login in its lane, clearing the
+// lane on success.
+func (a *Authenticator) RegisterLaneFailure(lane string, failed bool) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	if !failed {
+		a.lanes.clear(lane)
+
+		return
+	}
+
+	a.lanes.fail(lane, a.now())
+}
+
+// RememberDevice returns the device token to hand a browser that just
+// signed in as username: the one it presented, renewed, or a new one.
+// An empty answer means no token could be minted, which only costs the
+// browser its own lane.
+func (a *Authenticator) RememberDevice(username, presented string) string {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	expires := a.now().Add(deviceExpiry)
+
+	if a.rememberedLocked(username, presented) {
+		a.devices[presented] = device{username: username, expires: expires}
+
+		return presented
+	}
+
+	raw := make([]byte, tokenBytes)
+
+	if _, err := rand.Read(raw); err != nil {
+		return ""
+	}
+
+	a.makeRoomForDeviceLocked(username)
+
+	token := hex.EncodeToString(raw)
+	a.devices[token] = device{username: username, expires: expires}
+
+	return token
+}
+
+// rememberedLocked reports whether token is a live device token of
+// username. The caller holds the mutex.
+func (a *Authenticator) rememberedLocked(username, token string) bool {
+	if token == "" {
+		return false
+	}
+
+	known, ok := a.devices[token]
+	if !ok {
+		return false
+	}
+
+	if !a.now().Before(known.expires) {
+		delete(a.devices, token)
+
+		return false
+	}
+
+	return known.username == username
+}
+
+// makeRoomForDeviceLocked keeps the device map inside its bounds
+// before one more token is stored for username: expired tokens go,
+// then the user's own oldest while they hold the per-user maximum,
+// then the oldest of all while the map is full. A user can therefore
+// push out only their own browsers unless the whole map is full. The
+// caller holds the mutex.
+func (a *Authenticator) makeRoomForDeviceLocked(username string) {
+	now := a.now()
+
+	for token, known := range a.devices {
+		if !now.Before(known.expires) {
+			delete(a.devices, token)
+		}
+	}
+
+	for a.countDevicesLocked(username) >= maxDevicesPerUser {
+		a.dropOldestDeviceLocked(username)
+	}
+
+	for len(a.devices) >= maxDevices {
+		a.dropOldestDeviceLocked("")
+	}
+}
+
+// countDevicesLocked counts username's device tokens.
+func (a *Authenticator) countDevicesLocked(username string) int {
+	count := 0
+
+	for _, known := range a.devices {
+		if known.username == username {
+			count++
+		}
+	}
+
+	return count
+}
+
+// dropOldestDeviceLocked forgets the token that expires first, among
+// username's when one is given and among all otherwise.
+func (a *Authenticator) dropOldestDeviceLocked(username string) {
+	oldestToken, oldest := "", time.Time{}
+
+	for token, known := range a.devices {
+		if username != "" && known.username != username {
+			continue
+		}
+
+		if oldestToken == "" || known.expires.Before(oldest) {
+			oldestToken, oldest = token, known.expires
+		}
+	}
+
+	delete(a.devices, oldestToken)
+}
+
+// deviceCookieFor builds the cookie that carries a device token. It is
+// sent only to the login route and only on same-site requests.
+func (a *Authenticator) deviceCookieFor(token string) *nethttp.Cookie {
+	//nolint:gosec // Secure is intentionally opt-in for localhost dev; CookieSecure enables it in prod.
+	return &nethttp.Cookie{
+		Name:     deviceCookie,
+		Value:    token,
+		Path:     deviceCookiePath,
+		MaxAge:   int(deviceExpiry.Seconds()),
+		HttpOnly: true,
+		Secure:   a.secureCookie,
+		SameSite: nethttp.SameSiteStrictMode,
+	}
 }
 
 // Middleware rejects unauthenticated API requests outside the public
@@ -356,13 +532,31 @@ func (s *Server) handleLogin(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 	if s.auth.AttemptsExceeded(ip) {
 		s.auditLogin(r.Context(), username, model.AuditFailure, "rate-limited login from "+ip)
-		writeError(w, s.logger, errAuthRequired, "too many attempts, try again later", "rate_limited", nethttp.StatusTooManyRequests)
+		writeError(w, s.logger, errAuthRequired, errThrottledMessage, codeRateLimited, nethttp.StatusTooManyRequests)
+
+		return
+	}
+
+	presented := ""
+	if cookie, err := r.Cookie(deviceCookie); err == nil {
+		presented = cookie.Value
+	}
+
+	// The username limit answers exactly as the address limit does and
+	// before the password is looked at, for an account that exists and
+	// for one that does not.
+	lane := s.auth.LoginLane(username, presented)
+
+	if s.auth.LaneExceeded(lane) {
+		s.auditLogin(r.Context(), username, model.AuditFailure, "rate-limited login for this username from "+ip)
+		writeError(w, s.logger, errAuthRequired, errThrottledMessage, codeRateLimited, nethttp.StatusTooManyRequests)
 
 		return
 	}
 
 	token, ok := s.auth.Login(r.Context(), username, body.Password)
 	s.auth.RegisterFailure(ip, !ok)
+	s.auth.RegisterLaneFailure(lane, !ok)
 
 	if !ok {
 		s.auditLogin(r.Context(), username, model.AuditFailure, "failed login from "+ip)
@@ -373,6 +567,11 @@ func (s *Server) handleLogin(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 	s.auditLogin(r.Context(), username, model.AuditSuccess, "login from "+ip)
 	nethttp.SetCookie(w, s.auth.cookie(token, int(sessionExpiry.Seconds())))
+
+	if remembered := s.auth.RememberDevice(username, presented); remembered != "" {
+		nethttp.SetCookie(w, s.auth.deviceCookieFor(remembered))
+	}
+
 	w.WriteHeader(nethttp.StatusNoContent)
 }
 
@@ -427,7 +626,7 @@ func (s *Server) handleChangePassword(w nethttp.ResponseWriter, r *nethttp.Reque
 	ip := clientIP(r)
 
 	if s.auth.AttemptsExceeded(ip) {
-		writeError(w, s.logger, errAuthRequired, "too many attempts, try again later", "rate_limited", nethttp.StatusTooManyRequests)
+		writeError(w, s.logger, errAuthRequired, errThrottledMessage, codeRateLimited, nethttp.StatusTooManyRequests)
 
 		return
 	}

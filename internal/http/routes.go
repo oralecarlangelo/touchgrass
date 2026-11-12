@@ -97,6 +97,8 @@ func (s *Server) routes() []route {
 		{method: nethttp.MethodPost, pattern: "/api/users/{id}/disable", kind: guardFleet, capability: authz.UsersManage, handler: s.handleUserDisable},
 		{method: nethttp.MethodPost, pattern: "/api/users/{id}/enable", kind: guardFleet, capability: authz.UsersManage, handler: s.handleUserEnable},
 		{method: nethttp.MethodDelete, pattern: "/api/users/{id}", kind: guardFleet, capability: authz.UsersManage, handler: s.handleDeleteUser},
+		// The policy itself, for the access overview.
+		{method: nethttp.MethodGet, pattern: "/api/access/matrix", kind: guardFleet, capability: authz.UsersManage, handler: s.handleAccessMatrix},
 
 		// Service inventory.
 		{method: nethttp.MethodGet, pattern: "/api/services", kind: guardServiceQuery, capability: authz.ServiceRead, listScoped: true, handler: s.handleServices},
@@ -215,11 +217,38 @@ const (
 	verdictFailed
 )
 
+// Denial reasons the guards log beside the policy's own
+// (authz.Refusal). Both concern a route keyed by a resource id, where a
+// scoped caller is answered 404 either way.
+const (
+	// reasonResourceOutOfScope: the row exists and belongs to a service
+	// outside the caller's scope.
+	reasonResourceOutOfScope authz.Refusal = "resource_out_of_scope"
+	// reasonResourceNotFound: no row has that id.
+	reasonResourceNotFound authz.Refusal = "resource_not_found"
+)
+
+// Fields of the denial log line. They are a contract with whoever
+// searches the log: see docs-site/access-denied.md.
+const (
+	deniedLogMessage    = "access denied"
+	deniedKeyUser       = "user"
+	deniedKeyRole       = "role"
+	deniedKeyCapability = "capability"
+	deniedKeyService    = "service"
+	deniedKeyMethod     = "method"
+	deniedKeyRoute      = "route"
+	deniedKeyStatus     = "status"
+	deniedKeyReason     = "reason"
+)
+
 // decision is a verdict with what the denial log needs.
 type decision struct {
 	verdict   verdict
 	serviceID string
-	err       error
+	// reason says why a request was refused. It goes to the log only.
+	reason authz.Refusal
+	err    error
 }
 
 // guard wraps a route's handler with its authorization check. It runs
@@ -238,7 +267,7 @@ func (s *Server) guard(rt route) nethttp.HandlerFunc {
 		case verdictAllow:
 			rt.handler(w, r)
 		case verdictNotFound:
-			s.logDenied(rt, subject, decided.serviceID)
+			s.logDenied(rt, subject, decided, nethttp.StatusNotFound)
 			writeJSON(w, s.logger, nethttp.StatusNotFound, errorResponse{Error: errNotFoundMessage, Code: codeNotFound})
 		case verdictMissingService:
 			writeError(w, s.logger, errMissingService, "service_id is required", "invalid_request", nethttp.StatusBadRequest)
@@ -247,28 +276,47 @@ func (s *Server) guard(rt route) nethttp.HandlerFunc {
 		case verdictFailed:
 			writeError(w, s.logger, decided.err, "failed to check access", "internal", nethttp.StatusInternalServerError)
 		case verdictDeny:
-			s.logDenied(rt, subject, decided.serviceID)
+			s.logDenied(rt, subject, decided, nethttp.StatusForbidden)
 			writeJSON(w, s.logger, nethttp.StatusForbidden, errorResponse{Error: errForbiddenMessage, Code: codeForbidden})
 		default:
-			s.logDenied(rt, subject, decided.serviceID)
+			s.logDenied(rt, subject, decided, nethttp.StatusForbidden)
 			writeJSON(w, s.logger, nethttp.StatusForbidden, errorResponse{Error: errForbiddenMessage, Code: codeForbidden})
 		}
 	}
 }
 
-// logDenied records a refused request in the structured log, with who
-// asked for what. Denials are not audit rows: the audit trail records
+// logDenied writes the one log line of a refused request: who asked,
+// with which role, for which capability, on which service when the
+// request named or resolved to one, through which route, and why. It
+// takes everything from the route declaration and the decision, never
+// from the request, so no query string, header, cookie or body can
+// reach the log. Denials are not audit rows: the audit trail records
 // what happened, and a refused request changed nothing.
-func (s *Server) logDenied(rt route, subject authz.Subject, serviceID string) {
-	s.logger.Warn(
-		"access denied",
-		"user", subject.Username,
-		"role", string(subject.Role),
-		"capability", string(rt.capability),
-		"service", serviceID,
-		"method", rt.method,
-		"route", rt.pattern,
+func (s *Server) logDenied(rt route, subject authz.Subject, decided decision, status int) {
+	reason := decided.reason
+	if reason == authz.RefusalNone {
+		// A refusal nobody explained is the policy's own default.
+		reason = authz.RefusalRole
+	}
+
+	attrs := []any{
+		deniedKeyUser, subject.Username,
+		deniedKeyRole, string(subject.Role),
+		deniedKeyCapability, string(rt.capability),
+	}
+
+	if decided.serviceID != "" {
+		attrs = append(attrs, deniedKeyService, decided.serviceID)
+	}
+
+	attrs = append(attrs,
+		deniedKeyMethod, rt.method,
+		deniedKeyRoute, rt.pattern,
+		deniedKeyStatus, status,
+		deniedKeyReason, string(reason),
 	)
+
+	s.logger.Warn(deniedLogMessage, attrs...)
 }
 
 // authorize decides one request against its route's guard kind.
@@ -280,11 +328,9 @@ func (s *Server) authorize(
 ) decision {
 	switch rt.kind {
 	case guardSession, guardFleet:
-		return allowIf(subject.Can(rt.capability, ""), "")
+		return decide(subject, rt.capability, "")
 	case guardServicePath:
-		serviceID := r.PathValue("id")
-
-		return allowIf(subject.Can(rt.capability, serviceID), serviceID)
+		return decide(subject, rt.capability, r.PathValue("id"))
 	case guardServiceQuery:
 		return authorizeQuery(r, rt, subject)
 	case guardServiceBody:
@@ -292,19 +338,21 @@ func (s *Server) authorize(
 	case guardResource:
 		return s.authorizeResource(r, rt, subject)
 	case guardPublic, guardUnknown:
-		return decision{verdict: verdictDeny}
+		return decision{verdict: verdictDeny, reason: authz.RefusalRole}
 	default:
-		return decision{verdict: verdictDeny}
+		return decision{verdict: verdictDeny, reason: authz.RefusalRole}
 	}
 }
 
-// allowIf turns a policy answer into a decision.
-func allowIf(allowed bool, serviceID string) decision {
-	if allowed {
+// decide asks the policy about one capability on one service and keeps
+// its reason for the denial log.
+func decide(subject authz.Subject, capability authz.Capability, serviceID string) decision {
+	reason := subject.Refusal(capability, serviceID)
+	if reason == authz.RefusalNone {
 		return decision{verdict: verdictAllow, serviceID: serviceID}
 	}
 
-	return decision{verdict: verdictDeny, serviceID: serviceID}
+	return decision{verdict: verdictDeny, serviceID: serviceID, reason: reason}
 }
 
 // authorizeQuery decides a route keyed by ?service_id=. A named service
@@ -312,12 +360,12 @@ func allowIf(allowed bool, serviceID string) decision {
 // handler bounds the list; any other route is refused as incomplete.
 func authorizeQuery(r *nethttp.Request, rt route, subject authz.Subject) decision {
 	if !authz.RoleHolds(subject.Role, rt.capability) {
-		return decision{verdict: verdictDeny}
+		return decision{verdict: verdictDeny, reason: authz.RefusalRole}
 	}
 
 	serviceID := r.URL.Query().Get(serviceIDParam)
 	if serviceID != "" {
-		return allowIf(subject.Can(rt.capability, serviceID), serviceID)
+		return decide(subject, rt.capability, serviceID)
 	}
 
 	if rt.listScoped {
@@ -333,7 +381,7 @@ func authorizeQuery(r *nethttp.Request, rt route, subject authz.Subject) decisio
 // The body is put back for the handler.
 func authorizeBody(w nethttp.ResponseWriter, r *nethttp.Request, rt route, subject authz.Subject) decision {
 	if !subject.Holds(rt.capability) {
-		return decision{verdict: verdictDeny}
+		return decision{verdict: verdictDeny, reason: subject.Refusal(rt.capability, "")}
 	}
 
 	if subject.CanFleet(rt.capability) {
@@ -355,7 +403,7 @@ func authorizeBody(w nethttp.ResponseWriter, r *nethttp.Request, rt route, subje
 		return decision{verdict: verdictBadRequest, err: err}
 	}
 
-	return allowIf(subject.Can(rt.capability, body.ServiceID), body.ServiceID)
+	return decide(subject, rt.capability, body.ServiceID)
 }
 
 // authorizeResource decides a route keyed by a resource id. A caller
@@ -364,7 +412,7 @@ func authorizeBody(w nethttp.ResponseWriter, r *nethttp.Request, rt route, subje
 // one whose service is out of scope.
 func (s *Server) authorizeResource(r *nethttp.Request, rt route, subject authz.Subject) decision {
 	if !subject.Holds(rt.capability) {
-		return decision{verdict: verdictDeny}
+		return decision{verdict: verdictDeny, reason: subject.Refusal(rt.capability, "")}
 	}
 
 	if subject.CanFleet(rt.capability) {
@@ -379,14 +427,14 @@ func (s *Server) authorizeResource(r *nethttp.Request, rt route, subject authz.S
 	serviceID, err := s.owners.ServiceOf(r.Context(), rt.resource, id)
 	if err != nil {
 		if errors.Is(err, service.ErrNoOwner) {
-			return decision{verdict: verdictNotFound}
+			return decision{verdict: verdictNotFound, reason: reasonResourceNotFound}
 		}
 
 		return decision{verdict: verdictFailed, err: err}
 	}
 
 	if !subject.Can(rt.capability, serviceID) {
-		return decision{verdict: verdictNotFound, serviceID: serviceID}
+		return decision{verdict: verdictNotFound, serviceID: serviceID, reason: reasonResourceOutOfScope}
 	}
 
 	return decision{verdict: verdictAllow, serviceID: serviceID}

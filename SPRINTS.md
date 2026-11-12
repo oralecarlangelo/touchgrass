@@ -1344,7 +1344,7 @@ tokens, no custom roles, no groups.
 
 ### S33 — Env proposals by developers (2026-11-12)
 
-**Status**: IMPLEMENTED on `claude/roles-s33-env-proposals-41d100`; PR open.
+**Status**: SHIPPED to `develop` (PR #11); not yet released.
 **Goal**: a developer can propose non-secret env changes for a service
 in their scope; only an admin can apply them, and no path lets a
 non-admin learn, confirm or influence a secret value (ADR-0016). Admin
@@ -1415,6 +1415,89 @@ plan.
 SCOPE GUARD: no apply, reveal, import, discard or revision rollback
 for non-admins; no approval workflow beyond "an admin applies"; no
 key management; no access overview or login throttle (S34).
+
+### S34 — Access review and hardening (2026-11-13)
+
+**Status**: IMPLEMENTED on `claude/roles-s34-access-review-156c62`; PR open.
+**Goal**: an admin can see who can do what, the login path copes
+with more accounts, and a refused request can be explained from the
+log. Existing admin, viewer and developer behaviour is unchanged
+apart from the new login limit. Last of four sprints in the
+roles-and-access plan; the next release ships S32–S34 together.
+
+- S34.1 Access overview (1pd) [FR-P1, NFR-6]
+  Acceptance: `GET /api/access/matrix` (`users.manage`, fleet)
+  returns every role and capability with scope, summary, grants and
+  stated limits, built on each call from `authz.Matrix()`, which
+  reads the table the guards use; a test holds the payload to
+  `RoleHolds` for every role and to the checked-in matrix. The route
+  is a row of the route table, one hand-written line in each route
+  matrix file (403 for a viewer and a developer of any scope; every
+  existing line of `access_viewer_v060.tsv` is untouched), and an
+  OpenAPI operation. The Users screen gains **Access review**: per
+  service, every account that reaches it with its role and whether
+  it came with all services; who sees the host screens; accounts
+  granted nothing; and the matrix grouped by scope with "Limited"
+  grants spelled out (a developer's `env.stage` is a proposal).
+- S34.2 Login throttle per username (0.5pd) [NFR-5]
+  Acceptance: 10 failures in a sliding 15 minutes per username from
+  all addresses, on top of 5 a minute per address; same 429 body for
+  both, checked before the password. A known and an unknown username
+  go through identical statuses and bodies and the same password
+  work (decoy bcrypt comparison; the disabled flag is read after the
+  comparison). Refused attempts are not counted. A browser that has
+  signed in as the user presents a device token and is counted on
+  its own, so strangers cannot lock the user out of it; the token
+  grants nothing and is forgotten on an admin reset. Failure maps
+  hold at most 10,000 keys and drop a key when its window passes
+  (the per-address map no longer keeps an entry per address
+  forever); remembered browsers are capped per user and in total.
+  ADR-0017 records the trade-off; threat model updated.
+- S34.3 OpenAPI capability annotations (0.5pd) [NFR-6]
+  Acceptance: already complete since S31 and held by
+  `TestOpenAPIDeclaresEveryRoutesAccess` in both directions; the new
+  operation carries `x-touchgrass-capability: users.manage` and
+  `x-touchgrass-scope: fleet`, and the login operation now documents
+  its 429. No gap found: 94 routes, 94 operations.
+- S34.4 Denied-request log and troubleshooting (0.5pd) [NFR-6]
+  Acceptance: one `access denied` line per 403 from a guard and per
+  404 a scoped user gets for a resource id, with `user`, `role`,
+  `capability`, `service` (only when there is one), `method`,
+  `route` (the pattern), `status` and `reason` (`role`,
+  `service_out_of_scope`, `all_services_required`,
+  `resource_out_of_scope`, `resource_not_found`). The reason comes
+  from `authz.Subject.Refusal`, which a test proves never disagrees
+  with `Can`. A test plants a marker in the query, body and a header
+  of each refused request and finds neither it nor the session
+  cookie in the line. `docs-site/access-denied.md` ("Why was I
+  denied?") maps each answer to its cause and fix, linked from
+  `access.md` and Troubleshooting.
+- Standards in play: `golang-security` (no username oracle in
+  status, body or time; bounded attacker-keyed state; nothing from
+  the request in the denial log), `golang-concurrency` (limiters and
+  remembered browsers behind the authenticator's one mutex, clock
+  injected for tests), `golang-testing` (generic non-dogfood
+  fixtures; hand-moved clock, no sleeps).
+- Validation: `go build`/`vet`/`test` green (also `-race` on
+  `internal/authz`, `internal/http` and `internal/service`), lint 0
+  new issues, web `verify` + vitest green, docs build + OpenAPI lint
+  clean. Exercised against the real binary on a loopback port with a
+  throwaway database, two generic services and five accounts: the
+  matrix route per role and scope, each account's session
+  capabilities against its matrix column, ten wrong passwords for a
+  known and for an unknown username (same statuses, bodies and
+  timing; the eleventh attempt 429 even with the right password),
+  the remembered browser still signing in, the audit rows, the
+  denial lines in the server log, the window reopening after 15
+  minutes, and the Access review in a browser as the admin. Not
+  exercised: the three production deployments, a host behind a
+  reverse proxy (where the per-address limit is shared; see
+  ADR-0017), attempts from more than one client address outside the
+  unit tests.
+
+SCOPE GUARD: no SSO, API tokens, groups, 2FA or CAPTCHA; no
+migration; no change to the per-address limit or to trusting proxy
+headers; no admin "unlock" action.
 
 ## Working agreements
 

@@ -1165,6 +1165,38 @@ export async function fetchUsers(): Promise<ManagedUser[]> {
   return body.users ?? [];
 }
 
+// One capability of the access policy, as GET /api/access/matrix
+// returns it from the table the server enforces.
+export interface AccessMatrixRow {
+  capability: string;
+  // 'self', 'service' or 'fleet'.
+  scope: string;
+  summary: string;
+  // For each role, whether it holds the capability.
+  roles: Record<string, boolean>;
+  // For a role whose grant is narrower than the name says, the limit.
+  limits: Record<string, string>;
+}
+
+export interface AccessMatrix {
+  // Every role, from the least to the most powerful.
+  roles: string[];
+  capabilities: AccessMatrixRow[];
+}
+
+export async function fetchAccessMatrix(): Promise<AccessMatrix> {
+  const body = await request<AccessMatrix>('/api/access/matrix');
+
+  return {
+    roles: body.roles ?? [],
+    capabilities: (body.capabilities ?? []).map((row) => ({
+      ...row,
+      roles: row.roles ?? {},
+      limits: row.limits ?? {},
+    })),
+  };
+}
+
 export async function createUser(
   input: { username: string; password: string } & UserAccess,
 ): Promise<ManagedUser> {

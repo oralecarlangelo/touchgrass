@@ -110,3 +110,43 @@ func (s Subject) inScope(serviceID string) bool {
 
 	return s.AllServices || slices.Contains(s.Services, serviceID)
 }
+
+// Refusal names why a subject may not use a capability, for the denial
+// log and the troubleshooting page. It never reaches the caller: a
+// refused request reads the same whichever reason applied.
+type Refusal string
+
+// Refusals, from the first check that fails.
+const (
+	// RefusalNone means the subject is allowed.
+	RefusalNone Refusal = ""
+	// RefusalRole means the role does not include the capability on any
+	// service. An unknown capability or role is refused for this reason.
+	RefusalRole Refusal = "role"
+	// RefusalAllServices means the role includes the capability, but it
+	// is a fleet capability and the account is limited to a list of
+	// services.
+	RefusalAllServices Refusal = "all_services_required"
+	// RefusalService means the role includes the capability, but the
+	// service asked about is not in the account's scope (or no service
+	// was named, or it does not exist).
+	RefusalService Refusal = "service_out_of_scope"
+)
+
+// Refusal reports why Can(capability, serviceID) is false, or
+// RefusalNone when it is true.
+func (s Subject) Refusal(capability Capability, serviceID string) Refusal {
+	if s.Can(capability, serviceID) {
+		return RefusalNone
+	}
+
+	if !RoleHolds(s.Role, capability) {
+		return RefusalRole
+	}
+
+	if ScopeOf(capability) == ScopeFleet {
+		return RefusalAllServices
+	}
+
+	return RefusalService
+}

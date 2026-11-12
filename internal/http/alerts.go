@@ -61,7 +61,7 @@ func (s *Server) handleCreateRule(w nethttp.ResponseWriter, r *nethttp.Request) 
 			Metric:       body.Metric,
 			Threshold:    body.Threshold,
 			DurationSecs: body.DurationSecs,
-		})
+		}, requestActor(r))
 	}, "failed to create alert rule")
 }
 
@@ -74,7 +74,7 @@ func (s *Server) handleDeleteRule(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 
-	if err := s.sampler.DeleteRule(r.Context(), id); err != nil {
+	if err := s.sampler.DeleteRule(r.Context(), id, requestActor(r)); err != nil {
 		writeServiceError(w, s.logger, err, "failed to delete alert rule")
 
 		return
@@ -130,7 +130,7 @@ func (s *Server) handleMarkNotificationRead(w nethttp.ResponseWriter, r *nethttp
 		return
 	}
 
-	if err := s.sampler.MarkNotificationRead(r.Context(), id); err != nil {
+	if err := s.sampler.MarkNotificationRead(r.Context(), id, requestActor(r)); err != nil {
 		writeServiceError(w, s.logger, err, "failed to mark notification read")
 
 		return
@@ -156,13 +156,13 @@ func (s *Server) handleMarkNotificationsRead(w nethttp.ResponseWriter, r *nethtt
 func (s *Server) markNotificationsRead(r *nethttp.Request) (int64, error) {
 	serviceID := r.URL.Query().Get(serviceIDParam)
 	if serviceID != "" {
-		return s.sampler.MarkNotificationsRead(r.Context(), serviceID)
+		return s.sampler.MarkNotificationsRead(r.Context(), serviceID, requestActor(r))
 	}
 
 	all, serviceIDs := listScope(r, authz.NotificationsAck)
 	if all {
-		return s.sampler.MarkNotificationsRead(r.Context(), "")
+		return s.sampler.MarkNotificationsRead(r.Context(), "", requestActor(r))
 	}
 
-	return s.sampler.MarkNotificationsReadForServices(r.Context(), serviceIDs)
+	return s.sampler.MarkNotificationsReadForServices(r.Context(), serviceIDs, requestActor(r))
 }

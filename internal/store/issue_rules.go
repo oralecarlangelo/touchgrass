@@ -62,6 +62,21 @@ func (s *IssueRuleStore) ListEnabled(ctx context.Context) ([]model.IssueRule, er
 	return s.list(ctx, "SELECT id, service_id, kind, threshold, window_secs, enabled, created_at FROM issue_rules WHERE enabled = 1 ORDER BY id")
 }
 
+// Get returns one rule. An unknown id reports ErrIssueRuleNotFound.
+func (s *IssueRuleStore) Get(ctx context.Context, id int64) (model.IssueRule, error) {
+	rules, err := s.list(ctx,
+		"SELECT id, service_id, kind, threshold, window_secs, enabled, created_at FROM issue_rules WHERE id = ?", id)
+	if err != nil {
+		return model.IssueRule{}, err
+	}
+
+	if len(rules) == 0 {
+		return model.IssueRule{}, fmt.Errorf("%w: %d", ErrIssueRuleNotFound, id)
+	}
+
+	return rules[0], nil
+}
+
 // Delete removes one rule.
 func (s *IssueRuleStore) Delete(ctx context.Context, id int64) error {
 	res, err := s.db.sql.ExecContext(ctx, "DELETE FROM issue_rules WHERE id = ?", id)

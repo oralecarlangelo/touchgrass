@@ -41,12 +41,20 @@ func TestRuleCreateDelete(t *testing.T) {
 		t.Errorf("Create() = %+v, want id and enabled", created)
 	}
 
+	if got, err := rules.Get(ctx, created.ID); err != nil || got.ServiceID != testServiceAPI || got.Metric != model.MetricCPU {
+		t.Errorf("Get() = %+v, %v, want the created rule", got, err)
+	}
+
 	if err := rules.Delete(ctx, created.ID); err != nil {
 		t.Fatalf("Delete() error = %v, want nil", err)
 	}
 
 	if err := rules.Delete(ctx, created.ID); !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("Delete() error = %v, want ErrRuleNotFound", err)
+	}
+
+	if _, err := rules.Get(ctx, created.ID); !errors.Is(err, ErrRuleNotFound) {
+		t.Errorf("Get(deleted) error = %v, want ErrRuleNotFound", err)
 	}
 }
 

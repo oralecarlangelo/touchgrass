@@ -145,7 +145,7 @@ func TestCreateRuleAcceptsPerformanceMetrics(t *testing.T) {
 	} {
 		if _, err := sampler.CreateRule(context.Background(), model.RuleCreate{
 			ServiceID: testServiceAPI, Metric: metric, Threshold: 1, DurationSecs: 60,
-		}); err != nil {
+		}, testAdminActor); err != nil {
 			t.Errorf("CreateRule(%s) error = %v", metric, err)
 		}
 	}

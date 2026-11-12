@@ -73,6 +73,31 @@ func (s *RuleStore) Create(ctx context.Context, create model.RuleCreate) (model.
 	}, nil
 }
 
+// Get returns one rule. An unknown id reports ErrRuleNotFound.
+func (s *RuleStore) Get(ctx context.Context, id int64) (model.AlertRule, error) {
+	rows, err := s.db.sql.QueryContext(ctx,
+		`SELECT id, service_id, metric, threshold, duration_secs, enabled, created_at
+		 FROM alert_rules WHERE id = ?`, id)
+	if err != nil {
+		return model.AlertRule{}, fmt.Errorf("querying alert rule: %w", err)
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	rules, err := collectRules(rows)
+	if err != nil {
+		return model.AlertRule{}, err
+	}
+
+	if len(rules) == 0 {
+		return model.AlertRule{}, fmt.Errorf("%w: %d", ErrRuleNotFound, id)
+	}
+
+	return rules[0], nil
+}
+
 // Delete removes a rule.
 func (s *RuleStore) Delete(ctx context.Context, id int64) error {
 	res, err := s.db.sql.ExecContext(ctx, "DELETE FROM alert_rules WHERE id = ?", id)

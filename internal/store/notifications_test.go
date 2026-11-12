@@ -116,8 +116,17 @@ func TestNotificationReadState(t *testing.T) {
 		t.Errorf("CountUnread() = %d, want 2", unread)
 	}
 
-	if err := notifications.MarkRead(ctx, first.ID); err != nil {
-		t.Fatalf("MarkRead() error = %v, want nil", err)
+	if owner, marked, err := notifications.MarkRead(ctx, first.ID); err != nil || !marked || owner != testServiceAPI {
+		t.Fatalf("MarkRead() = %q, %t, %v, want %q marked", owner, marked, err, testServiceAPI)
+	}
+
+	// A second call and an unknown id change nothing and say so.
+	if _, marked, err := notifications.MarkRead(ctx, first.ID); err != nil || marked {
+		t.Errorf("MarkRead(already read) = %t, %v, want unmarked and nil", marked, err)
+	}
+
+	if _, marked, err := notifications.MarkRead(ctx, first.ID+1000); err != nil || marked {
+		t.Errorf("MarkRead(unknown id) = %t, %v, want unmarked and nil", marked, err)
 	}
 
 	if unread := countUnread(t, notifications, ""); unread != 1 {
@@ -129,8 +138,8 @@ func TestNotificationReadState(t *testing.T) {
 		t.Fatalf("MarkAllRead() error = %v, want nil", err)
 	}
 
-	if marked != 1 {
-		t.Errorf("MarkAllRead() = %d, want 1", marked)
+	if len(marked) != 1 || marked["tn-fe"] != 1 {
+		t.Errorf("MarkAllRead() = %v, want one row of tn-fe", marked)
 	}
 
 	if unread := countUnread(t, notifications, ""); unread != 0 {

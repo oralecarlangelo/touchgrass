@@ -107,10 +107,12 @@ func clampIssueLogWindow(windowSecs int) time.Duration {
 	return time.Duration(windowSecs) * time.Second
 }
 
-// CreateIssueRule validates and stores an issue alert rule.
+// CreateIssueRule validates and stores an issue alert rule, audited
+// under actor.
 func (in *Ingestor) CreateIssueRule(
 	ctx context.Context,
 	create model.IssueRuleCreate,
+	actor string,
 ) (model.IssueRule, error) {
 	if _, err := in.services.Get(ctx, create.ServiceID); err != nil {
 		return model.IssueRule{}, err
@@ -131,10 +133,26 @@ func (in *Ingestor) CreateIssueRule(
 		return model.IssueRule{}, fmt.Errorf("%w: window must be positive seconds", ErrInvalidInput)
 	}
 
-	return in.issueRules.Create(ctx, model.IssueRule{
+	if actor == "" {
+		return model.IssueRule{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	rule, err := in.issueRules.Create(ctx, model.IssueRule{
 		ServiceID: create.ServiceID, Kind: create.Kind,
 		Threshold: create.Threshold, WindowSecs: create.WindowSecs, Enabled: true,
 	})
+	if err != nil {
+		return model.IssueRule{}, err
+	}
+
+	if _, err := in.audit.Record(ctx, model.AuditRecord{
+		ServiceID: rule.ServiceID, Actor: actor, Action: model.AuditIssueRuleCreate,
+		Result: model.AuditSuccess, Detail: "created issue rule " + describeIssueRule(rule),
+	}); err != nil {
+		return model.IssueRule{}, fmt.Errorf("auditing issue rule creation: %w", err)
+	}
+
+	return rule, nil
 }
 
 // IssueRules returns a service's issue alert rules.
@@ -146,7 +164,23 @@ func (in *Ingestor) IssueRules(ctx context.Context, serviceID string) ([]model.I
 	return in.issueRules.ListByService(ctx, serviceID)
 }
 
-// DeleteIssueRule removes an issue alert rule.
-func (in *Ingestor) DeleteIssueRule(ctx context.Context, id int64) error {
-	return in.issueRules.Delete(ctx, id)
+// DeleteIssueRule removes an issue alert rule, audited under actor
+// against the service the rule belonged to. An unknown id reports
+// store.ErrIssueRuleNotFound.
+func (in *Ingestor) DeleteIssueRule(ctx context.Context, id int64, actor string) error {
+	return deleteAudited(ctx, auditedDelete[model.IssueRule]{
+		audit: in.audit, actor: actor, id: id, get: in.issueRules.Get, remove: in.issueRules.Delete,
+		record: func(rule model.IssueRule) (string, string, string) {
+			return rule.ServiceID, model.AuditIssueRuleDelete, "deleted issue rule " + describeIssueRule(rule)
+		},
+	})
+}
+
+// describeIssueRule renders a rule for audit details.
+func describeIssueRule(rule model.IssueRule) string {
+	if rule.Kind == model.IssueRuleSpike {
+		return fmt.Sprintf("%d: %s of %d in %ds", rule.ID, rule.Kind, rule.Threshold, rule.WindowSecs)
+	}
+
+	return fmt.Sprintf("%d: %s within %ds", rule.ID, rule.Kind, rule.WindowSecs)
 }

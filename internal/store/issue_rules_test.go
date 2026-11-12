@@ -52,8 +52,16 @@ func TestIssueRuleStoreRoundTrip(t *testing.T) {
 		t.Fatalf("ListEnabled() = %+v, want the one enabled rule", enabled)
 	}
 
+	if got, err := rules.Get(ctx, created.ID); err != nil || got.ID != created.ID || got.ServiceID != created.ServiceID {
+		t.Errorf("Get() = %+v, %v, want the created rule", got, err)
+	}
+
 	if err := rules.Delete(ctx, created.ID); err != nil {
 		t.Fatalf("Delete() error = %v, want nil", err)
+	}
+
+	if _, err := rules.Get(ctx, created.ID); !errors.Is(err, ErrIssueRuleNotFound) {
+		t.Errorf("Get(deleted) error = %v, want ErrIssueRuleNotFound", err)
 	}
 
 	if err := rules.Delete(ctx, created.ID); !errors.Is(err, ErrIssueRuleNotFound) {

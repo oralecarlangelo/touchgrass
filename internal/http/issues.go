@@ -174,7 +174,7 @@ func (s *Server) handleCreateIssueRule(w nethttp.ResponseWriter, r *nethttp.Requ
 		return s.ingestor.CreateIssueRule(ctx, model.IssueRuleCreate{
 			ServiceID: body.ServiceID, Kind: body.Kind,
 			Threshold: body.Threshold, WindowSecs: body.WindowSecs,
-		})
+		}, requestActor(r))
 	}, "failed to create issue rule")
 }
 
@@ -206,7 +206,7 @@ func (s *Server) handleDeleteIssueRule(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 
-	if err := s.ingestor.DeleteIssueRule(r.Context(), id); err != nil {
+	if err := s.ingestor.DeleteIssueRule(r.Context(), id, requestActor(r)); err != nil {
 		writeServiceError(w, s.logger, err, "failed to delete issue rule")
 
 		return

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -50,10 +52,13 @@ type SamplerConfig struct {
 	SDKLogs       *store.SDKLogStore
 	Fleet         *store.FleetStore
 	Performance   *Performance
-	Interval      time.Duration
-	Retention     Retention
-	Logger        *slog.Logger
-	HostRoot      string
+	// Audit records who created or deleted an alert rule and who marked
+	// notifications read.
+	Audit     *Audit
+	Interval  time.Duration
+	Retention Retention
+	Logger    *slog.Logger
+	HostRoot  string
 }
 
 // Sampler collects metrics, evaluates alerts, and enforces retention.
@@ -71,6 +76,7 @@ type Sampler struct {
 	sdkLogs       *store.SDKLogStore
 	fleet         *store.FleetStore
 	performance   *Performance
+	audit         *Audit
 	interval      time.Duration
 	retention     Retention
 	logger        *slog.Logger
@@ -108,6 +114,7 @@ func NewSampler(cfg SamplerConfig) *Sampler {
 		sdkLogs:       cfg.SDKLogs,
 		fleet:         cfg.Fleet,
 		performance:   cfg.Performance,
+		audit:         cfg.Audit,
 		interval:      cfg.Interval,
 		retention:     cfg.Retention,
 		logger:        cfg.Logger,
@@ -443,8 +450,8 @@ func (s *Sampler) Rules(ctx context.Context, serviceID string) ([]model.AlertRul
 	return s.rules.ListByService(ctx, serviceID)
 }
 
-// CreateRule validates and stores an alert rule.
-func (s *Sampler) CreateRule(ctx context.Context, create model.RuleCreate) (model.AlertRule, error) {
+// CreateRule validates and stores an alert rule, audited under actor.
+func (s *Sampler) CreateRule(ctx context.Context, create model.RuleCreate, actor string) (model.AlertRule, error) {
 	if _, err := s.services.Get(ctx, create.ServiceID); err != nil {
 		return model.AlertRule{}, err
 	}
@@ -465,12 +472,81 @@ func (s *Sampler) CreateRule(ctx context.Context, create model.RuleCreate) (mode
 		return model.AlertRule{}, fmt.Errorf("%w: duration must be positive", ErrInvalidInput)
 	}
 
-	return s.rules.Create(ctx, create)
+	if actor == "" {
+		return model.AlertRule{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	rule, err := s.rules.Create(ctx, create)
+	if err != nil {
+		return model.AlertRule{}, err
+	}
+
+	if _, err := s.audit.Record(ctx, model.AuditRecord{
+		ServiceID: rule.ServiceID, Actor: actor, Action: model.AuditAlertRuleCreate,
+		Result: model.AuditSuccess, Detail: "created alert rule " + describeAlertRule(rule),
+	}); err != nil {
+		return model.AlertRule{}, fmt.Errorf("auditing alert rule creation: %w", err)
+	}
+
+	return rule, nil
 }
 
-// DeleteRule removes an alert rule.
-func (s *Sampler) DeleteRule(ctx context.Context, id int64) error {
-	return s.rules.Delete(ctx, id)
+// DeleteRule removes an alert rule, audited under actor against the
+// service the rule belonged to. An unknown id reports
+// store.ErrRuleNotFound.
+func (s *Sampler) DeleteRule(ctx context.Context, id int64, actor string) error {
+	return deleteAudited(ctx, auditedDelete[model.AlertRule]{
+		audit: s.audit, actor: actor, id: id, get: s.rules.Get, remove: s.rules.Delete,
+		record: func(rule model.AlertRule) (string, string, string) {
+			return rule.ServiceID, model.AuditAlertRuleDelete, "deleted alert rule " + describeAlertRule(rule)
+		},
+	})
+}
+
+// auditedDelete describes the removal of one service-owned row that
+// must leave an audit entry: how to load it, how to remove it, and
+// what to record (service id, action, detail) about the row it was.
+type auditedDelete[T any] struct {
+	audit  *Audit
+	actor  string
+	id     int64
+	get    func(context.Context, int64) (T, error)
+	remove func(context.Context, int64) error
+	record func(T) (serviceID, action, detail string)
+}
+
+// deleteAudited loads the row first, so the audit entry can name the
+// service it belonged to and what it was, then removes it and records
+// who did. A missing row reports the store's not-found error and
+// writes nothing.
+func deleteAudited[T any](ctx context.Context, deletion auditedDelete[T]) error {
+	if deletion.actor == "" {
+		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	row, err := deletion.get(ctx, deletion.id)
+	if err != nil {
+		return err
+	}
+
+	if err := deletion.remove(ctx, deletion.id); err != nil {
+		return err
+	}
+
+	serviceID, action, detail := deletion.record(row)
+
+	if _, err := deletion.audit.Record(ctx, model.AuditRecord{
+		ServiceID: serviceID, Actor: deletion.actor, Action: action, Result: model.AuditSuccess, Detail: detail,
+	}); err != nil {
+		return fmt.Errorf("auditing %s: %w", action, err)
+	}
+
+	return nil
+}
+
+// describeAlertRule renders a rule for audit details.
+func describeAlertRule(rule model.AlertRule) string {
+	return fmt.Sprintf("%d: %s above %g for %ds", rule.ID, rule.Metric, rule.Threshold, rule.DurationSecs)
 }
 
 // Notifications returns the newest notifications first, optionally for one
@@ -499,21 +575,47 @@ func (s *Sampler) Notifications(
 	return notifications, unread, nil
 }
 
-// MarkNotificationRead stamps one notification read.
-func (s *Sampler) MarkNotificationRead(ctx context.Context, id int64) error {
-	return s.notifications.MarkRead(ctx, id)
+// MarkNotificationRead stamps one notification read. The read flag is
+// shared by every user, so a change is audited under actor against the
+// notification's service. An unknown id and an already-read
+// notification are a no-op success and write nothing.
+func (s *Sampler) MarkNotificationRead(ctx context.Context, id int64, actor string) error {
+	if actor == "" {
+		return fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	serviceID, marked, err := s.notifications.MarkRead(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if !marked {
+		return nil
+	}
+
+	return s.auditMarkedRead(ctx, map[string]int64{serviceID: 1}, actor, fmt.Sprintf("marked notification %d read", id))
 }
 
 // MarkNotificationsRead stamps every unread notification read in scope and
-// reports the count. An empty serviceID selects every service.
-func (s *Sampler) MarkNotificationsRead(ctx context.Context, serviceID string) (int64, error) {
+// reports the count, audited under actor. An empty serviceID selects
+// every service.
+func (s *Sampler) MarkNotificationsRead(ctx context.Context, serviceID, actor string) (int64, error) {
+	if actor == "" {
+		return 0, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
 	if serviceID != "" {
 		if _, err := s.services.Get(ctx, serviceID); err != nil {
 			return 0, err
 		}
 	}
 
-	return s.notifications.MarkAllRead(ctx, serviceID)
+	marked, err := s.notifications.MarkAllRead(ctx, serviceID)
+	if err != nil {
+		return 0, err
+	}
+
+	return sumMarked(marked), s.auditMarkedRead(ctx, marked, actor, "")
 }
 
 // NotificationsForServices returns the newest notifications of the listed
@@ -538,9 +640,55 @@ func (s *Sampler) NotificationsForServices(
 }
 
 // MarkNotificationsReadForServices stamps every unread notification of the
-// listed services read and reports the count.
-func (s *Sampler) MarkNotificationsReadForServices(ctx context.Context, serviceIDs []string) (int64, error) {
-	return s.notifications.MarkAllReadForServices(ctx, serviceIDs)
+// listed services read and reports the count, audited under actor.
+func (s *Sampler) MarkNotificationsReadForServices(
+	ctx context.Context,
+	serviceIDs []string,
+	actor string,
+) (int64, error) {
+	if actor == "" {
+		return 0, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+
+	marked, err := s.notifications.MarkAllReadForServices(ctx, serviceIDs)
+	if err != nil {
+		return 0, err
+	}
+
+	return sumMarked(marked), s.auditMarkedRead(ctx, marked, actor, "")
+}
+
+// auditMarkedRead writes one audit row per service whose notifications
+// were marked read, so a user scoped to a service sees who dismissed
+// its alerts. Rows with no service are recorded as a global entry. An
+// empty detail is replaced by the count.
+func (s *Sampler) auditMarkedRead(ctx context.Context, marked map[string]int64, actor, detail string) error {
+	for _, serviceID := range slices.Sorted(maps.Keys(marked)) {
+		rowDetail := detail
+		if rowDetail == "" {
+			rowDetail = fmt.Sprintf("marked %d notifications read", marked[serviceID])
+		}
+
+		if _, err := s.audit.Record(ctx, model.AuditRecord{
+			ServiceID: serviceID, Actor: actor, Action: model.AuditNotificationRead,
+			Result: model.AuditSuccess, Detail: rowDetail,
+		}); err != nil {
+			return fmt.Errorf("auditing notification read: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// sumMarked totals a per-service mark-read count.
+func sumMarked(marked map[string]int64) int64 {
+	var total int64
+
+	for _, count := range marked {
+		total += count
+	}
+
+	return total
 }
 
 // clampLimit applies the default and max list bounds.

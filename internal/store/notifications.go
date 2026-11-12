@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -135,21 +136,31 @@ func nullString(value string) any {
 	return value
 }
 
-// MarkRead stamps one notification read. Unknown ids are a no-op success.
-func (s *NotificationStore) MarkRead(ctx context.Context, id int64) error {
-	if _, err := s.db.sql.ExecContext(ctx,
-		"UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL",
+// MarkRead stamps one notification read and reports the service it
+// belongs to ("" for a row with no service) and whether this call
+// changed it. An unknown id and an already-read row are a no-op
+// success with marked false.
+func (s *NotificationStore) MarkRead(ctx context.Context, id int64) (serviceID string, marked bool, err error) {
+	err = s.db.sql.QueryRowContext(ctx,
+		`UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL
+		 RETURNING COALESCE(service_id, '')`,
 		formatTime(time.Now()), id,
-	); err != nil {
-		return fmt.Errorf("marking notification read: %w", err)
+	).Scan(&serviceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
 	}
 
-	return nil
+	if err != nil {
+		return "", false, fmt.Errorf("marking notification read: %w", err)
+	}
+
+	return serviceID, true, nil
 }
 
-// MarkAllRead stamps every unread notification read and reports the count.
-// An empty serviceID selects every service; otherwise one service.
-func (s *NotificationStore) MarkAllRead(ctx context.Context, serviceID string) (int64, error) {
+// MarkAllRead stamps every unread notification read and reports how
+// many rows it changed per service; rows with no service count under
+// "". An empty serviceID selects every row; otherwise one service.
+func (s *NotificationStore) MarkAllRead(ctx context.Context, serviceID string) (map[string]int64, error) {
 	query := "UPDATE notifications SET read_at = ? WHERE read_at IS NULL"
 	args := []any{formatTime(time.Now())}
 
@@ -159,14 +170,35 @@ func (s *NotificationStore) MarkAllRead(ctx context.Context, serviceID string) (
 		args = append(args, serviceID)
 	}
 
-	res, err := s.db.sql.ExecContext(ctx, query, args...)
+	return s.markReturning(ctx, query, args)
+}
+
+// markReturning runs a mark-read UPDATE and counts the changed rows per
+// service.
+func (s *NotificationStore) markReturning(ctx context.Context, query string, args []any) (map[string]int64, error) {
+	rows, err := s.db.sql.QueryContext(ctx, query+" RETURNING COALESCE(service_id, '')", args...)
 	if err != nil {
-		return 0, fmt.Errorf("marking notifications read: %w", err)
+		return nil, fmt.Errorf("marking notifications read: %w", err)
 	}
 
-	marked, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting read notifications: %w", err)
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	marked := map[string]int64{}
+
+	for rows.Next() {
+		var serviceID string
+
+		if err := rows.Scan(&serviceID); err != nil {
+			return nil, fmt.Errorf("scanning read notification: %w", err)
+		}
+
+		marked[serviceID]++
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("marking notifications read: %w", err)
 	}
 
 	return marked, nil
@@ -193,28 +225,19 @@ func (s *NotificationStore) CountUnread(ctx context.Context, serviceID string) (
 }
 
 // MarkAllReadForServices stamps every unread notification of the listed
-// services read and reports the count. An empty list marks nothing.
-func (s *NotificationStore) MarkAllReadForServices(ctx context.Context, serviceIDs []string) (int64, error) {
+// services read and reports how many rows it changed per service. An
+// empty list marks nothing.
+func (s *NotificationStore) MarkAllReadForServices(ctx context.Context, serviceIDs []string) (map[string]int64, error) {
 	if len(serviceIDs) == 0 {
-		return 0, nil
+		return map[string]int64{}, nil
 	}
 
 	clause, args := inClause(serviceIDs)
 
-	//nolint:gosec // G202: clause is only "(?, ?, …)" placeholders; the ids are bound arguments.
+	// clause is only "(?, ?, …)" placeholders; the ids are bound arguments.
 	query := "UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND service_id IN " + clause
 
-	res, err := s.db.sql.ExecContext(ctx, query, append([]any{formatTime(time.Now())}, args...)...)
-	if err != nil {
-		return 0, fmt.Errorf("marking notifications read: %w", err)
-	}
-
-	marked, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting read notifications: %w", err)
-	}
-
-	return marked, nil
+	return s.markReturning(ctx, query, append([]any{formatTime(time.Now())}, args...))
 }
 
 // CountUnreadForServices counts the unread notifications of the listed

@@ -26,7 +26,8 @@ var viewerGrants = []Capability{
 
 // developerOperations is what a developer holds on top of a viewer's
 // reads: running what an admin configured for a service, tending its
-// alerts, and proposing env changes. Every entry is service-scoped, so
+// alerts, proposing env changes, and seeing whether its database
+// schema matches the build. Every entry is service-scoped, so
 // a developer never gains a fleet-level mutation whatever their scope.
 //
 // EnvStage is a narrower right for a developer than for an admin. The
@@ -39,6 +40,7 @@ var developerOperations = []Capability{
 	AlertsManage,
 	NotificationsAck,
 	EnvStage,
+	MigrationsRead,
 }
 
 // grants is the one role-to-capability table. Enforcement, the session

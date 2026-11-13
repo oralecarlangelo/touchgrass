@@ -168,6 +168,10 @@ var developerGains = []string{
 	// handler then refuses every secret key; see env_proposal_test.go.
 	"PUT /api/services/{id}/env/entries/{key}",
 	"DELETE /api/services/{id}/env/entries/{key}",
+	// Schema migrations: a developer reads the status and the run list
+	// of a service in scope. Setup, commands and run output stay admin.
+	"GET /api/services/{id}/migrations",
+	"GET /api/services/{id}/migrations/runs",
 }
 
 func TestDeveloperMatrixDiffersFromViewerOnlyByItsOperations(t *testing.T) {
@@ -213,7 +217,9 @@ func TestDeveloperMatrixDiffersFromViewerOnlyByItsOperations(t *testing.T) {
 }
 
 // Whatever its scope, a developer is refused every route that applies,
-// discards, imports, reveals or rolls back env, or changes keys, users, services, the host, security or databases. The
+// discards, imports, reveals or rolls back env, sets up or runs schema
+// migrations and seeds, or changes keys, users, services, the host,
+// security or databases. The
 // list is written out so that re-guarding one of them cannot pass
 // unnoticed.
 func TestDeveloperIsRefusedEveryAdminOnlyRoute(t *testing.T) {
@@ -223,11 +229,11 @@ func TestDeveloperIsRefusedEveryAdminOnlyRoute(t *testing.T) {
 	handler := guardHarness(fixture.server)
 	granted := testfixture.GenericGranted
 
-	adminOnly := append(slices.Clone(legacyAdminOnly), adminOnlySince31...)
+	adminOnly := viewerRefused()
 	adminOnly = slices.DeleteFunc(adminOnly, func(name string) bool { return slices.Contains(developerGains, name) })
 
-	if len(adminOnly) != 30 {
-		t.Fatalf("admin-only routes after the developer's twelve = %d, want 30", len(adminOnly))
+	if len(adminOnly) != 37 {
+		t.Fatalf("admin-only routes after the developer's fourteen = %d, want 37", len(adminOnly))
 	}
 
 	cookies := map[string]*nethttp.Cookie{

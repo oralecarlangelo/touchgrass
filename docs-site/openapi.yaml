@@ -70,6 +70,8 @@ tags:
     description: Bounded agentless performance investigations and collector health
   - name: env
     description: Encrypted per-service env files with staged changes, audited reveals, apply runs, and rollback
+  - name: migrations
+    description: Schema migration status of the monitored application, and audited migrate and seed commands
 paths:
   /health:
     get:
@@ -2452,6 +2454,231 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '503': { $ref: '#/components/responses/EnvKeyMissing' }
+  /services/{id}/migrations:
+    get:
+      x-touchgrass-capability: migrations.read
+      x-touchgrass-scope: service
+      operationId: getMigrationStatus
+      tags: [migrations]
+      summary: "Schema migration status: applied history from the application's database compared with the migrations the running container ships (developer or admin)"
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '200':
+          description: "Status. An unreadable database or container is reported in `history` or `shipped`, not as an error"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationStatus' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/migrations/runs:
+    get:
+      x-touchgrass-capability: migrations.read
+      x-touchgrass-scope: service
+      operationId: listMigrationRuns
+      tags: [migrations]
+      summary: Migrate and seed commands touchgrass ran for the service, newest first, without output (developer or admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '200':
+          description: Runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MigrationRun' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/migrations/runs/{run_id}:
+    get:
+      x-touchgrass-capability: migrations.manage
+      x-touchgrass-scope: service
+      operationId: getMigrationRun
+      tags: [migrations]
+      summary: One command with its captured output (admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Run with output
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationRun' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/migrations/config:
+    get:
+      x-touchgrass-capability: migrations.manage
+      x-touchgrass-scope: service
+      operationId: getMigrationConfig
+      tags: [migrations]
+      summary: Migration setup of the service. The database URL is never returned (admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '200':
+          description: Setup, or configured=false
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationConfigResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      x-touchgrass-capability: migrations.manage
+      x-touchgrass-scope: service
+      operationId: putMigrationConfig
+      tags: [migrations]
+      summary: Create or replace the migration setup; the database URL is stored encrypted and audited by target only (admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MigrationConfigInput' }
+      responses:
+        '200':
+          description: Saved setup
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationConfigResponse' }
+        '400':
+          description: invalid_request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/EnvKeyMissing' }
+    delete:
+      x-touchgrass-capability: migrations.manage
+      x-touchgrass-scope: service
+      operationId: deleteMigrationConfig
+      tags: [migrations]
+      summary: Remove the migration setup and its stored database URL; run history is kept (admin)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '204':
+          description: Removed, or there was none
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /services/{id}/migrations/deploy:
+    post:
+      x-touchgrass-capability: migrations.manage
+      x-touchgrass-scope: service
+      operationId: deployMigrations
+      tags: [migrations]
+      summary: Apply pending migrations by running the tool's deploy command inside the service's container (admin, async, audited)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MigrationCommandRequest' }
+      responses:
+        '202':
+          description: Command started; poll the run for its outcome
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationRun' }
+        '400':
+          description: confirmation_mismatch, migrations_not_configured, or invalid_request (a resolve of a migration not recorded as failed, a seed the build does not declare)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: migration_in_progress, container_not_found, or conflict (the history cannot be read)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: env_key_missing, or engine_unavailable (the container engine is not answering)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /services/{id}/migrations/resolve:
+    post:
+      x-touchgrass-capability: migrations.manage
+      x-touchgrass-scope: service
+      operationId: resolveMigration
+      tags: [migrations]
+      summary: Mark a failed migration as applied or rolled back (admin, async, audited)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MigrationResolveRequest' }
+      responses:
+        '202':
+          description: Command started; poll the run for its outcome
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationRun' }
+        '400':
+          description: confirmation_mismatch, migrations_not_configured, or invalid_request (a resolve of a migration not recorded as failed, a seed the build does not declare)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: migration_in_progress, container_not_found, or conflict (the history cannot be read)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: env_key_missing, or engine_unavailable (the container engine is not answering)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /services/{id}/migrations/seed:
+    post:
+      x-touchgrass-capability: migrations.manage
+      x-touchgrass-scope: service
+      operationId: runSeed
+      tags: [migrations]
+      summary: Run the seed the running build declares; every run is kept as the seed history (admin, async, audited)
+      parameters:
+        - $ref: '#/components/parameters/ServicePath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MigrationCommandRequest' }
+      responses:
+        '202':
+          description: Command started; poll the run for its outcome
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationRun' }
+        '400':
+          description: confirmation_mismatch, migrations_not_configured, or invalid_request (a resolve of a migration not recorded as failed, a seed the build does not declare)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: migration_in_progress, container_not_found, or conflict (the history cannot be read)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503':
+          description: env_key_missing, or engine_unavailable (the container engine is not answering)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 components:
   securitySchemes:
     cookieAuth:
@@ -2557,6 +2784,152 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
   schemas:
+    MigrationStatus:
+      type: object
+      required: [configured, verdict, history, shipped, counts, migrations, seed, checked_at]
+      properties:
+        configured: { type: boolean }
+        tool: { type: string, example: prisma }
+        verdict:
+          type: string
+          enum: [in_sync, pending, drift, failed, unknown]
+          description: >-
+            Worst condition first: failed (a migration started and never
+            finished), drift (an applied migration was edited or is not
+            in the running build), pending, in_sync. unknown when the
+            history could not be read.
+        history: { $ref: '#/components/schemas/MigrationProbe' }
+        shipped: { $ref: '#/components/schemas/MigrationProbe' }
+        counts:
+          type: object
+          properties:
+            applied: { type: integer }
+            pending: { type: integer }
+            failed: { type: integer }
+            modified: { type: integer }
+            missing: { type: integer }
+            rolled_back: { type: integer }
+        migrations:
+          type: array
+          items: { $ref: '#/components/schemas/Migration' }
+        seed:
+          type: object
+          properties:
+            configured: { type: boolean }
+            command: { type: string }
+        checked_at: { type: string, format: date-time }
+    MigrationProbe:
+      type: object
+      required: [ok, target]
+      properties:
+        ok: { type: boolean }
+        target:
+          type: string
+          description: Database host, port, name and schema, or container and path. Never a credential.
+        error: { type: string }
+    Migration:
+      type: object
+      required: [name, state, steps, attempts]
+      properties:
+        name: { type: string }
+        state:
+          type: string
+          enum: [applied, pending, failed, modified, missing, rolled_back]
+        checksum_applied: { type: string }
+        checksum_shipped: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        rolled_back_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        steps: { type: integer }
+        attempts: { type: integer }
+        logs: { type: string, description: Failure text the migration tool recorded }
+    MigrationConfig:
+      type: object
+      properties:
+        service_id: { type: string }
+        tool: { type: string }
+        database: { type: string, description: Redacted target of the stored URL }
+        container: { type: string }
+        workdir: { type: string }
+        migrations_dir: { type: string }
+        command:
+          type: array
+          items: { type: string }
+        updated_by: { type: string }
+        updated_at: { type: string, format: date-time }
+    MigrationConfigResponse:
+      type: object
+      required: [configured, tools]
+      properties:
+        configured: { type: boolean }
+        tools:
+          type: array
+          description: The migration tools this build offers, with what each assumes when a setup field is left empty.
+          items:
+            type: object
+            required: [name, default_migrations_dir, default_command]
+            properties:
+              name: { type: string, example: prisma }
+              default_migrations_dir: { type: string, example: prisma/migrations }
+              default_command:
+                type: array
+                items: { type: string }
+        config:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/MigrationConfig'
+    MigrationConfigInput:
+      type: object
+      required: [tool]
+      properties:
+        tool: { type: string, example: prisma }
+        database_url:
+          type: string
+          writeOnly: true
+          description: >-
+            Connection URL touchgrass reads the history with. Required on
+            first save and when the tool changes; empty keeps the stored
+            one. A read-only database role is enough.
+        container:
+          type: string
+          description: Compose service whose container ships the migrations. Empty uses the deploy strategy's service (the live color for blue-green).
+        workdir: { type: string, description: Absolute path; empty uses the container's working directory }
+        migrations_dir: { type: string, description: Relative to workdir; empty uses the tool's default }
+        command:
+          type: array
+          items: { type: string }
+          description: Command prefix as an argument vector; empty uses the tool's default. No shell is involved.
+    MigrationCommandRequest:
+      type: object
+      required: [confirm]
+      properties:
+        confirm: { type: string, description: Must equal the service name }
+    MigrationResolveRequest:
+      type: object
+      required: [confirm, migration, resolution]
+      properties:
+        confirm: { type: string, description: Must equal the service name }
+        migration: { type: string }
+        resolution: { type: string, enum: [applied, rolled_back] }
+    MigrationRun:
+      type: object
+      required: [id, service_id, kind, tool, detail, actor, state, container, image, started_at]
+      properties:
+        id: { type: integer }
+        service_id: { type: string }
+        kind: { type: string, enum: [deploy, resolve, seed] }
+        tool: { type: string }
+        detail: { type: string, description: The command line that ran }
+        actor: { type: string }
+        state: { type: string, enum: [running, succeeded, failed] }
+        exit_code: { type: integer }
+        container: { type: string }
+        image: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        output: { type: string, description: Only on the run detail route; the last 256 KiB }
+        output_truncated: { type: boolean }
     EnvTarget:
       type: object
       required: [path, owner, mode]
@@ -3088,6 +3461,10 @@ components:
             - issue_rule_create
             - issue_rule_delete
             - notification_read
+            - migration_config
+            - migration_deploy
+            - migration_resolve
+            - seed_run
         result: { type: string, enum: [success, failure] }
         detail: { type: string }
         created_at: { type: string, format: date-time }

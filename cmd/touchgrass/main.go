@@ -205,6 +205,7 @@ type serveServices struct {
 	fleet       *service.FleetInventory
 	security    *service.Security
 	env         *service.Env
+	migrations  *service.Migrations
 	owners      *service.Owners
 }
 
@@ -252,6 +253,7 @@ func newServeServer(
 		FleetInventory: services.fleet,
 		Security:       services.security,
 		Env:            services.env,
+		Migrations:     services.migrations,
 		Owners:         services.owners,
 		Dist:           dist,
 		Docs:           docs,
@@ -372,6 +374,14 @@ func runServe(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	migrations, err := newMigrationsService(ctx, migrationsWiring{
+		db: db, cfg: cfg, services: serviceStore, audit: audit, docker: dockerClient, logger: logger,
+	})
+	if err != nil {
+		return err
+	}
+
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: serviceStore, Containers: store.NewContainerStore(db), Docker: dockerClient,
 		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
@@ -427,10 +437,11 @@ func runServe(args []string) error {
 		cutover: cutover, audit: audit, auth: auth, users: managedUsers, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
 		database: databases, onboarding: onboarding, performance: performance,
-		fleet:    fleetInventory,
-		security: securityService,
-		env:      envService,
-		owners:   service.NewOwners(store.NewOwnerStore(db)),
+		fleet:      fleetInventory,
+		security:   securityService,
+		env:        envService,
+		migrations: migrations,
+		owners:     service.NewOwners(store.NewOwnerStore(db)),
 	}, version)
 	if err != nil {
 		return err
@@ -440,6 +451,8 @@ func runServe(args []string) error {
 
 	stop()
 	group.Wait()
+	// A command still running is cancelled and recorded as failed.
+	migrations.Close()
 
 	if runErr != nil {
 		return fmt.Errorf("serving: %w", runErr)

@@ -11,6 +11,7 @@ import (
 
 	nethttp "net/http"
 
+	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 )
 
@@ -110,7 +111,7 @@ func New(cfg Config) *Server {
 	// Every API route comes from the route table and is wrapped in its
 	// guard. Nothing under /api/ is registered anywhere else.
 	for _, rt := range server.routes() {
-		mux.HandleFunc(rt.method+" "+rt.pattern, server.guard(rt))
+		mux.HandleFunc(rt.method+" "+rt.pattern, server.routeHandler(rt))
 	}
 
 	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -132,6 +133,23 @@ func New(cfg Config) *Server {
 	server.handler = handler
 
 	return server
+}
+
+// routeHandler wraps a route in its guard. A read is also marked as
+// having someone waiting on it, so its container-engine calls answer or
+// fail with "engine busy" before the write timeout cuts the response
+// (ADR-0017). Writes are left alone: several hand their context to a
+// job that outlives the request and must keep waiting its turn for the
+// engine.
+func (s *Server) routeHandler(rt route) nethttp.HandlerFunc {
+	guarded := s.guard(rt)
+	if rt.method != nethttp.MethodGet {
+		return guarded
+	}
+
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		guarded(w, r.WithContext(docker.WithInteractive(r.Context())))
+	}
 }
 
 // Run serves HTTP until ctx is cancelled, then drains gracefully.

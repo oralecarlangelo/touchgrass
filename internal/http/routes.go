@@ -50,6 +50,9 @@ const (
 	// answer with.
 	codeForbidden = "forbidden"
 	codeNotFound  = "not_found"
+	// codeEngineUnavailable answers a request the container engine
+	// could not serve in time: busy, or paused after repeated failures.
+	codeEngineUnavailable = "engine_unavailable"
 	// errNotFoundMessage is the one answer for a resource id that is
 	// missing and for one that belongs to a service out of scope, so an
 	// id cannot be probed across services.

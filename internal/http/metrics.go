@@ -9,6 +9,7 @@ import (
 
 	nethttp "net/http"
 
+	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -100,6 +101,12 @@ func writeServiceError(
 		writeError(w, logger, err, "unknown user", "not_found", nethttp.StatusNotFound)
 	case errors.Is(err, service.ErrUnauthorized):
 		writeError(w, logger, err, "bad api key", "unauthorized", nethttp.StatusUnauthorized)
+	case errors.Is(err, docker.ErrEngineBusy):
+		writeError(w, logger, err, "the container engine is busy; try again in a moment",
+			codeEngineUnavailable, nethttp.StatusServiceUnavailable)
+	case errors.Is(err, docker.ErrDaemonBackoff):
+		writeError(w, logger, err, "the container engine is not answering; try again in a minute",
+			codeEngineUnavailable, nethttp.StatusServiceUnavailable)
 	default:
 		writeError(w, logger, err, message, "internal", nethttp.StatusInternalServerError)
 	}

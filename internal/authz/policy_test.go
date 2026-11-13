@@ -260,6 +260,7 @@ func TestDeveloperHoldsViewerReadsPlusOperations(t *testing.T) {
 
 	operations := []authz.Capability{
 		authz.DeployTrigger, authz.DeployRecord, authz.AlertsManage, authz.NotificationsAck, authz.EnvStage,
+		authz.MigrationsRead,
 	}
 
 	for _, capability := range authz.Capabilities() {

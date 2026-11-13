@@ -1704,3 +1704,160 @@ export async function rollbackEnvRevision(
     jsonBody({ confirm }),
   );
 }
+
+// Schema migrations of the monitored application.
+
+export type MigrationState = 'applied' | 'pending' | 'failed' | 'modified' | 'missing' | 'rolled_back';
+export type MigrationVerdict = 'in_sync' | 'pending' | 'drift' | 'failed' | 'unknown';
+
+export interface Migration {
+  name: string;
+  state: MigrationState;
+  checksum_applied?: string;
+  checksum_shipped?: string;
+  started_at?: string;
+  finished_at?: string;
+  rolled_back_at?: string;
+  duration_ms?: number;
+  steps: number;
+  attempts: number;
+  logs?: string;
+}
+
+export interface MigrationProbe {
+  ok: boolean;
+  target: string;
+  error?: string;
+}
+
+export interface MigrationCounts {
+  applied: number;
+  pending: number;
+  failed: number;
+  modified: number;
+  missing: number;
+  rolled_back: number;
+}
+
+export interface MigrationStatus {
+  configured: boolean;
+  tool?: string;
+  verdict: MigrationVerdict;
+  history: MigrationProbe;
+  shipped: MigrationProbe;
+  counts: MigrationCounts;
+  migrations: Migration[];
+  seed: { configured: boolean; command?: string };
+  checked_at: string;
+}
+
+export interface MigrationConfig {
+  service_id: string;
+  tool: string;
+  // Redacted target of the stored URL; the URL itself is never sent.
+  database: string;
+  container: string;
+  workdir: string;
+  migrations_dir: string;
+  command: string[];
+  updated_by: string;
+  updated_at: string;
+}
+
+// MigrationTool is a tool the server offers and what it assumes when a
+// setup field is left empty.
+export interface MigrationTool {
+  name: string;
+  default_migrations_dir: string;
+  default_command: string[];
+}
+
+export interface MigrationConfigResponse {
+  configured: boolean;
+  tools: MigrationTool[];
+  config: MigrationConfig | null;
+}
+
+export interface MigrationConfigInput {
+  tool: string;
+  // Empty keeps the stored URL.
+  database_url: string;
+  container: string;
+  workdir: string;
+  migrations_dir: string;
+  command: string[];
+}
+
+export type MigrationRunKind = 'deploy' | 'resolve' | 'seed';
+
+export interface MigrationRun {
+  id: number;
+  service_id: string;
+  kind: MigrationRunKind;
+  tool: string;
+  detail: string;
+  actor: string;
+  state: 'running' | 'succeeded' | 'failed';
+  exit_code?: number;
+  container: string;
+  image: string;
+  started_at: string;
+  finished_at?: string;
+  output?: string;
+  output_truncated?: boolean;
+}
+
+function migrationsPath(serviceId: string, leaf = ''): string {
+  return `/api/services/${encodeURIComponent(serviceId)}/migrations${leaf}`;
+}
+
+export async function fetchMigrationStatus(serviceId: string): Promise<MigrationStatus> {
+  const body = await request<MigrationStatus>(migrationsPath(serviceId));
+
+  return { ...body, migrations: body.migrations ?? [] };
+}
+
+export async function fetchMigrationRuns(serviceId: string): Promise<MigrationRun[]> {
+  return (await request<MigrationRun[] | null>(migrationsPath(serviceId, '/runs'))) ?? [];
+}
+
+export async function fetchMigrationRun(serviceId: string, runId: number): Promise<MigrationRun> {
+  return request<MigrationRun>(migrationsPath(serviceId, `/runs/${runId}`));
+}
+
+export async function fetchMigrationConfig(serviceId: string): Promise<MigrationConfigResponse> {
+  const body = await request<MigrationConfigResponse>(migrationsPath(serviceId, '/config'));
+
+  return { ...body, tools: body.tools ?? [] };
+}
+
+export async function saveMigrationConfig(
+  serviceId: string,
+  input: MigrationConfigInput,
+): Promise<MigrationConfigResponse> {
+  return request<MigrationConfigResponse>(migrationsPath(serviceId, '/config'), {
+    ...jsonBody(input),
+    method: 'PUT',
+  });
+}
+
+export async function deleteMigrationConfig(serviceId: string): Promise<void> {
+  await request<undefined>(migrationsPath(serviceId, '/config'), { method: 'DELETE' });
+}
+
+// The three commands write to the application's database; confirm must
+// equal the service name.
+export async function startMigrationDeploy(serviceId: string, confirm: string): Promise<MigrationRun> {
+  return request<MigrationRun>(migrationsPath(serviceId, '/deploy'), jsonBody({ confirm }));
+}
+
+export async function startMigrationSeed(serviceId: string, confirm: string): Promise<MigrationRun> {
+  return request<MigrationRun>(migrationsPath(serviceId, '/seed'), jsonBody({ confirm }));
+}
+
+export async function startMigrationResolve(
+  serviceId: string,
+  input: { confirm: string; migration: string; resolution: 'applied' | 'rolled_back' },
+): Promise<MigrationRun> {
+  return request<MigrationRun>(migrationsPath(serviceId, '/resolve'), jsonBody(input));
+}

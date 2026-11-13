@@ -1416,6 +1416,67 @@ SCOPE GUARD: no apply, reveal, import, discard or revision rollback
 for non-admins; no approval workflow beyond "an admin applies"; no
 key management; no access overview or login throttle (S34).
 
+### S35 — Schema migration and seed awareness: Prisma on PostgreSQL (2026-11-13)
+
+**Status**: IMPLEMENTED on `feature/schema-migrations`; PR open.
+**Goal**: for a service with a migration setup, show whether its
+database matches the running build (applied, pending, failed, edited,
+missing), and let an admin apply pending migrations, resolve a failed
+one and run the seed from the console, each audited (ADR-0018).
+Prisma Migrate on PostgreSQL first; the design must take the next tool
+(MongoDB) without touching shared code.
+
+- S35.1 Tool-neutral core (1pd) [FR-P1, NFR-2]
+  Acceptance: `internal/dbmigrate` with a `Tool` contract, `Compare`,
+  `Count`, `Verdict`; six states and five verdicts covered by
+  table-driven tests, including a retried migration, a rolled-back one
+  and an unreadable build (nothing is then called pending, modified or
+  missing).
+- S35.2 Prisma on PostgreSQL (1pd) [FR-P1]
+  Acceptance: history from `_prisma_migrations` over one read-only
+  connection with Prisma's private URL parameters stripped; a database
+  Prisma never touched reads as empty; checksum is the SHA-256 of
+  `migration.sql`; seed found in `package.json` or `prisma.config.ts`;
+  other datasources refused; the password in no label or error.
+- S35.3 Engine access (0.5pd) [NFR-5]
+  Acceptance: `docker.ReadFiles` through the archive API (bounded, no
+  shell) and `docker.Exec` of an argument vector that holds no engine
+  permit while running. A missing path or a stopped container is an
+  answer and never counts against the request guard (regression tests
+  with a fake engine).
+- S35.4 Store, service, routes (2pd) [FR-P1, NFR-5]
+  Acceptance: migration 0025 (`service_migrations`, `migration_runs`,
+  four audit actions; audit rows and ids kept); URL sealed with the env
+  key and bound to its service; setup validated field by field; nine
+  routes under `/api/services/{id}/migrations`; `migrations.read` for
+  developers and admins, `migrations.manage` for admins; one command
+  per service; resolve only for a failed migration; seed only when
+  declared; restart recovery audits interrupted runs.
+- S35.5 Console (1.5pd) [NFR-6]
+  Acceptance: a Migrations tab for developers and admins: verdict with
+  a one-sentence meaning, both probes, history newest first with
+  failure text, seed card, run list; setup and command dialogs with the
+  typed service name for admins; the form quotes each tool's defaults
+  from the API and names no tool.
+- S35.6 Docs and standards (1pd) [NFR-6]
+  Acceptance: ADR-0018; threat model section; `docs-site/migrations.md`;
+  `docs-site/migration-standard.md` (migration and seed rules for
+  application code, with an `AGENTS.md` block); `docs/MIGRATION_TOOLS.md`
+  (standard for adding a tool); access matrix, OpenAPI and parity tests
+  green.
+- Standards in play: `golang-security` (write-only secret, argument
+  vectors, read-only database access, scrubbed output),
+  `golang-database` (one bounded connection per read, identifier
+  quoting), `golang-concurrency` (detached run context, single slot per
+  service, clean shutdown), `golang-testing` (a made-up tool in the
+  service and HTTP suites so nothing leans on Prisma).
+- Validation: recorded in the PR description.
+
+SCOPE GUARD: no MongoDB or other tool yet; no migration authoring,
+diffing or `migrate reset`; no automatic migrate on deploy; no backup
+before a command; no seed history for seeds run outside touchgrass;
+no migration alerts or notifications.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

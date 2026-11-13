@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/oralecarlangelo/touchgrass/internal/authz"
+	"github.com/oralecarlangelo/touchgrass/internal/dbmigrate"
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
@@ -180,6 +181,12 @@ type testServerOptions struct {
 	// deployRunner replaces the deploy engine's script runner; nil keeps
 	// the engine's own, which executes the configured script.
 	deployRunner service.Runner
+	// migrationDocker replaces the migrations pillar's engine access;
+	// nil uses one with no containers.
+	migrationDocker service.MigrationDocker
+	// migrationTool replaces the registered migration tools; nil
+	// registers the real ones.
+	migrationTool dbmigrate.Tool
 }
 
 // fullTestServer builds a Server with every service on a seeded store.
@@ -299,6 +306,7 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 		Performance:    performance,
 		FleetInventory: fleetInventory,
 		Env:            envService,
+		Migrations:     newTestMigrations(t, db, services, audit, opts),
 		Owners:         service.NewOwners(store.NewOwnerStore(db)),
 		Dist:           testDist(),
 		Docs:           testDocs(),

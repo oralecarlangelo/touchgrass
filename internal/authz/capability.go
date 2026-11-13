@@ -82,6 +82,14 @@ const (
 	// EnvReveal covers decrypting one secret value.
 	EnvReveal Capability = "env.reveal"
 
+	// MigrationsRead covers the schema migration status of a service
+	// and the list of commands run for it.
+	MigrationsRead Capability = "migrations.read"
+	// MigrationsManage covers the migration setup (which holds a
+	// database URL), running migrate and seed commands, and reading
+	// their output.
+	MigrationsManage Capability = "migrations.manage"
+
 	// KeysRead covers listing SDK keys (prefix only).
 	KeysRead Capability = "keys.read"
 	// KeysManage covers minting and revoking SDK keys.
@@ -140,6 +148,8 @@ var scopes = []struct {
 	{capability: EnvImport, scope: ScopeService},
 	{capability: EnvApply, scope: ScopeService},
 	{capability: EnvReveal, scope: ScopeService},
+	{capability: MigrationsRead, scope: ScopeService},
+	{capability: MigrationsManage, scope: ScopeService},
 	{capability: KeysRead, scope: ScopeService},
 	{capability: KeysManage, scope: ScopeService},
 	{capability: AuditRead, scope: ScopeService},

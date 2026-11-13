@@ -44,6 +44,7 @@ type Config struct {
 	FleetInventory *service.FleetInventory
 	Security       *service.Security
 	Env            *service.Env
+	Migrations     *service.Migrations
 	Owners         *service.Owners
 	Dist           fs.FS
 	Docs           fs.FS
@@ -73,6 +74,7 @@ type Server struct {
 	fleetInventory *service.FleetInventory
 	security       *service.Security
 	env            *service.Env
+	migrations     *service.Migrations
 	eventHeartbeat time.Duration
 	owners         *service.Owners
 	handler        nethttp.Handler
@@ -103,6 +105,7 @@ func New(cfg Config) *Server {
 		fleetInventory: cfg.FleetInventory,
 		security:       cfg.Security,
 		env:            cfg.Env,
+		migrations:     cfg.Migrations,
 		eventHeartbeat: eventHeartbeat,
 		owners:         cfg.Owners,
 	}

@@ -150,6 +150,8 @@ the all-services scope. `self` applies to the user's own account.
 | `env.import` | Import the env file from the host | service | no | no | yes |
 | `env.apply` | Apply env changes, roll back to a revision | service | no | no | yes |
 | `env.reveal` | Decrypt one secret value | service | no | no | yes |
+| `migrations.read` | Schema migration status of a service's application and the list of commands run for it | service | no | yes | yes |
+| `migrations.manage` | Migration setup (holds a database URL), running migrate and seed commands, and reading their output | service | no | no | yes |
 | `keys.read` | List SDK keys (prefix only) | service | yes | yes | yes |
 | `keys.manage` | Mint and revoke SDK keys | service | no | no | yes |
 | `audit.read` | Audit rows of a service | service | yes | yes | yes |
@@ -170,9 +172,15 @@ the console, although the API lets a scoped user list the key prefixes of
 their own services.
 
 A developer holds the viewer's rows plus `deploy.trigger`,
-`deploy.record`, `alerts.manage`, `notifications.ack` and `env.stage`.
-All five are `service` capabilities, so the role adds no host-level power even with
+`deploy.record`, `alerts.manage`, `notifications.ack`, `env.stage` and
+`migrations.read`.
+All six are `service` capabilities, so the role adds no host-level power even with
 the all-services scope.
+
+`migrations.read` shows a developer whether a service's database
+matches its running build, including the migration tool's failure
+text. The setup, the migrate and seed commands and their output stay
+with an admin; see [Schema migrations & seeds](./migrations.md).
 
 `env.stage` is part of the role too, and for a developer it is narrower
 than the name suggests. The capability opens the two stage routes; past

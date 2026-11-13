@@ -214,6 +214,26 @@ service-scoped **Performance** tab that reuses the same aggregate contracts.
 Both views link to existing Logs, Issues, Deployments, Fleet, and Database
 workflows for investigation.
 
+## Schema migration awareness
+
+ADR-0018 defines the boundary. For a service with a migration setup,
+`internal/dbmigrate` compares two sides: the applied history, read from
+the application's database over one short read-only connection with a
+URL sealed under the env key, and the migrations the running container
+ships, read through the engine's archive API. Each migration lands in
+one state (applied, pending, failed, modified, missing, rolled back)
+and the service gets one verdict. A side that cannot be read is
+reported as such; the other is still shown.
+
+Everything tool-specific sits behind `dbmigrate.Tool` (Prisma on
+PostgreSQL first); the comparison, the service layer, the routes and
+the console name no tool, and `docs/MIGRATION_TOOLS.md` is the standard
+for adding one. Deploy, resolve and seed are admin-only `docker exec`
+calls of an argument vector inside the application's container, one
+per service at a time, each a `migration_runs` row and an audit row.
+That run list is the only seed history: a seed leaves no record in the
+application's database.
+
 ## Auth (v1)
 
 - UI/API: managed users with a role and a scope (ADR-0014). The

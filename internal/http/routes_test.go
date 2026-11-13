@@ -100,6 +100,26 @@ var adminOnlySince31 = []string{
 	"PUT /api/users/{id}/access",
 }
 
+// viewerRefusedMigrations are the schema-migration routes, none of
+// which a viewer reaches: the two reads belong to developers and
+// admins, the other seven to admins.
+var viewerRefusedMigrations = []string{
+	"GET /api/services/{id}/migrations",
+	"GET /api/services/{id}/migrations/runs",
+	"GET /api/services/{id}/migrations/runs/{run_id}",
+	"GET /api/services/{id}/migrations/config",
+	"PUT /api/services/{id}/migrations/config",
+	"DELETE /api/services/{id}/migrations/config",
+	"POST /api/services/{id}/migrations/deploy",
+	"POST /api/services/{id}/migrations/resolve",
+	"POST /api/services/{id}/migrations/seed",
+}
+
+// viewerRefused is every route an all-services viewer does not reach.
+func viewerRefused() []string {
+	return slices.Concat(legacyAdminOnly, adminOnlySince31, viewerRefusedMigrations)
+}
+
 // scopedFixture is a server holding the generic two-service fixture,
 // one row of every resource kind in each, and the scoped logins.
 type scopedFixture struct {
@@ -406,8 +426,8 @@ func TestRouteTableIsConsistent(t *testing.T) {
 		}
 	}
 
-	if len(seen) != 93 {
-		t.Errorf("route table has %d routes, want 93 (the 92 before S31 plus PUT /api/users/{id}/access)", len(seen))
+	if len(seen) != 102 {
+		t.Errorf("route table has %d routes, want 102 (93 after S31 plus the nine schema-migration routes)", len(seen))
 	}
 }
 
@@ -546,7 +566,8 @@ func TestEveryRouteIsGuarded(t *testing.T) {
 }
 
 // An all-services viewer is refused exactly the routes requireAdmin
-// refused, plus the two S31 made admin-only. An admin reaches all.
+// refused, plus the two S31 made admin-only and the schema-migration
+// routes, which no viewer was ever given. An admin reaches all.
 func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 	t.Parallel()
 
@@ -555,7 +576,7 @@ func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 	viewer := viewerCookie(t, fixture.server)
 	admin := authCookie(t, fixture.server)
 
-	adminOnly := append(slices.Clone(legacyAdminOnly), adminOnlySince31...)
+	adminOnly := viewerRefused()
 
 	for _, name := range adminOnly {
 		if !slices.ContainsFunc(fixture.server.routes(), func(rt route) bool { return routeName(rt) == name }) {

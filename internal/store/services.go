@@ -144,9 +144,11 @@ var serviceChildren = []string{
 	"issues",
 	"log_lines",
 	"metrics",
+	"migration_runs",
 	"notifications",
 	"occurrences",
 	"sdk_logs",
+	"service_migrations",
 	"user_services", // a re-created id must not inherit old grants
 }
 

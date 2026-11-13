@@ -2,7 +2,8 @@
 
 Self-hosted server-management platform: blue-green deploys, bounded
 agentless performance diagnostics, all-state container inventory and
-read-only security findings, container metrics + alerts, and Sentry-style
+read-only security findings, container metrics + alerts, schema migration
+and seed awareness for the applications it runs, and Sentry-style
 error tracking unified with log search. One Go binary
 (UI embedded) + one SQLite file.
 

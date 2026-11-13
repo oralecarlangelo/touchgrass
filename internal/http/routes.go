@@ -132,6 +132,17 @@ func (s *Server) routes() []route {
 		{method: nethttp.MethodGet, pattern: "/api/services/{id}/env/revisions", kind: guardServicePath, capability: authz.EnvReadKeys, handler: s.handleEnvRevisions},
 		{method: nethttp.MethodPost, pattern: "/api/services/{id}/env/revisions/{rev}/rollback", kind: guardServicePath, capability: authz.EnvApply, handler: s.handleEnvRollback},
 
+		// Schema migrations of the monitored application.
+		{method: nethttp.MethodGet, pattern: "/api/services/{id}/migrations", kind: guardServicePath, capability: authz.MigrationsRead, handler: s.handleMigrations},
+		{method: nethttp.MethodGet, pattern: "/api/services/{id}/migrations/runs", kind: guardServicePath, capability: authz.MigrationsRead, handler: s.handleMigrationRuns},
+		{method: nethttp.MethodGet, pattern: "/api/services/{id}/migrations/runs/{run_id}", kind: guardServicePath, capability: authz.MigrationsManage, handler: s.handleMigrationRun},
+		{method: nethttp.MethodGet, pattern: "/api/services/{id}/migrations/config", kind: guardServicePath, capability: authz.MigrationsManage, handler: s.handleMigrationConfig},
+		{method: nethttp.MethodPut, pattern: "/api/services/{id}/migrations/config", kind: guardServicePath, capability: authz.MigrationsManage, handler: s.handlePutMigrationConfig},
+		{method: nethttp.MethodDelete, pattern: "/api/services/{id}/migrations/config", kind: guardServicePath, capability: authz.MigrationsManage, handler: s.handleDeleteMigrationConfig},
+		{method: nethttp.MethodPost, pattern: "/api/services/{id}/migrations/deploy", kind: guardServicePath, capability: authz.MigrationsManage, handler: s.handleMigrationDeploy},
+		{method: nethttp.MethodPost, pattern: "/api/services/{id}/migrations/resolve", kind: guardServicePath, capability: authz.MigrationsManage, handler: s.handleMigrationResolve},
+		{method: nethttp.MethodPost, pattern: "/api/services/{id}/migrations/seed", kind: guardServicePath, capability: authz.MigrationsManage, handler: s.handleMigrationSeed},
+
 		// Logs and issues.
 		{method: nethttp.MethodGet, pattern: "/api/logs", kind: guardServiceQuery, capability: authz.LogsRead, handler: s.handleLogs},
 		{method: nethttp.MethodGet, pattern: "/api/logs/stats", kind: guardServiceQuery, capability: authz.LogsRead, handler: s.handleLogStats},

@@ -23,6 +23,8 @@ export type Capability =
   | 'env.import'
   | 'env.apply'
   | 'env.reveal'
+  | 'migrations.read'
+  | 'migrations.manage'
   | 'keys.read'
   | 'keys.manage'
   | 'audit.read'

@@ -10,6 +10,7 @@ import AlertsTab from './AlertsTab.tsx';
 import DeploysTab from './DeploysTab.tsx';
 import EnvironmentTab from './EnvironmentTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
+import MigrationsTab from './MigrationsTab.tsx';
 import OverviewTab from './OverviewTab.tsx';
 import PerformanceTab from './PerformanceTab.tsx';
 import { envAccessFor, recordsAsSelf, type Can } from '@/lib/access.ts';
@@ -19,6 +20,7 @@ export type ServiceTab =
   | 'overview'
   | 'deploys'
   | 'environment'
+  | 'migrations'
   | 'performance'
   | 'logs'
   | 'activity'
@@ -45,11 +47,15 @@ export default function ServiceWorkspace({
   initialTab?: ServiceTab;
   onTabChange?: (tab: ServiceTab) => void;
 }) {
-  const [tab, setTab] = useState<ServiceTab>(initialTab);
+  // Migration status is a developer and admin view; a viewer has no
+  // tab, and a link to it lands on the overview.
+  const showMigrations = can('migrations.read', service.id);
+  const startTab = initialTab === 'migrations' && !showMigrations ? 'overview' : initialTab;
+  const [tab, setTab] = useState<ServiceTab>(startTab);
 
   useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab, service.id]);
+    setTab(startTab);
+  }, [startTab, service.id]);
 
   return (
     <div className="space-y-4">
@@ -79,12 +85,13 @@ export default function ServiceWorkspace({
           setTab(value as ServiceTab);
           onTabChange?.(value as ServiceTab);
         }}>
-        {/* Nine tabs outgrow a phone-width viewport; let the strip scroll instead of the page. */}
+        {/* Up to ten tabs outgrow a phone-width viewport; let the strip scroll instead of the page. */}
         <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
           <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="deploys">Deploys</TabsTrigger>
           <TabsTrigger value="environment">Environment</TabsTrigger>
+          {showMigrations && <TabsTrigger value="migrations">Migrations</TabsTrigger>}
           <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -120,6 +127,17 @@ export default function ServiceWorkspace({
             />
           )}
         </TabsContent>
+        {showMigrations && (
+          <TabsContent value="migrations">
+            {tab === 'migrations' && (
+              <MigrationsTab
+                service={service}
+                canManage={can('migrations.manage', service.id)}
+                onUnauthorized={onUnauthorized}
+              />
+            )}
+          </TabsContent>
+        )}
         <TabsContent value="performance">
           {tab === 'performance' && (
             <PerformanceTab serviceId={service.id} onUnauthorized={onUnauthorized} />

@@ -51,11 +51,15 @@ Beyond routing, these always apply to Go work here: `golang-project-layout`,
 ## Layout (summary)
 
 `cmd/touchgrass/` (thin mains) · `internal/{http,service,store,docker,
-probe,notify,config,model,secret,authz}` · `web/` · `sdk/node/` · `migrations/` ·
+probe,notify,config,model,secret,authz,dbmigrate}` · `web/` · `sdk/node/` · `migrations/` ·
 `docs/` · `scripts/`. `internal/secret` is the AES-GCM envelope for the
 env pillar (ADR-0012); plaintext never leaves request scope.
 `internal/authz` is the access policy (ADR-0014): every new `/api/`
-route is a row in `internal/http/routes.go` naming its capability. Full standard: `docs/PROJECT_STRUCTURE.md`.
+route is a row in `internal/http/routes.go` naming its capability.
+`internal/dbmigrate` is schema migration awareness (ADR-0018): each
+migration tool is one `Tool`; adding one follows
+`docs/MIGRATION_TOOLS.md` and touches nothing outside its own files.
+Full standard: `docs/PROJECT_STRUCTURE.md`.
 System design: `docs/ARCHITECTURE.md`.
 
 Rules: mains parse flags, wire deps, call `Run()` — no business logic.
@@ -175,3 +179,7 @@ Professional
 - `docs/ARCHITECTURE.md` — system design
 - `docs/PROJECT_STRUCTURE.md` — folder structure standard
 - `docs/adr/` — architecture decision records (from Phase 0)
+- `docs/MIGRATION_TOOLS.md` — standard for adding a migration tool
+- `docs-site/migration-standard.md` — migration and seed coding
+  standard for the applications touchgrass watches, with a block to
+  paste into their `AGENTS.md`

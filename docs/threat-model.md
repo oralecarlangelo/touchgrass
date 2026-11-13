@@ -293,12 +293,70 @@ admin applies them.
   change that; they only keep touchgrass from handing a secret over,
   and from changing a service's configuration without an admin.
 
+## Schema migrations: a stored database URL and commands in the application's container
+
+Added with ADR-0018. A service may have a migration setup: a tool, a
+database URL, and the container that ships the migrations.
+
+**What touchgrass now holds.** One database URL per configured service,
+sealed with the env key (AES-256-GCM, service id as associated data) in
+`service_migrations`. It is write-only: no route returns it, the audit
+row names only the redacted target, and errors and command output are
+scrubbed of it. The exposure is the same as an env secret: an attacker
+needs both the SQLite file and the key.
+
+- *Mitigation the operator controls.* The URL is used for one read-only
+  `SELECT` of the history table. Give it a role that can read that
+  table and nothing else; the docs lead with this. A leaked URL then
+  discloses migration names and failure text, not application data.
+- *What touchgrass enforces.* A read-only transaction, one connection
+  per read, closed afterwards, with an 8 second bound. The database
+  role is still the real control: a read-only transaction is a
+  courtesy, not a boundary.
+
+**What a reader learns.** `migrations.read` (developers and admins, in
+scope) shows migration names, timings, checksums and the tool's failure
+text. Failure text is the database's own error message and can quote
+table and column names, and occasionally a value from a failing
+statement. Viewers do not get it.
+
+**What an admin can now do.** Run the migration tool's deploy, resolve
+and seed inside the service's container (`docker exec`, no shell). This
+changes the application's database from the console, with the
+application's own credentials.
+
+- *What the request controls.* The action, and for a resolve one
+  migration name held to `[A-Za-z0-9][A-Za-z0-9_.-]*`. The command
+  prefix, working directory, migrations directory and compose service
+  are stored setup that only an admin can write, each validated as a
+  single argument or path element.
+- *What that still allows.* Whatever the migrations and the seed script
+  in the image do. Whoever can merge to the repository the image is
+  built from decides what runs; the admin decides when. A seed that is
+  not idempotent damages data when run twice.
+- *The setup is itself a code-execution grant.* The command prefix is
+  an argument vector run in the container. An admin could already
+  deploy arbitrary scripts on the host, so this adds no power to the
+  role, but it is one more place where admin means "can run code".
+- *Limits.* Admin only, the service name typed as confirmation, one
+  command per service at a time, 20 minutes at most, a resolve only
+  for a migration the history records as failed, a seed only when the
+  build declares one. Every run is a row with actor, command line,
+  container, image and exit code, and an audit row with the outcome.
+- *Output.* The last 256 KiB of a command's output is stored and shown
+  to admins only. A seed script that prints a secret puts it in the
+  touchgrass database. Seeds must not print secrets.
+- *Not covered.* touchgrass does not take a backup before a deploy, and
+  cannot undo a migration. A command cut short by a restart is recorded
+  as failed with its outcome unknown.
+
 ## Operator-powered destruction (role-gated + audited)
 
 These exist so the operator can act fast; the control is the role
 and scope of the session plus confirm-gating in the UI, with an
 audit entry per run. Everything here is admin-only except deploys,
-which a developer may run for the services in its scope:
+which a developer may run for the services in its scope. Migrate and
+seed commands have their own section above:
 
 - **Deploys** run service scripts with the process's privileges
   (cutover/rollback/deploy). Blast radius is one service by

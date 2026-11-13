@@ -22,3 +22,4 @@ standards (`AGENTS.md`, `docs/ARCHITECTURE.md`,
 | [0014](0014-roles-with-service-scope.md) | Roles with service scope — a role says what, a scope says where | Accepted |
 | [0015](0015-developer-role.md) | Developer role — run what an admin configured, in scope, under your own name | Accepted |
 | [0016](0016-env-proposals.md) | Env proposals — a developer stages plain keys, an admin applies | Accepted |
+| [0018](0018-schema-migration-awareness.md) | Schema migration awareness — read the history, compare with the build, run the tool in its own container | Accepted |

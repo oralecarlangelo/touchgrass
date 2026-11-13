@@ -7,7 +7,10 @@ the block at the end can be pasted into an application repository's
 `AGENTS.md` or `CLAUDE.md` so an agent follows it without being told.
 
 The examples use NestJS with Prisma on PostgreSQL. The rules are about
-migrations in general; only the commands are Prisma's.
+migrations in general; only the commands are Prisma's. An application
+on MongoDB with migrate-mongo follows the same rules with the
+differences in [MongoDB with migrate-mongo](#mongodb-with-migrate-mongo),
+which has its own block to paste.
 
 ## Why these rules
 
@@ -130,6 +133,93 @@ service.** Two colors starting together would race. Apply them as a
 step: from touchgrass, or from the deploy script before the new color
 takes traffic.
 
+## MongoDB with migrate-mongo
+
+MongoDB has no schema to migrate, so a migration is a script that
+changes data, indexes or validators. migrate-mongo records a script
+only after it succeeds and keeps no trace of a failure, which makes
+some rules stricter. M3, M4, M5, M7, M8 and the image rules apply as
+written (read "document field" for "column"); these replace the rest.
+
+**G1. Never edit, rename or delete an applied script.** As M1. With
+`useFileHash` on, an edited script is **run again** on the next `up`,
+against data it has already changed.
+
+**G2. Create scripts with the tool:**
+`npx migrate-mongo create <what-it-does>`. Do not hand-write the
+timestamp. Never leave `sample-migration.js` edited as if it were a
+migration: the tool skips it.
+
+**G3. Every `up` must be safe to run twice.** A script that throws half
+way is recorded nowhere and will run again from the top. Write each
+step so that repeating it changes nothing:
+
+```js
+// migrations/20261102090000-add-colour.js
+module.exports = {
+  async up(db) {
+    // Touches only documents that still lack the field.
+    await db.collection('widgets').updateMany({ colour: { $exists: false } }, { $set: { colour: 'grey' } });
+    // createIndex with the same keys and options is a no-op.
+    await db.collection('widgets').createIndex({ colour: 1 });
+  },
+  async down(db) {
+    await db.collection('widgets').dropIndex('colour_1');
+    await db.collection('widgets').updateMany({}, { $unset: { colour: '' } });
+  },
+};
+```
+
+Never `insertOne` without a guard, `$inc`, `$push` or `$rename` without
+a filter that excludes documents already changed.
+
+**G4. Write a real `down` that undoes exactly what `up` did,** and say
+in the pull request when it cannot (a dropped field). `down` is run by
+a person at a terminal, one script at a time; touchgrass never runs it.
+
+**G5. Set `useFileHash: true` in `migrate-mongo-config.js` from the
+first migration.** Without it nobody, including touchgrass, can tell
+that an applied script was edited. Do not switch it on in an existing
+project without a plan: every script already applied runs again on the
+next `up` (which G3 makes safe).
+
+**G6. Do not rename the changelog** (`changelogCollectionName`),
+change `migrationsDir` or `migrationFileExtension` once migrations have
+been applied. Keep `migrationFileExtension` a plain string in the
+config, not a computed value.
+
+**G7. Read the connection from the environment** in
+`migrate-mongo-config.js` (`process.env.MONGO_URL`). Never commit a URL
+with a password.
+
+**G8. Use a transaction only where the deployment supports one** (a
+replica set), and never as a substitute for G3: index builds and
+collection changes are not transactional.
+
+**G9. Build indexes on large collections as their own migration,** and
+expect the build to take as long as the collection is large. Add a
+unique index only after a script has removed the duplicates.
+
+**G10. Production applies migrations one way only:**
+`migrate-mongo up`. If it fails, stop: read the output, find what the
+script changed before it threw, fix the script's cause in a **new**
+commit (the failed script was never recorded, so correcting it is not
+an edit of an applied migration), and apply again.
+
+**G11. If `up` reports "a lock is in place",** an earlier run was
+killed. Confirm nothing is running before deleting the document in
+`changelog_lock`.
+
+**G12. Seeds.** migrate-mongo has no seed. Reference data that the
+application cannot run without goes in a migration that follows G3
+(an upsert keyed on a natural unique field). Rules S2, S5 and S6 still
+apply to it.
+
+**G13. Ship `migrate-mongo-config.js`, the migrations directory and
+the `migrate-mongo` package in the runtime image** (I1), byte for byte
+(I2). If the scripts are TypeScript, ship the compiled directory and
+point `migrationsDir` at it.
+
 ## Before opening a pull request
 
 - [ ] No applied migration was edited, renamed or deleted
@@ -139,6 +229,8 @@ takes traffic.
 - [ ] The seed, if touched, runs twice with the same result
 - [ ] `npx prisma migrate deploy` succeeds on a database at the
       previous release, and `npx prisma migrate status` is clean after
+      (migrate-mongo: `up` succeeds, a second `up` does nothing, and
+      `status` shows no `PENDING`)
 - [ ] The description says what the migration changes and how to
       undo it
 
@@ -166,4 +258,37 @@ takes traffic.
   image, byte for byte.
 - If a migration fails, stop. Report what it changed and propose
   whether to mark it rolled back or applied. Do not retry it blindly.
+```
+
+### For an application on MongoDB with migrate-mongo
+
+```md
+## Database migrations (binding)
+
+- Never edit, rename or delete a migration script that has been
+  applied anywhere. Change data or indexes with a new script.
+- Create scripts with `npx migrate-mongo create <what-it-does>`.
+- Every `up` must be safe to run twice: filter on documents not yet
+  changed, upsert instead of insert, no unguarded $inc/$push/$rename.
+  A script that throws is recorded nowhere and runs again from the top.
+- Write a `down` that undoes exactly what `up` did, or say why it
+  cannot. Never run `down` against a shared database without being
+  asked to.
+- Keep `useFileHash: true` in migrate-mongo-config.js. Do not change
+  `changelogCollectionName`, `migrationsDir` or
+  `migrationFileExtension` once migrations exist.
+- Every script must work while the previous build is still running:
+  add fields before reading them; stop using a field one release
+  before removing it.
+- Build indexes on large collections in their own script; remove
+  duplicates before adding a unique index.
+- Read the connection from the environment in the config. No URLs,
+  secrets or personal data in a script.
+- Reference data goes in an idempotent migration (upsert on a natural
+  key); there is no separate seed.
+- Ship migrate-mongo-config.js, the migrations directory and the
+  migrate-mongo package in the runtime image, byte for byte.
+- If `migrate-mongo up` fails, stop. Report what the script changed
+  before it threw. Do not delete changelog or lock documents unless
+  asked to.
 ```

@@ -614,19 +614,46 @@ func redact(text string, databaseURL []byte) string {
 
 	text = strings.ReplaceAll(text, raw, "[database url]")
 
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User == nil {
+	password := urlPassword(raw)
+	if len(password) < minScrubLen {
 		return text
 	}
 
-	password, ok := parsed.User.Password()
-	if !ok || len(password) < minScrubLen {
-		return text
+	for _, form := range []string{password, url.QueryEscape(password), url.PathEscape(password)} {
+		text = strings.ReplaceAll(text, form, "[redacted]")
 	}
 
-	text = strings.ReplaceAll(text, password, "[redacted]")
+	return text
+}
 
-	return strings.ReplaceAll(text, url.QueryEscape(password), "[redacted]")
+// urlPassword returns the decoded password of a database URL, or "".
+// It reads the authority by hand because a URL may list several hosts
+// with ports, which net/url refuses to parse.
+func urlPassword(raw string) string {
+	_, rest, found := strings.Cut(raw, "://")
+	if !found {
+		return ""
+	}
+
+	authority, _, _ := strings.Cut(rest, "/")
+	authority, _, _ = strings.Cut(authority, "?")
+
+	at := strings.LastIndex(authority, "@")
+	if at < 0 {
+		return ""
+	}
+
+	_, encoded, found := strings.Cut(authority[:at], ":")
+	if !found {
+		return ""
+	}
+
+	password, err := url.PathUnescape(encoded)
+	if err != nil {
+		return encoded
+	}
+
+	return password
 }
 
 // minScrubLen is the shortest password worth replacing in output: a

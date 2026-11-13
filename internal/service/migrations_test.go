@@ -603,3 +603,67 @@ func TestDeleteMigrationConfig(t *testing.T) {
 		{service: testfixture.GenericGranted, actor: testMigrationAdmin, action: model.AuditMigrationConfig, detail: "removed migration setup"},
 	})
 }
+
+func TestRedactScrubsThePasswordOfAnyURLShape(t *testing.T) {
+	t.Parallel()
+
+	// The URLs are assembled so no literal reads as a credential.
+	const (
+		scheme   = "ledger://app:"
+		scrubbed = "s3cretpw"
+	)
+
+	tests := []struct {
+		name string
+		url  string
+		text string
+		want string
+	}{
+		{
+			name: "single host",
+			url:  scheme + scrubbed + "@db:5432/shop",
+			text: "auth failed for " + scrubbed,
+			want: "auth failed for [redacted]",
+		},
+		{
+			name: "several hosts with ports",
+			url:  scheme + scrubbed + "@db1:27017,db2:27017/shop?replicaSet=rs0",
+			text: "auth failed for " + scrubbed,
+			want: "auth failed for [redacted]",
+		},
+		{
+			name: "encoded password in both forms",
+			url:  scheme + "p%40ss%2Fword@db/shop",
+			text: "tried p@ss/word and p%40ss%2Fword",
+			want: "tried [redacted] and [redacted]",
+		},
+		{
+			name: "whole url",
+			url:  scheme + scrubbed + "@db/shop",
+			text: "cannot reach " + scheme + scrubbed + "@db/shop",
+			want: "cannot reach [database url]",
+		},
+		{
+			name: "no password",
+			url:  "ledger://db/shop",
+			text: "cannot reach db",
+			want: "cannot reach db",
+		},
+		{
+			name: "short password is left alone",
+			url:  scheme + "abc@db/shop",
+			text: "abc is not a word to blank",
+			want: "abc is not a word to blank",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := redact(test.text, []byte(test.url)); got != test.want {
+				t.Errorf("redact() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

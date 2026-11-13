@@ -2789,7 +2789,7 @@ components:
       required: [configured, verdict, history, shipped, counts, migrations, seed, checked_at]
       properties:
         configured: { type: boolean }
-        tool: { type: string, example: prisma }
+        tool: { type: string, example: prisma, description: "A registered tool, prisma or migrate-mongo" }
         verdict:
           type: string
           enum: [in_sync, pending, drift, failed, unknown]
@@ -2883,7 +2883,7 @@ components:
       type: object
       required: [tool]
       properties:
-        tool: { type: string, example: prisma }
+        tool: { type: string, example: prisma, description: "A registered tool, prisma or migrate-mongo" }
         database_url:
           type: string
           writeOnly: true

@@ -3,8 +3,11 @@
 The standard for adding a schema-migration tool to touchgrass (the
 feature described in ADR-0018). It is written for contributors and for
 AI coding agents: follow it top to bottom, and treat every "must" as a
-review blocker. Prisma on PostgreSQL (`internal/dbmigrate/prisma*.go`)
-is the reference implementation.
+review blocker. There are two reference implementations: Prisma on
+PostgreSQL (`internal/dbmigrate/prisma*.go`), a tool whose history
+records failures, checksums and durations, and migrate-mongo on MongoDB
+(`internal/dbmigrate/migratemongo*.go`, ADR-0019), a tool whose history
+records none of them. Read the one closer to the tool you are adding.
 
 ## What a tool is
 
@@ -45,10 +48,18 @@ Map the tool's record onto `dbmigrate.Record`:
 - `RolledBackAt != nil` means the attempt was abandoned; a later row
   with the same name supersedes it.
 - `Checksum` must be comparable with what `Source` computes for the
-  same file. If the tool records no checksum, leave both empty: the
-  migration then never reads as modified, which is the honest answer.
+  same file. Leave it empty on a row the tool recorded no checksum for:
+  a migration reads as modified only when the row and the file both
+  have one, which is the honest answer. `Source` may always compute
+  its side.
+- If the tool records one time per migration, set `FinishedAt` equal
+  to `StartedAt`. No duration is then reported.
 - If the tool keeps no notion of failure (many do not), every row is
-  applied. Do not invent a failed state from timing.
+  applied. Do not invent a failed state from timing. Return
+  `ErrUnsupportedAction` for the resolve actions, and for the seed if
+  the tool has none.
+- If the tool can record a name more than once (a re-run), return
+  every row in start order. The last one that is not rolled back wins.
 
 ### A tool with no history
 
@@ -60,7 +71,9 @@ does keep one, and say so in the docs.
 ## Reading a database
 
 - **Read-only, always.** Open a read-only transaction or the engine's
-  equivalent. A setup should work with a role that can only read the
+  equivalent. Where the engine has none (MongoDB), the reader issues
+  read commands only and the integration test runs it as a user that
+  cannot write. A setup should work with a role that can only read the
   history.
 - **One connection per call**, closed before returning, bounded by
   `ctx`. No package-level clients.
@@ -72,6 +85,14 @@ does keep one, and say so in the docs.
   justified in the pull request: maintenance, license, size.
 - **Strip the tool's private URL parameters** before handing the URL to
   a driver; pass on an allowlist, not a denylist.
+- **Do not assume `net/url` can parse the URL.** It refuses a URL that
+  lists several hosts with ports. Parse such a URL by hand, and test a
+  password that contains `@`.
+- **Cap the driver's own timeouts.** A status read should give up in
+  seconds; some drivers wait 30 by default.
+- **A setting the reader needs and the URL does not carry** (a schema,
+  a collection name) is a URL parameter private to the tool, validated
+  and stripped. Do not add per-tool fields to the setup.
 
 ## Secrets
 

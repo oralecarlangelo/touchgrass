@@ -27,7 +27,7 @@ type migrationsWiring struct {
 // migrationTools is the set of migration tools this build ships. A new
 // tool is one more entry here; nothing else in the wiring changes.
 func migrationTools() *dbmigrate.Registry {
-	return dbmigrate.NewRegistry(dbmigrate.NewPrisma())
+	return dbmigrate.NewRegistry(dbmigrate.NewPrisma(), dbmigrate.NewMigrateMongo())
 }
 
 // newMigrationsService builds the schema-migrations pillar and fails

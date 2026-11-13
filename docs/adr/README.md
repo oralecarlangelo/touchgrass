@@ -23,3 +23,4 @@ standards (`AGENTS.md`, `docs/ARCHITECTURE.md`,
 | [0015](0015-developer-role.md) | Developer role — run what an admin configured, in scope, under your own name | Accepted |
 | [0016](0016-env-proposals.md) | Env proposals — a developer stages plain keys, an admin applies | Accepted |
 | [0018](0018-schema-migration-awareness.md) | Schema migration awareness — read the history, compare with the build, run the tool in its own container | Accepted |
+| [0019](0019-migrate-mongo.md) | MongoDB migrations — read migrate-mongo's changelog, not Prisma | Accepted |

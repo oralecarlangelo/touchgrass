@@ -146,37 +146,24 @@ func TestPrismaCommand(t *testing.T) {
 	}
 }
 
-func TestPrismaDescribe(t *testing.T) {
-	t.Parallel()
+// describeCase is one database URL and what a tool should say of it.
+type describeCase struct {
+	name    string
+	url     string
+	want    string
+	wantErr error
+}
 
-	tests := []struct {
-		name    string
-		url     string
-		want    string
-		wantErr error
-	}{
-		{
-			name: "prisma url with its own parameters",
-			url:  "postgresql://app:" + testPassword + "@db.internal:6543/shop?schema=sales&connection_limit=5&pgbouncer=true",
-			want: "db.internal:6543/shop (schema sales)",
-		},
-		{
-			name: "defaults",
-			url:  "postgres://app:" + testPassword + "@localhost/shop",
-			want: "localhost:5432/shop (schema public)",
-		},
-		{name: "mysql is not readable yet", url: "mysql://app:" + testPassword + "@db/shop", wantErr: ErrUnsupportedDatabase},
-		{name: "mongodb is not readable yet", url: "mongodb://app:" + testPassword + "@db/shop", wantErr: ErrUnsupportedDatabase},
-		{name: "no database name", url: "postgres://app:" + testPassword + "@db:5432", wantErr: ErrInvalidURL},
-		{name: "no scheme", url: "db:5432/shop", wantErr: ErrUnsupportedDatabase},
-		{name: "empty", url: "", wantErr: ErrInvalidURL},
-	}
+// checkDescribe runs a tool's Describe over cases and checks that the
+// password reaches neither the label nor the error.
+func checkDescribe(t *testing.T, tool Tool, tests []describeCase) {
+	t.Helper()
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			target, err := NewPrisma().Describe(test.url)
+			target, err := tool.Describe(test.url)
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("Describe() error = %v, want %v", err, test.wantErr)
 			}
@@ -194,6 +181,30 @@ func TestPrismaDescribe(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrismaDescribe(t *testing.T) {
+	t.Parallel()
+
+	tests := []describeCase{
+		{
+			name: "prisma url with its own parameters",
+			url:  "postgresql://app:" + testPassword + "@db.internal:6543/shop?schema=sales&connection_limit=5&pgbouncer=true",
+			want: "db.internal:6543/shop (schema sales)",
+		},
+		{
+			name: "defaults",
+			url:  "postgres://app:" + testPassword + "@localhost/shop",
+			want: "localhost:5432/shop (schema public)",
+		},
+		{name: "mysql is not readable yet", url: "mysql://app:" + testPassword + "@db/shop", wantErr: ErrUnsupportedDatabase},
+		{name: "mongodb is not readable yet", url: "mongodb://app:" + testPassword + "@db/shop", wantErr: ErrUnsupportedDatabase},
+		{name: "no database name", url: "postgres://app:" + testPassword + "@db:5432", wantErr: ErrInvalidURL},
+		{name: "no scheme", url: "db:5432/shop", wantErr: ErrUnsupportedDatabase},
+		{name: "empty", url: "", wantErr: ErrInvalidURL},
+	}
+
+	checkDescribe(t, NewPrisma(), tests)
 }
 
 // Prisma's own URL parameters are unknown startup parameters to

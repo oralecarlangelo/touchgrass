@@ -226,7 +226,7 @@ and the service gets one verdict. A side that cannot be read is
 reported as such; the other is still shown.
 
 Everything tool-specific sits behind `dbmigrate.Tool` (Prisma on
-PostgreSQL first); the comparison, the service layer, the routes and
+PostgreSQL, and migrate-mongo on MongoDB per ADR-0019); the comparison, the service layer, the routes and
 the console name no tool, and `docs/MIGRATION_TOOLS.md` is the standard
 for adding one. Deploy, resolve and seed are admin-only `docker exec`
 calls of an argument vector inside the application's container, one

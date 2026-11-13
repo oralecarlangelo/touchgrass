@@ -1477,6 +1477,40 @@ diffing or `migrate reset`; no automatic migrate on deploy; no backup
 before a command; no seed history for seeds run outside touchgrass;
 no migration alerts or notifications.
 
+### S36 — MongoDB migrations: migrate-mongo (2026-11-13)
+
+**Status**: IMPLEMENTED on `feature/migrations-mongodb` (stacked on
+S35); PR open.
+**Goal**: the Migrations view for services that keep their MongoDB
+changes as migrate-mongo scripts: status from the changelog collection
+and `migrate-mongo up` from the console (ADR-0019). Prisma keeps no
+history for MongoDB, so this is a second tool, not a second reader.
+
+- S36.1 Shared comparison (0.5pd) [FR-P1]
+  Acceptance: a migration is modified only when both sides carry a
+  checksum; a row whose finish equals its start has no duration;
+  Prisma results unchanged. The service's password scrub handles a
+  multi-host URL.
+- S36.2 migrate-mongo tool (1.5pd) [FR-P1, NFR-5]
+  Acceptance: one bounded `find` on the changelog over a client that is
+  disconnected before returning; a database the tool never ran against
+  reads as empty; `fileHash` used when present; the file filter and
+  hash are migrate-mongo's own (hash asserted against the real CLI);
+  multi-host and `mongodb+srv` URLs; only connection and read options
+  reach the driver; `changelogCollection` names a non-default
+  changelog; resolve and seed are unsupported; integration test as a
+  user with only the `read` role.
+- S36.3 Docs and standards (0.5pd) [NFR-6]
+  Acceptance: ADR-0019; the guide's MongoDB section and
+  troubleshooting; the coding standard's migrate-mongo rules with an
+  `AGENTS.md` block; `docs/MIGRATION_TOOLS.md` updated with what the
+  second tool taught.
+- Validation: recorded in the PR description.
+
+SCOPE GUARD: no `migrate-mongo down`; no seed for MongoDB; no other
+MongoDB migration tool; no change to routes, access policy, store or
+console.
+
 ## Working agreements
 
 - Sprint goal over story count: a sprint succeeds if its goal + validation

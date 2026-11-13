@@ -145,7 +145,7 @@ func TestOnlyReadRoutesAreInteractive(t *testing.T) {
 				},
 			})
 
-			handler(httptest.NewRecorder(), httptest.NewRequest(method, "/api/anything", nil))
+			handler(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), method, "/api/anything", nil))
 
 			if got != want {
 				t.Errorf("interactive = %t, want %t", got, want)

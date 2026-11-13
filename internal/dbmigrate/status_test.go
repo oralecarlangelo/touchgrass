@@ -10,9 +10,13 @@ import (
 // Migration names the status and adapter tests share.
 const (
 	testInit       = "001_init"
+	testUsers      = "002_users"
 	testRetried    = "005_retried"
 	testPrismaInit = "20261101100000_init"
 )
+
+// testSumA is the checksum the fixtures give the first migration.
+const testSumA = "aaa"
 
 var testStart = time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
 
@@ -43,8 +47,8 @@ func TestCompareClassifiesEachMigration(t *testing.T) {
 	t.Parallel()
 
 	records := []Record{
-		{Name: testInit, Checksum: "aaa", StartedAt: at(0), FinishedAt: finished(1), Steps: 1},
-		{Name: "002_users", Checksum: "bbb", StartedAt: at(2), FinishedAt: finished(3), Steps: 1},
+		{Name: testInit, Checksum: testSumA, StartedAt: at(0), FinishedAt: finished(1), Steps: 1},
+		{Name: testUsers, Checksum: "bbb", StartedAt: at(2), FinishedAt: finished(3), Steps: 1},
 		{Name: "003_gone", Checksum: "ccc", StartedAt: at(4), FinishedAt: finished(5), Steps: 1},
 		{Name: "004_broken", Checksum: "ddd", StartedAt: at(6), Logs: "column exists"},
 		{Name: testRetried, Checksum: "eee", StartedAt: at(7), RolledBackAt: finished(8), Logs: "first try"},
@@ -53,8 +57,8 @@ func TestCompareClassifiesEachMigration(t *testing.T) {
 		{Name: "007_rolled_then_shipped", Checksum: "ggg", StartedAt: at(13), RolledBackAt: finished(14)},
 	}
 	shipped := []Shipped{
-		{Name: testInit, Checksum: "aaa"},
-		{Name: "002_users", Checksum: "EDITED"},
+		{Name: testInit, Checksum: testSumA},
+		{Name: testUsers, Checksum: "EDITED"},
 		{Name: "004_broken", Checksum: "ddd"},
 		{Name: testRetried, Checksum: "eee"},
 		{Name: "007_rolled_then_shipped", Checksum: "ggg"},
@@ -65,7 +69,7 @@ func TestCompareClassifiesEachMigration(t *testing.T) {
 
 	want := map[string]string{
 		testInit:                  model.MigrationApplied,
-		"002_users":               model.MigrationModified,
+		testUsers:                 model.MigrationModified,
 		"003_gone":                model.MigrationMissing,
 		"004_broken":              model.MigrationFailed,
 		testRetried:               model.MigrationApplied,
@@ -122,13 +126,47 @@ func TestCompareKeepsTheFactsOfTheActiveRow(t *testing.T) {
 	}
 }
 
+// A tool may record no checksum, or only the moment a migration was
+// applied. Neither is evidence of an edit or of a zero-length run.
+func TestCompareWithoutChecksumsOrDurations(t *testing.T) {
+	t.Parallel()
+
+	got := Compare([]Record{
+		{Name: testInit, StartedAt: at(0), FinishedAt: finished(0)},
+		{Name: testUsers, Checksum: "bbb", StartedAt: at(1), FinishedAt: finished(1)},
+		{Name: "003_hashed", Checksum: "ccc", StartedAt: at(2), FinishedAt: finished(2)},
+	}, []Shipped{
+		{Name: testInit, Checksum: testSumA},
+		{Name: testUsers},
+		{Name: "003_hashed", Checksum: "EDITED"},
+	}, true)
+
+	want := map[string]string{
+		testInit:     model.MigrationApplied,
+		testUsers:    model.MigrationApplied,
+		"003_hashed": model.MigrationModified,
+	}
+
+	for name, state := range states(got) {
+		if state != want[name] {
+			t.Errorf("Compare() state of %s = %q, want %q", name, state, want[name])
+		}
+	}
+
+	for _, migration := range got {
+		if migration.DurationMS != nil {
+			t.Errorf("Compare() duration of %s = %d, want none for equal times", migration.Name, *migration.DurationMS)
+		}
+	}
+}
+
 // Without the build's files nothing can be called pending, modified,
 // or missing: the history is reported as it stands.
 func TestCompareWithoutShippedFilesReportsHistoryOnly(t *testing.T) {
 	t.Parallel()
 
 	got := Compare([]Record{
-		{Name: testInit, Checksum: "aaa", StartedAt: at(0), FinishedAt: finished(1)},
+		{Name: testInit, Checksum: testSumA, StartedAt: at(0), FinishedAt: finished(1)},
 		{Name: "002_broken", Checksum: "bbb", StartedAt: at(2)},
 		{Name: "003_undone", Checksum: "ccc", StartedAt: at(3), RolledBackAt: finished(4)},
 	}, nil, false)

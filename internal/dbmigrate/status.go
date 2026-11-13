@@ -85,7 +85,9 @@ func classify(name string, rows []Record, shipped file) model.Migration {
 		migration.State = model.MigrationApplied
 	case !shipped.shipped:
 		migration.State = model.MigrationMissing
-	case shipped.checksum != active.Checksum:
+	case active.Checksum != "" && shipped.checksum != "" && shipped.checksum != active.Checksum:
+		// A side with no checksum (a tool or a setup that records
+		// none) cannot show an edit, so it never reads as modified.
 		migration.State = model.MigrationModified
 	default:
 		migration.State = model.MigrationApplied
@@ -135,7 +137,8 @@ func fill(migration *model.Migration, record Record) {
 	migration.RolledBackAt = record.RolledBackAt
 	migration.Steps = record.Steps
 
-	if record.FinishedAt != nil {
+	// Equal times mean the tool records one instant, not a duration.
+	if record.FinishedAt != nil && !record.FinishedAt.Equal(record.StartedAt) {
 		duration := record.FinishedAt.Sub(record.StartedAt).Milliseconds()
 		migration.DurationMS = &duration
 	}

@@ -48,9 +48,13 @@ const (
 
 // Record is one row of a tool's applied-migration history.
 type Record struct {
-	Name         string
-	Checksum     string
-	StartedAt    time.Time
+	Name string
+	// Checksum is empty when the tool recorded none for this row; the
+	// migration then never reads as modified.
+	Checksum  string
+	StartedAt time.Time
+	// FinishedAt equal to StartedAt means the tool records only when a
+	// migration was applied, so no duration is reported.
 	FinishedAt   *time.Time
 	RolledBackAt *time.Time
 	Steps        int

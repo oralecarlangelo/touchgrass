@@ -44,7 +44,14 @@ export function EnvNotConfigured({
         </p>
         {isAdmin && (
           <pre className="rounded-md bg-zinc-950 p-3 text-left font-mono text-xs leading-relaxed text-zinc-100 dark:bg-zinc-900">
-            {`# generate once, keep it out of version control\n${envKeyEnvVar}=$(openssl rand -base64 32)`}
+            {[
+              '# generate once: 32 random bytes in a file only the server user can read',
+              'sudo install -d -m 0700 /etc/touchgrass',
+              'head -c 32 /dev/urandom | sudo tee /etc/touchgrass/env.key >/dev/null',
+              'sudo chmod 0600 /etc/touchgrass/env.key',
+              '# the variable holds the path to that file, not the key itself',
+              `export ${envKeyEnvVar}=/etc/touchgrass/env.key`,
+            ].join('\n')}
           </pre>
         )}
         <p className="text-muted-foreground text-xs">

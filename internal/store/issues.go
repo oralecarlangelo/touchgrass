@@ -91,7 +91,7 @@ func (s *IssueStore) GroupOccurrence(
 
 // Get returns one issue with its live count and releases.
 func (s *IssueStore) Get(ctx context.Context, id int64) (model.Issue, error) {
-	row := s.db.sql.QueryRowContext(ctx,
+	row := s.db.read.QueryRowContext(ctx,
 		`SELECT id, service_id, fingerprint, title, first_seen, last_seen,
 		        notified_at, created_at,
 		        (SELECT COUNT(*) FROM occurrences WHERE issue_id = issues.id)
@@ -123,7 +123,7 @@ func (s *IssueStore) ListByService(
 	serviceID string,
 	limit int,
 ) ([]model.Issue, error) {
-	issues, err := queryRows(ctx, s.db.sql, rowQuery[model.Issue]{
+	issues, err := queryRows(ctx, s.db.read, rowQuery[model.Issue]{
 		what: "issues",
 		query: `SELECT id, service_id, fingerprint, title, first_seen, last_seen,
 		        notified_at, created_at,
@@ -146,7 +146,7 @@ func (s *IssueStore) UnnotifiedSince(
 	serviceID string,
 	since time.Time,
 ) ([]model.Issue, error) {
-	return queryRows(ctx, s.db.sql, rowQuery[model.Issue]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Issue]{
 		what: "unnotified issues",
 		query: `SELECT id, service_id, fingerprint, title, first_seen, last_seen,
 		        notified_at, created_at,
@@ -165,7 +165,7 @@ func (s *IssueStore) ActiveSince(
 	serviceID string,
 	since time.Time,
 ) ([]model.Issue, error) {
-	return queryRows(ctx, s.db.sql, rowQuery[model.Issue]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Issue]{
 		what: "active issues",
 		query: `SELECT id, service_id, fingerprint, title, first_seen, last_seen,
 		        notified_at, created_at,
@@ -193,18 +193,7 @@ func (s *IssueStore) MarkNotified(ctx context.Context, id int64) error {
 // TrimBefore deletes issues quiet since cutoff and reports the count.
 // Releases cascade; their occurrences age out through the occurrence trim.
 func (s *IssueStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx,
-		"DELETE FROM issues WHERE last_seen < ?", formatTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming issues: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed issues: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: "issues", column: columnLastSeen}, formatTime(cutoff))
 }
 
 // withReleases attaches sorted releases to issues from one service query.
@@ -216,7 +205,7 @@ func (s *IssueStore) withReleases(
 		return issues, nil
 	}
 
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT r.issue_id, r.release FROM issue_releases r
 		 JOIN issues i ON i.id = r.issue_id
 		 WHERE i.service_id = ? ORDER BY r.release`,

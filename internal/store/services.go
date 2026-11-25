@@ -25,7 +25,7 @@ func NewServiceStore(db *DB) *ServiceStore {
 
 // All returns every service ordered by id.
 func (s *ServiceStore) All(ctx context.Context) ([]model.Service, error) {
-	rows, err := s.db.sql.QueryContext(
+	rows, err := s.db.read.QueryContext(
 		ctx,
 		"SELECT id, name, strategy, compose_project, compose_dir, config FROM services ORDER BY id",
 	)
@@ -63,7 +63,7 @@ func (s *ServiceStore) ByIDs(ctx context.Context, ids []string) ([]model.Service
 
 	clause, args := inClause(ids)
 
-	return queryRows(ctx, s.db.sql, rowQuery[model.Service]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Service]{
 		what:  "services",
 		query: "SELECT id, name, strategy, compose_project, compose_dir, config FROM services WHERE id IN " + clause + " ORDER BY id",
 		args:  args,
@@ -73,7 +73,7 @@ func (s *ServiceStore) ByIDs(ctx context.Context, ids []string) ([]model.Service
 
 // Get returns the service with id.
 func (s *ServiceStore) Get(ctx context.Context, id string) (model.Service, error) {
-	row := s.db.sql.QueryRowContext(
+	row := s.db.read.QueryRowContext(
 		ctx,
 		"SELECT id, name, strategy, compose_project, compose_dir, config FROM services WHERE id = ?",
 		id,

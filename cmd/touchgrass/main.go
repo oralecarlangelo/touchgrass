@@ -49,7 +49,9 @@ Commands:
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "touchgrass: %v\n", err)
+		// A subcommand is a second process on the server's database file:
+		// say so when it lost the wait for the write lock.
+		fmt.Fprintf(os.Stderr, "touchgrass: %v\n", store.ExplainBusy(err))
 		os.Exit(1)
 	}
 }

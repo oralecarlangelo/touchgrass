@@ -79,7 +79,7 @@ func (s *SecurityStore) Activate(ctx context.Context, actor string) (model.Secur
 func (s *SecurityStore) Activation(ctx context.Context) (model.SecurityActivation, error) {
 	var activation model.SecurityActivation
 	var at sql.NullString
-	if err := s.db.sql.QueryRowContext(ctx, `SELECT activated_at, activated_by
+	if err := s.db.read.QueryRowContext(ctx, `SELECT activated_at, activated_by
 		FROM container_security_activation WHERE singleton = 1`).Scan(&at, &activation.ActivatedBy); err != nil {
 		return model.SecurityActivation{}, fmt.Errorf("reading security activation: %w", err)
 	}
@@ -137,7 +137,8 @@ func (s *SecurityStore) Baseline(ctx context.Context, containerID string) (model
 	var baseline model.ContainerBaseline
 	var approvedAt string
 	var active int
-	err := s.db.sql.QueryRowContext(ctx, `SELECT id, container_id, image_fingerprint,
+
+	err := s.db.read.QueryRowContext(ctx, `SELECT id, container_id, image_fingerprint,
 		configuration_fingerprint, approved_by, approved_at, active
 		FROM container_security_baselines WHERE container_id = ? AND active = 1
 		ORDER BY approved_at DESC, id DESC LIMIT 1`, containerID).Scan(
@@ -206,7 +207,8 @@ func (s *SecurityStore) Classify(ctx context.Context, instance model.ContainerIn
 	}
 	var expires sql.NullString
 	var nonExpiring int
-	err := s.db.sql.QueryRowContext(ctx, `SELECT expires_at, non_expiring
+
+	err := s.db.read.QueryRowContext(ctx, `SELECT expires_at, non_expiring
 		FROM container_security_ignores WHERE container_id = ?`, instance.ID).Scan(&expires, &nonExpiring)
 	if err == nil {
 		expiresAt, parseErr := parseNullTime(expires, "expires_at")
@@ -221,7 +223,8 @@ func (s *SecurityStore) Classify(ctx context.Context, instance model.ContainerIn
 	}
 
 	var count int
-	err = s.db.sql.QueryRowContext(ctx, `SELECT COUNT(*) FROM container_security_baselines
+
+	err = s.db.read.QueryRowContext(ctx, `SELECT COUNT(*) FROM container_security_baselines
 		WHERE container_id = ? AND active = 1 AND image_fingerprint = ?
 		AND configuration_fingerprint = ?`, instance.ID, instance.ImageFingerprint,
 		instance.ConfigurationFingerprint).Scan(&count)
@@ -385,7 +388,7 @@ func (s *SecurityStore) ExpireSuppressions(ctx context.Context, now time.Time) (
 }
 
 func (s *SecurityStore) expiredSuppressionIDs(ctx context.Context, now time.Time) ([]int64, error) {
-	rows, err := s.db.sql.QueryContext(ctx, `SELECT id FROM security_findings
+	rows, err := s.db.read.QueryContext(ctx, `SELECT id FROM security_findings
 		WHERE status = 'suppressed' AND suppressed_until IS NOT NULL AND suppressed_until <= ?
 		ORDER BY id`, formatTime(now))
 	if err != nil {
@@ -422,7 +425,8 @@ func (s *SecurityStore) PolicyFor(ctx context.Context, serviceID, containerID st
 			continue
 		}
 		var encoded string
-		err := s.db.sql.QueryRowContext(ctx, `SELECT policy_json FROM security_policies
+
+		err := s.db.read.QueryRowContext(ctx, `SELECT policy_json FROM security_policies
 			WHERE scope = ? AND scope_id = ?`, query[0], query[1]).Scan(&encoded)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -469,7 +473,8 @@ func (s *SecurityStore) Findings(ctx context.Context, query model.SecurityFindin
 	}
 	statement += " LIMIT ? OFFSET ?"
 	args = append(args, securityLimit(query.Limit), max(query.Offset, 0))
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing security findings: %w", err)
 	}
@@ -487,7 +492,8 @@ func (s *SecurityStore) Findings(ctx context.Context, query model.SecurityFindin
 
 func (s *SecurityStore) Summary(ctx context.Context) (model.SecuritySummary, error) {
 	var summary model.SecuritySummary
-	err := s.db.sql.QueryRowContext(ctx, `SELECT
+
+	err := s.db.read.QueryRowContext(ctx, `SELECT
 		COALESCE(SUM(CASE WHEN status IN ('open','acknowledged') THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status IN ('open','acknowledged') AND severity = 'critical' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status IN ('open','acknowledged') AND severity = 'high' THEN 1 ELSE 0 END), 0),
@@ -496,7 +502,8 @@ func (s *SecurityStore) Summary(ctx context.Context) (model.SecuritySummary, err
 	if err != nil {
 		return model.SecuritySummary{}, fmt.Errorf("summarizing security findings: %w", err)
 	}
-	rows, err := s.db.sql.QueryContext(ctx, `SELECT coverage_complete, last_recorded_at, effective_interval_secs
+
+	rows, err := s.db.read.QueryContext(ctx, `SELECT coverage_complete, last_recorded_at, effective_interval_secs
 		FROM collector_cursors WHERE source IN ('security_posture','security_process','security_diff')`)
 	if err != nil {
 		return model.SecuritySummary{}, fmt.Errorf("reading security coverage: %w", err)
@@ -546,7 +553,8 @@ func (s *SecurityStore) ActiveRiskCounts(ctx context.Context, containerIDs []str
 	if err != nil {
 		return nil, fmt.Errorf("encoding container risk ids: %w", err)
 	}
-	rows, err := s.db.sql.QueryContext(ctx, `SELECT container_id, severity, COUNT(*)
+
+	rows, err := s.db.read.QueryContext(ctx, `SELECT container_id, severity, COUNT(*)
 		FROM security_findings WHERE status IN ('open','acknowledged')
 		AND container_id IN (SELECT value FROM json_each(?))
 		GROUP BY container_id, severity`, string(encodedIDs))
@@ -575,7 +583,7 @@ func (s *SecurityStore) Finding(ctx context.Context, id int64) (model.SecurityFi
 
 // Policies lists every policy in deterministic scope order.
 func (s *SecurityStore) Policies(ctx context.Context) ([]model.SecurityPolicy, error) {
-	rows, err := s.db.sql.QueryContext(ctx, `SELECT id, scope, scope_id, policy_json, updated_by, updated_at
+	rows, err := s.db.read.QueryContext(ctx, `SELECT id, scope, scope_id, policy_json, updated_by, updated_at
 		FROM security_policies ORDER BY scope, scope_id, id`)
 	if err != nil {
 		return nil, fmt.Errorf("listing security policies: %w", err)
@@ -594,7 +602,7 @@ func (s *SecurityStore) Policies(ctx context.Context) ([]model.SecurityPolicy, e
 
 // SecurityPolicy returns one persisted policy by id.
 func (s *SecurityStore) SecurityPolicy(ctx context.Context, id int64) (model.SecurityPolicy, error) {
-	row := s.db.sql.QueryRowContext(ctx, `SELECT id, scope, scope_id, policy_json, updated_by, updated_at
+	row := s.db.read.QueryRowContext(ctx, `SELECT id, scope, scope_id, policy_json, updated_by, updated_at
 		FROM security_policies WHERE id = ?`, id)
 	return scanSecurityPolicy(row)
 }
@@ -792,7 +800,7 @@ func insertSecurityAudit(ctx context.Context, execer securityAuditExecer, actor,
 }
 
 func (s *SecurityStore) findingByID(ctx context.Context, id int64) (model.SecurityFinding, error) {
-	row := s.db.sql.QueryRowContext(ctx, `SELECT id, fingerprint, episode, container_id, rule_id, category, severity,
+	row := s.db.read.QueryRowContext(ctx, `SELECT id, fingerprint, episode, container_id, rule_id, category, severity,
 		confidence, status, occurrence_count, evidence_json, opened_at, last_seen_at,
 		acknowledged_at, acknowledged_by, resolved_at, resolved_by, suppressed_until,
 		suppression_reason, suppression_actor, notification_status FROM security_findings WHERE id = ?`, id)

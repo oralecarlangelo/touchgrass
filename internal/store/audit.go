@@ -62,7 +62,7 @@ func (s *AuditStore) List(
 		args = []any{serviceID, limit}
 	}
 
-	return queryRows(ctx, s.db.sql, rowQuery[model.Audit]{what: "audit", query: query, args: args, scan: scanAudit})
+	return queryRows(ctx, s.db.read, rowQuery[model.Audit]{what: "audit", query: query, args: args, scan: scanAudit})
 }
 
 // ListForServices returns the audit entries of the listed services
@@ -80,7 +80,7 @@ func (s *AuditStore) ListForServices(
 
 	clause, args := inClause(serviceIDs)
 
-	return queryRows(ctx, s.db.sql, rowQuery[model.Audit]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Audit]{
 		what: "audit",
 		query: `SELECT id, service_id, actor, action, result, detail, created_at
 		 FROM audit WHERE service_id IN ` + clause + ` ORDER BY id DESC LIMIT ?`,

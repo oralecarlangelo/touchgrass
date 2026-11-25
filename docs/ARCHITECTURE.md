@@ -164,6 +164,48 @@ SQLite file (`touchgrass.db`, volume-mounted). Schema areas:
   total SQLite budget plus per-class byte ceilings are enforced. Mandatory
   (BRD NFR-2), tested with a volume soak and online backup/recovery checks.
 
+### SQLite write model
+
+SQLite allows one writer at a time. `internal/store` makes that explicit
+instead of letting connections discover it as `SQLITE_BUSY`:
+
+- **One write connection, many read connections.** `store.Open` on a file
+  opens a single write connection and a separate read-only pool
+  (`query_only`). Store methods route by statement kind. Writers queue on the
+  Go connection pool, so a waiting write is bounded by its caller's context
+  and never fails with "database is locked" inside one process. In WAL mode
+  the readers never block the writer and the writer never blocks them, so a
+  slow scan cannot starve a page load.
+- **Transactions begin `IMMEDIATE`.** A deferred transaction that reads and
+  then writes is refused by SQLite without consulting `busy_timeout` when
+  another writer got in between; taking the write lock at `BEGIN` removes
+  that failure.
+- **No long write transactions.** Retention and cap trims delete in chunks of
+  at most 500 rows, each chunk its own transaction. The pool hands the write
+  connection to a waiting writer between chunks, so an interactive write (an
+  env edit, an audit row) waits for one chunk, not for a whole trim. A trim
+  that is cancelled keeps its progress and resumes on the next pass.
+  Maintenance and the per-service caps find the rows to delete on a read
+  connection first; a target with nothing to trim never takes the write lock.
+- **Collectors write a cycle at a time.** The sampler stores a cycle's
+  container metrics and fleet samples in one transaction each instead of one
+  write per container.
+- **A second process waits.** CLI subcommands (`env import|set|apply`,
+  `migrate`, `users reset-password`) open the same file while the server
+  runs. Across processes SQLite's own lock applies: every connection sets
+  `busy_timeout` to 30 seconds, and a command that still times out explains
+  that another touchgrass process holds the write lock.
+- **Pragmas.** `journal_mode=WAL`, `synchronous=NORMAL` (sync at checkpoints;
+  a power loss can drop the last commits but cannot corrupt the file),
+  `wal_autocheckpoint=1000` pages, `journal_size_limit=64 MiB` (the WAL file
+  shrinks back after a checkpoint), `temp_store=MEMORY`, `foreign_keys=ON`.
+- **Backups do not block writers.** `VACUUM INTO` runs on a connection of its
+  own and only reads the live database. The WAL cannot be reset while a
+  snapshot runs, so it grows for the length of the backup and shrinks after.
+
+A `:memory:` database (tests) keeps a single shared-cache pool for reads and
+writes; the model above applies to a database file.
+
 ## All-state inventory and container security
 
 The authoritative inventory lists every Docker lifecycle state and stores

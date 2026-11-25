@@ -98,7 +98,7 @@ func (s *IssueRuleStore) Delete(ctx context.Context, id int64) error {
 
 // list runs a rule query with args.
 func (s *IssueRuleStore) list(ctx context.Context, query string, args ...any) ([]model.IssueRule, error) {
-	rows, err := s.db.sql.QueryContext(ctx, query, args...)
+	rows, err := s.db.read.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying issue rules: %w", err)
 	}

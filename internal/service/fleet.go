@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
@@ -246,51 +245,38 @@ func (s *Sampler) sampleFleet(
 		}
 	}
 
-	var group sync.WaitGroup
+	samples := make([]model.ContainerSample, 0, len(containers))
 
 	for _, c := range containers {
 		stats, ok := statsByID[c.ID]
 		if !ok {
 			continue
 		}
-		group.Go(func() {
-			s.recordFleetSample(ctx, c, owners[c.ID], stats, now)
+
+		samples = append(samples, model.ContainerSample{
+			SampledAt:     now,
+			ContainerID:   c.ID,
+			ContainerName: c.Name,
+			Project:       c.Labels[docker.LabelComposeProject],
+			Managed:       owners[c.ID] != "",
+			ServiceID:     owners[c.ID],
+			State:         c.State,
+			CPUPercent:    stats.CPUPercent,
+			MemBytes:      stats.MemBytes,
+			MemLimit:      stats.MemLimit,
+			Restarts:      stats.Restarts,
 		})
 	}
 
-	group.Wait()
+	// Managed rows duplicate the metrics table deliberately so the fleet view
+	// is one query. One transaction per cycle keeps the write lock short.
+	if err := s.fleet.InsertContainers(ctx, samples); err != nil {
+		s.logger.Warn("fleet insert failed", "samples", len(samples), "error", err)
+	}
+
 	s.sampleHost(ctx, now)
 
 	return nil
-}
-
-// recordFleetSample records one already-collected container's fleet row. Managed
-// rows duplicate the metrics table deliberately so the fleet view is
-// one query.
-func (s *Sampler) recordFleetSample(
-	ctx context.Context,
-	c docker.Container,
-	serviceID string,
-	stats docker.Stats,
-	now time.Time,
-) {
-	sample := model.ContainerSample{
-		SampledAt:     now,
-		ContainerID:   c.ID,
-		ContainerName: c.Name,
-		Project:       c.Labels[docker.LabelComposeProject],
-		Managed:       serviceID != "",
-		ServiceID:     serviceID,
-		State:         c.State,
-		CPUPercent:    stats.CPUPercent,
-		MemBytes:      stats.MemBytes,
-		MemLimit:      stats.MemLimit,
-		Restarts:      stats.Restarts,
-	}
-
-	if err := s.fleet.InsertContainer(ctx, sample); err != nil {
-		s.logger.Warn("fleet insert failed", "container", c.Name, "error", err)
-	}
 }
 
 // sampleHost records one host row reusing the system snapshot helpers.

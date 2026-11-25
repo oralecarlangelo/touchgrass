@@ -31,7 +31,7 @@ func (s *RuleStore) AllEnabled(ctx context.Context) ([]model.AlertRule, error) {
 
 // ListByService returns every rule for one service.
 func (s *RuleStore) ListByService(ctx context.Context, serviceID string) ([]model.AlertRule, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT id, service_id, metric, threshold, duration_secs, enabled, created_at
 		 FROM alert_rules WHERE service_id = ? ORDER BY id`, serviceID)
 	if err != nil {
@@ -75,7 +75,7 @@ func (s *RuleStore) Create(ctx context.Context, create model.RuleCreate) (model.
 
 // Get returns one rule. An unknown id reports ErrRuleNotFound.
 func (s *RuleStore) Get(ctx context.Context, id int64) (model.AlertRule, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT id, service_id, metric, threshold, duration_secs, enabled, created_at
 		 FROM alert_rules WHERE id = ?`, id)
 	if err != nil {
@@ -119,7 +119,7 @@ func (s *RuleStore) Delete(ctx context.Context, id int64) error {
 
 // query runs a parameterless rule select.
 func (s *RuleStore) query(ctx context.Context, query string) ([]model.AlertRule, error) {
-	rows, err := s.db.sql.QueryContext(ctx, query)
+	rows, err := s.db.read.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("querying alert rules: %w", err)
 	}

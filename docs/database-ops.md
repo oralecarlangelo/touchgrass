@@ -14,6 +14,8 @@ container, so touchgrass holds no database credentials.
 - **Redis**: ping + used memory + version (hidden when
   `TOUCHGRASS_REDIS_CONTAINER` is empty).
 - **SQLite**: touchgrass's own database file size + integrity verdict.
+  `PRAGMA integrity_check` reads the whole file, so the verdict is cached
+  for one hour and concurrent requests share one check; the size is live.
 
 The Performance workspace reads additional bounded numeric PostgreSQL and
 Redis statistics when `TOUCHGRASS_PERFORMANCE_SERVICE_ID` is set. These reads
@@ -111,6 +113,23 @@ flow above. Online snapshots are written under
 checkpoints and enforces `TOUCHGRASS_SQLITE_MAX_BYTES`. Automatic snapshots
 retain the newest `TOUCHGRASS_SQLITE_BACKUP_KEEP` files (default 14); the
 Compose deployment writes them inside the persistent `/data` volume.
+
+### Write contention
+
+Inside one server process a write never reports `database is locked`: writes
+queue on a single connection, retention deletes in 500-row chunks, and reads
+use their own pool (see "SQLite write model" in `docs/ARCHITECTURE.md`). The
+only lock wait left is between processes. A CLI subcommand run beside the
+server (`touchgrass env import|set|apply`, `migrate up`,
+`users reset-password`) waits up to 30 seconds for the write lock and then
+fails with "another touchgrass process held the SQLite write lock"; retry it,
+and if it repeats look for a long-running `migrate` or a second server on the
+same file.
+
+The WAL is checkpointed every ~4 MiB and its file is truncated back to at most
+64 MiB once a checkpoint completes. A WAL that stays larger than that means a
+reader has been open for a long time (an online snapshot, an integrity check);
+it shrinks after that reader finishes.
 
 On corruption or disk failure, stop Touch Grass, preserve the DB plus `-wal`
 and `-shm` files together, copy the newest snapshot to a new path, and require

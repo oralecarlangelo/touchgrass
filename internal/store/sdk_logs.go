@@ -105,7 +105,7 @@ func (s *SDKLogStore) Search(ctx context.Context, filter SDKLogFilter) ([]model.
 
 	extra, extraArgs := sdkLogFilterClauses(filter)
 
-	return queryRows(ctx, s.db.sql, rowQuery[model.SDKLog]{
+	return queryRows(ctx, s.db.read, rowQuery[model.SDKLog]{
 		what: "sdk logs",
 		query: `SELECT id, service_id, ts, level, severity, message, attributes, trace_id, span_id, release, created_at
 		 FROM sdk_logs
@@ -118,18 +118,7 @@ func (s *SDKLogStore) Search(ctx context.Context, filter SDKLogFilter) ([]model.
 
 // TrimBefore deletes rows emitted before cutoff and reports the count.
 func (s *SDKLogStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx,
-		"DELETE FROM sdk_logs WHERE ts < ?", formatFixedTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming sdk logs: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed sdk logs: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: tableSDKLogs, column: "ts", what: "sdk logs"}, formatFixedTime(cutoff))
 }
 
 // sdkLogFilterClauses renders optional trace/level/message predicates.

@@ -106,8 +106,19 @@ and the result lands in deploy history.
 ## The console shows stale data
 
 Metrics sample every 30s, logs tail every 5s. If the gap is longer
-than that, check the server log: Docker socket errors and SQLite
-locks announce themselves loudly.
+than that, check the server log: Docker socket errors announce
+themselves loudly.
+
+## A command says the database is busy
+
+The server queues its own writes, so it does not report `database is
+locked`. A CLI command run beside it (`touchgrass env import`, `env
+set`, `env apply`, `migrate up`, `users reset-password`) is a second
+process on the same file: it waits up to 30 seconds for the write lock
+and then fails with "another touchgrass process held the SQLite write
+lock". Run it again. If it keeps failing, something is holding the
+lock for a long time: a migration still running, or a second server
+started on the same `TOUCHGRASS_DB`.
 
 ## Security shows partial coverage or stale collectors
 

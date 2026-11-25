@@ -239,6 +239,12 @@ They need `TOUCHGRASS_DB` and the key variable in the environment and
 run against the database directly; stop nothing, but avoid running
 `apply` from two places at once.
 
+The server can stay up while they run. A command is a second process
+on the same SQLite file, so each of its writes waits for the server's
+current write to finish (up to 30 seconds). If one still fails with
+"another touchgrass process held the SQLite write lock", run it again;
+see [Troubleshooting](/troubleshooting) when it keeps happening.
+
 ## The Environment tab
 
 Open a service and pick **Environment**. The fleet-level **Operations →

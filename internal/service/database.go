@@ -64,6 +64,16 @@ type CommandRunner func(
 	stdout io.Writer,
 ) error
 
+// sqliteIntegrityTTL is how long one integrity verdict is served. The check
+// reads the whole database file, so running it on every page load turns a
+// multi-gigabyte database into minutes of CPU per request.
+const sqliteIntegrityTTL = time.Hour
+
+// SQLiteProber reports the embedded database's version and integrity.
+type SQLiteProber interface {
+	SQLiteHealth(ctx context.Context) (model.SQLiteHealth, error)
+}
+
 // DatabaseConfig wires a Database.
 type DatabaseConfig struct {
 	Container      string
@@ -75,7 +85,7 @@ type DatabaseConfig struct {
 	DBPath         string
 	Jobs           *store.DBJobStore
 	Audit          *store.AuditStore
-	SQLite         *store.DB
+	SQLite         SQLiteProber
 	Run            CommandRunner
 	Logger         *slog.Logger
 }
@@ -93,11 +103,16 @@ type Database struct {
 	dbPath         string
 	jobs           *store.DBJobStore
 	audits         *store.AuditStore
-	sqlite         *store.DB
+	sqlite         SQLiteProber
 	run            CommandRunner
 	logger         *slog.Logger
 	mutex          sync.Mutex
 	busy           bool
+	// healthMu serializes integrity checks and guards the cached verdict.
+	healthMu  sync.Mutex
+	health    model.SQLiteHealth
+	healthAt  time.Time
+	healthNow func() time.Time
 }
 
 // NewDatabase builds a Database. A nil Run defaults to execCommand,
@@ -126,6 +141,7 @@ func NewDatabase(cfg DatabaseConfig) *Database {
 		jobs:           cfg.Jobs,
 		audits:         cfg.Audit,
 		sqlite:         cfg.SQLite,
+		healthNow:      time.Now,
 		run:            run,
 		logger:         cfg.Logger,
 	}
@@ -381,7 +397,7 @@ func (d *Database) sqliteHealth(ctx context.Context) model.Database {
 	size := databaseBytes(d.dbPath)
 	db.SizeBytes = &size
 
-	health, err := d.sqlite.SQLiteHealth(ctx)
+	health, err := d.cachedSQLiteHealth(ctx)
 	if err != nil {
 		d.logger.Debug("sqlite health probe failed", "error", err)
 
@@ -393,6 +409,28 @@ func (d *Database) sqliteHealth(ctx context.Context) model.Database {
 	db.Integrity = &health.Integrity
 
 	return db
+}
+
+// cachedSQLiteHealth returns the integrity verdict, running the check at most
+// once per sqliteIntegrityTTL. Concurrent callers wait for the one check in
+// flight instead of each starting their own. Failures are not cached.
+func (d *Database) cachedSQLiteHealth(ctx context.Context) (model.SQLiteHealth, error) {
+	d.healthMu.Lock()
+	defer d.healthMu.Unlock()
+
+	if !d.healthAt.IsZero() && d.healthNow().Sub(d.healthAt) < sqliteIntegrityTTL {
+		return d.health, nil
+	}
+
+	health, err := d.sqlite.SQLiteHealth(ctx)
+	if err != nil {
+		return model.SQLiteHealth{}, fmt.Errorf("probing sqlite health: %w", err)
+	}
+
+	d.health = health
+	d.healthAt = d.healthNow()
+
+	return health, nil
 }
 
 // lastBackupAt returns the newest backup mtime, or nil when empty.

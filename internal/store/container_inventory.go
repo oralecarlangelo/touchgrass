@@ -158,7 +158,7 @@ func upsertContainer(ctx context.Context, tx *sql.Tx, instance model.ContainerIn
 
 // Get returns one durable container instance by Docker ID.
 func (s *ContainerStore) Get(ctx context.Context, id string) (model.ContainerInstance, error) {
-	row := s.db.sql.QueryRowContext(ctx, "SELECT "+containerColumns+" FROM container_instances WHERE container_id = ?", id)
+	row := s.db.read.QueryRowContext(ctx, "SELECT "+containerColumns+" FROM container_instances WHERE container_id = ?", id)
 	instance, err := scanContainer(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.ContainerInstance{}, fmt.Errorf("%w: %q", ErrContainerNotFound, id)
@@ -196,7 +196,7 @@ func (s *ContainerStore) List(ctx context.Context, query model.ContainerQuery) (
 	statement += " ORDER BY " + order + " LIMIT ? OFFSET ?" //nolint:gosec // order is selected from containerOrder's fixed allowlist.
 	args = append(args, containerLimit(query.Limit), max(query.Offset, 0))
 
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing containers: %w", err)
 	}
@@ -218,7 +218,7 @@ func (s *ContainerStore) List(ctx context.Context, query model.ContainerQuery) (
 
 // ListAllRunning reads all current running identities in one SQLite snapshot.
 func (s *ContainerStore) ListAllRunning(ctx context.Context) ([]model.ContainerInstance, error) {
-	rows, err := s.db.sql.QueryContext(ctx, "SELECT "+containerColumns+
+	rows, err := s.db.read.QueryContext(ctx, "SELECT "+containerColumns+
 		" FROM container_instances WHERE current = 1 AND present = 1 AND state = 'running' ORDER BY name, container_id")
 	if err != nil {
 		return nil, fmt.Errorf("listing running containers: %w", err)
@@ -241,7 +241,7 @@ func (s *ContainerStore) ListAllRunning(ctx context.Context) ([]model.ContainerI
 // ListAllCurrent returns every current identity in one SQLite snapshot for
 // classification finding evaluation, including absent expected containers.
 func (s *ContainerStore) ListAllCurrent(ctx context.Context) ([]model.ContainerInstance, error) {
-	rows, err := s.db.sql.QueryContext(ctx, "SELECT "+containerColumns+
+	rows, err := s.db.read.QueryContext(ctx, "SELECT "+containerColumns+
 		" FROM container_instances WHERE current = 1 ORDER BY name, container_id")
 	if err != nil {
 		return nil, fmt.Errorf("listing current containers: %w", err)
@@ -264,7 +264,7 @@ func (s *ContainerStore) ListAllCurrent(ctx context.Context) ([]model.ContainerI
 // ListClassificationCandidates includes current rows plus retired identities
 // with active inventory findings so replacement can emit a negative recovery.
 func (s *ContainerStore) ListClassificationCandidates(ctx context.Context) ([]model.ContainerInstance, error) {
-	rows, err := s.db.sql.QueryContext(ctx, "SELECT "+containerColumns+` FROM container_instances
+	rows, err := s.db.read.QueryContext(ctx, "SELECT "+containerColumns+` FROM container_instances
 		WHERE current = 1 OR container_id IN (
 			SELECT DISTINCT container_id FROM security_findings
 			WHERE status IN ('open','acknowledged','suppressed')
@@ -295,7 +295,8 @@ func (s *ContainerStore) Summary(ctx context.Context) (model.InventorySummary, e
 		reconciledAt sql.NullString
 		complete     int
 	)
-	err := s.db.sql.QueryRowContext(ctx, `SELECT reconciled_at, complete,
+
+	err := s.db.read.QueryRowContext(ctx, `SELECT reconciled_at, complete,
 		last_error_category, observed_count,
 		(SELECT COUNT(*) FROM container_instances WHERE current = 1),
 		(SELECT COUNT(*) FROM container_instances WHERE current = 1 AND present = 1)

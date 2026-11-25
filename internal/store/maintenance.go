@@ -32,7 +32,7 @@ func (s *CursorStore) Get(ctx context.Context, source string) (model.CollectorCu
 		updatedRaw                string
 	)
 
-	err := s.db.sql.QueryRowContext(ctx, `SELECT source, identity, offset, last_recorded_at,
+	err := s.db.read.QueryRowContext(ctx, `SELECT source, identity, offset, last_recorded_at,
 		last_success_at, last_error, dropped_records, coverage_complete, effective_interval_secs, updated_at
 		FROM collector_cursors WHERE source = ?`, source).Scan(
 		&cursor.Source, &cursor.Identity, &cursor.Offset, &lastRecorded,
@@ -335,68 +335,135 @@ func normalizeMaintenancePolicy(policy model.MaintenancePolicy) model.Maintenanc
 	return policy
 }
 
+// deleteBefore removes at most limit rows of target older than cutoff, oldest
+// first. The rows are picked on a read connection, so a target with nothing
+// to trim never takes the write lock and no scan runs while it is held.
 func (s *MaintenanceStore) deleteBefore(
 	ctx context.Context,
 	target retentionTarget,
 	cutoff time.Time,
 	limit int,
 ) (int64, error) {
-	predicate := ""
+	guard := target.timestamp + " < ?"
 	if target.predicate != "" {
-		predicate = " AND " + target.predicate
+		guard += " AND " + target.predicate
 	}
-	key := target.key
-	if key == "" {
-		key = "id"
-	}
+
+	key := target.keyColumn()
 	//nolint:gosec // targets are fixed internal metadata, never request input.
-	query := fmt.Sprintf(`DELETE FROM %s WHERE %s IN (
-		SELECT %s FROM %s WHERE %s < ?%s ORDER BY %s LIMIT ?
-	)`, target.table, key, key, target.table, target.timestamp, predicate, key)
-	res, err := s.db.sql.ExecContext(ctx, query, formatFixedTime(cutoff), limit)
+	query := fmt.Sprintf(`SELECT %s FROM %s WHERE %s ORDER BY %s, %s LIMIT ?`,
+		key, target.table, guard, target.timestamp, key)
+	stamp := formatFixedTime(cutoff)
+
+	keys, err := s.selectKeys(ctx, target, query, stamp, limit)
 	if err != nil {
-		return 0, fmt.Errorf("trimming %s: %w", target.table, err)
+		return 0, err
 	}
 
-	deleted, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed %s: %w", target.table, err)
-	}
-
-	return deleted, nil
+	return s.deleteKeys(ctx, target, keys, guard, stamp)
 }
 
+// deleteOldest removes at most limit of target's oldest rows for a storage
+// class that is over its byte budget.
 func (s *MaintenanceStore) deleteOldest(ctx context.Context, target retentionTarget, limit int) (int64, error) {
-	predicate := ""
+	where := ""
 	if target.predicate != "" {
-		predicate = " WHERE " + target.predicate
-	}
-	key := target.key
-	if key == "" {
-		key = "id"
-	}
-	//nolint:gosec // targets are fixed internal metadata, never request input.
-	query := fmt.Sprintf(`DELETE FROM %s WHERE %s IN (
-		SELECT %s FROM %s%s ORDER BY %s, %s LIMIT ?
-	)`, target.table, key, key, target.table, predicate, target.timestamp, key)
-	res, err := s.db.sql.ExecContext(ctx, query, limit)
-	if err != nil {
-		return 0, fmt.Errorf("trimming over-budget %s: %w", target.table, err)
-	}
-	deleted, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting over-budget %s rows: %w", target.table, err)
+		where = " WHERE " + target.predicate
 	}
 
-	return deleted, nil
+	key := target.keyColumn()
+	//nolint:gosec // targets are fixed internal metadata, never request input.
+	query := fmt.Sprintf(`SELECT %s FROM %s%s ORDER BY %s, %s LIMIT ?`,
+		key, target.table, where, target.timestamp, key)
+
+	keys, err := s.selectKeys(ctx, target, query, limit)
+	if err != nil {
+		return 0, err
+	}
+
+	return s.deleteKeys(ctx, target, keys, target.predicate)
+}
+
+// selectKeys reads the row keys one retention pass will delete.
+func (s *MaintenanceStore) selectKeys(
+	ctx context.Context,
+	target retentionTarget,
+	query string,
+	args ...any,
+) ([]int64, error) {
+	return queryRows(ctx, s.db.read, rowQuery[int64]{
+		what: target.table + " retention keys", query: query, args: args,
+		scan: func(row scanner) (int64, error) {
+			var key int64
+			if err := row.Scan(&key); err != nil {
+				return 0, fmt.Errorf("scanning %s retention key: %w", target.table, err)
+			}
+
+			return key, nil
+		},
+	})
+}
+
+// deleteKeys deletes the picked rows by key in short transactions of at most
+// trimChunkRows rows. guard is re-checked inside each DELETE because a row
+// can change between the read that picked it and the write that removes it.
+func (s *MaintenanceStore) deleteKeys(
+	ctx context.Context,
+	target retentionTarget,
+	keys []int64,
+	guard string,
+	guardArgs ...any,
+) (int64, error) {
+	var total int64
+
+	for chunk := range slices.Chunk(keys, trimChunkRows) {
+		args := make([]any, 0, len(chunk)+len(guardArgs))
+		for _, key := range chunk {
+			args = append(args, key)
+		}
+
+		args = append(args, guardArgs...)
+
+		condition := ""
+		if guard != "" {
+			condition = " AND " + guard
+		}
+		//nolint:gosec // targets are fixed internal metadata, never request input.
+		statement := fmt.Sprintf(`DELETE FROM %s WHERE %s IN (%s)%s`,
+			target.table, target.keyColumn(), placeholders(len(chunk)), condition)
+
+		res, err := s.db.sql.ExecContext(ctx, statement, args...)
+		if err != nil {
+			return total, fmt.Errorf("trimming %s: %w", target.table, err)
+		}
+
+		deleted, err := res.RowsAffected()
+		if err != nil {
+			return total, fmt.Errorf("counting trimmed %s: %w", target.table, err)
+		}
+
+		total += deleted
+	}
+
+	return total, nil
+}
+
+// keyColumn names the integer key retention deletes by.
+func (t retentionTarget) keyColumn() string {
+	if t.key == "" {
+		return "id"
+	}
+
+	return t.key
 }
 
 func (s *MaintenanceStore) databaseBytes(ctx context.Context) (int64, error) {
 	var pageCount, pageSize int64
-	if err := s.db.sql.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount); err != nil {
+	if err := s.db.read.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount); err != nil {
 		return 0, fmt.Errorf("reading sqlite page count: %w", err)
 	}
-	if err := s.db.sql.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+
+	if err := s.db.read.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
 		return 0, fmt.Errorf("reading sqlite page size: %w", err)
 	}
 
@@ -438,7 +505,7 @@ func (s *MaintenanceStore) classBytes(ctx context.Context) (map[string]int64, er
 	result := make(map[string]int64, len(queries))
 	for name, query := range queries {
 		var bytes int64
-		if err := s.db.sql.QueryRowContext(ctx, query).Scan(&bytes); err != nil {
+		if err := s.db.read.QueryRowContext(ctx, query).Scan(&bytes); err != nil {
 			return nil, fmt.Errorf("measuring %s storage class: %w", name, err)
 		}
 		result[name] = bytes

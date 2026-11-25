@@ -96,7 +96,7 @@ func (s *UserStore) ByUsername(ctx context.Context, username string) (model.User
 
 // one reads a single user and, for a scoped one, its grants.
 func (s *UserStore) one(ctx context.Context, query string, arg any) (model.User, error) {
-	user, err := scanUser(s.db.sql.QueryRowContext(ctx, query, arg))
+	user, err := scanUser(s.db.read.QueryRowContext(ctx, query, arg))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.User{}, ErrUserNotFound
@@ -109,7 +109,7 @@ func (s *UserStore) one(ctx context.Context, query string, arg any) (model.User,
 		return user, nil
 	}
 
-	services, err := queryRows(ctx, s.db.sql, rowQuery[string]{
+	services, err := queryRows(ctx, s.db.read, rowQuery[string]{
 		what:  "user services",
 		query: `SELECT service_id FROM user_services WHERE user_id = ? ORDER BY service_id`,
 		args:  []any{user.ID},
@@ -126,7 +126,7 @@ func (s *UserStore) one(ctx context.Context, query string, arg any) (model.User,
 
 // List returns users oldest first, bounded by limit, with their grants.
 func (s *UserStore) List(ctx context.Context, limit int) ([]model.User, error) {
-	users, err := queryRows(ctx, s.db.sql, rowQuery[model.User]{
+	users, err := queryRows(ctx, s.db.read, rowQuery[model.User]{
 		what:  "users",
 		query: `SELECT ` + userColumns + ` FROM users ORDER BY id ASC LIMIT ?`,
 		args:  []any{limit},
@@ -136,7 +136,7 @@ func (s *UserStore) List(ctx context.Context, limit int) ([]model.User, error) {
 		return nil, err
 	}
 
-	grants, err := queryRows(ctx, s.db.sql, rowQuery[userGrant]{
+	grants, err := queryRows(ctx, s.db.read, rowQuery[userGrant]{
 		what:  "user services",
 		query: `SELECT user_id, service_id FROM user_services ORDER BY user_id, service_id`,
 		args:  []any{},
@@ -249,7 +249,7 @@ func (s *UserStore) MissingServices(ctx context.Context, serviceIDs []string) ([
 
 	clause, args := inClause(serviceIDs)
 
-	known, err := queryRows(ctx, s.db.sql, rowQuery[string]{
+	known, err := queryRows(ctx, s.db.read, rowQuery[string]{
 		what:  "services",
 		query: `SELECT id FROM services WHERE id IN ` + clause,
 		args:  args,
@@ -294,7 +294,7 @@ func (s *UserStore) Delete(ctx context.Context, id int64) error {
 func (s *UserStore) CountEnabledAdmins(ctx context.Context) (int, error) {
 	var count int
 
-	if err := s.db.sql.QueryRowContext(ctx,
+	if err := s.db.read.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled_at IS NULL`,
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("counting enabled admins: %w", err)

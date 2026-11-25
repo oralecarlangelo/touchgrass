@@ -80,7 +80,7 @@ func insertOccurrenceRow(
 func (s *OccurrenceStore) CountByService(ctx context.Context, serviceID string) (int64, error) {
 	var count int64
 
-	if err := s.db.sql.QueryRowContext(ctx,
+	if err := s.db.read.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM occurrences WHERE service_id = ?", serviceID,
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("counting occurrences: %w", err)
@@ -92,38 +92,12 @@ func (s *OccurrenceStore) CountByService(ctx context.Context, serviceID string) 
 // TrimBeyondCap deletes a service's oldest rows past maximum, newest kept,
 // and reports the trimmed count.
 func (s *OccurrenceStore) TrimBeyondCap(ctx context.Context, serviceID string, maximum int) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx,
-		`DELETE FROM occurrences WHERE service_id = ? AND id NOT IN (
-		   SELECT id FROM occurrences WHERE service_id = ? ORDER BY id DESC LIMIT ?
-		 )`,
-		serviceID, serviceID, maximum,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("trimming occurrences beyond cap: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed occurrences: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimBeyondCap(ctx, ageTrim{table: tableOccurrences, what: "occurrences beyond cap"}, serviceID, maximum)
 }
 
 // TrimBefore deletes occurrences created before cutoff and reports the count.
 func (s *OccurrenceStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx,
-		"DELETE FROM occurrences WHERE created_at < ?", formatTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming occurrences: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed occurrences: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: tableOccurrences, column: columnCreatedAt}, formatTime(cutoff))
 }
 
 // ListByService returns occurrences newest first, bounded by limit.
@@ -132,7 +106,7 @@ func (s *OccurrenceStore) ListByService(
 	serviceID string,
 	limit int,
 ) ([]model.Occurrence, error) {
-	return queryRows(ctx, s.db.sql, rowQuery[model.Occurrence]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Occurrence]{
 		what: "occurrences",
 		query: `SELECT id, service_id, type, message, stack, breadcrumbs, release, issue_id, created_at
 		 FROM occurrences WHERE service_id = ? ORDER BY id DESC LIMIT ?`,
@@ -147,7 +121,7 @@ func (s *OccurrenceStore) ListByIssue(
 	issueID int64,
 	limit int,
 ) ([]model.Occurrence, error) {
-	return queryRows(ctx, s.db.sql, rowQuery[model.Occurrence]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Occurrence]{
 		what: "issue occurrences",
 		query: `SELECT id, service_id, type, message, stack, breadcrumbs, release, issue_id, created_at
 		 FROM occurrences WHERE issue_id = ? ORDER BY id DESC LIMIT ?`,
@@ -164,7 +138,7 @@ func (s *OccurrenceStore) CountByIssueSince(
 ) (int64, error) {
 	var count int64
 
-	if err := s.db.sql.QueryRowContext(ctx,
+	if err := s.db.read.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM occurrences WHERE issue_id = ? AND created_at >= ?",
 		issueID, formatTime(since),
 	).Scan(&count); err != nil {

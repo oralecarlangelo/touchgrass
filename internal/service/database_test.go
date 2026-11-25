@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -410,6 +411,81 @@ func TestDatabasesSQLite(t *testing.T) {
 
 	if sqlite.Integrity == nil || *sqlite.Integrity != "ok" {
 		t.Errorf("sqlite integrity = %v, want ok", sqlite.Integrity)
+	}
+}
+
+// countingSQLiteProber counts integrity checks and returns a fixed verdict.
+type countingSQLiteProber struct {
+	calls atomic.Int64
+	err   error
+}
+
+func (p *countingSQLiteProber) SQLiteHealth(context.Context) (model.SQLiteHealth, error) {
+	p.calls.Add(1)
+
+	if p.err != nil {
+		return model.SQLiteHealth{}, p.err
+	}
+
+	return model.SQLiteHealth{Version: "3.0.0", Integrity: "ok"}, nil
+}
+
+func TestDatabasesSQLiteIntegrityIsCached(t *testing.T) {
+	t.Parallel()
+
+	prober := &countingSQLiteProber{}
+	runner := &fakeRunner{handler: cannedPostgres([]byte("dump"))}
+	svc, _, _ := testDatabase(t, runner, func(cfg *DatabaseConfig) { cfg.SQLite = prober })
+
+	now := time.Now()
+	svc.healthNow = func() time.Time { return now }
+
+	for range 3 {
+		databases, err := svc.Databases(context.Background())
+		if err != nil {
+			t.Fatalf("Databases() error = %v, want nil", err)
+		}
+
+		if sqlite := databases[2]; sqlite.Integrity == nil || *sqlite.Integrity != "ok" {
+			t.Fatalf("sqlite integrity = %v, want ok", sqlite.Integrity)
+		}
+	}
+
+	if calls := prober.calls.Load(); calls != 1 {
+		t.Errorf("integrity checks within the TTL = %d, want 1", calls)
+	}
+
+	now = now.Add(sqliteIntegrityTTL)
+
+	if _, err := svc.Databases(context.Background()); err != nil {
+		t.Fatalf("Databases() error = %v, want nil", err)
+	}
+
+	if calls := prober.calls.Load(); calls != 2 {
+		t.Errorf("integrity checks after the TTL = %d, want 2", calls)
+	}
+}
+
+func TestDatabasesSQLiteFailureIsNotCached(t *testing.T) {
+	t.Parallel()
+
+	prober := &countingSQLiteProber{err: errors.New("disk I/O error")}
+	runner := &fakeRunner{handler: cannedPostgres([]byte("dump"))}
+	svc, _, _ := testDatabase(t, runner, func(cfg *DatabaseConfig) { cfg.SQLite = prober })
+
+	for range 2 {
+		databases, err := svc.Databases(context.Background())
+		if err != nil {
+			t.Fatalf("Databases() error = %v, want nil", err)
+		}
+
+		if databases[2].Reachable {
+			t.Fatal("sqlite reachable = true, want false while the probe fails")
+		}
+	}
+
+	if calls := prober.calls.Load(); calls != 2 {
+		t.Errorf("probes while failing = %d, want 2 (a failure is retried)", calls)
 	}
 }
 

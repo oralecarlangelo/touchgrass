@@ -71,7 +71,7 @@ func (s *NotificationStore) List(
 		args = []any{serviceID, limit}
 	}
 
-	return queryRows(ctx, s.db.sql, rowQuery[model.Notification]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Notification]{
 		what: notificationsWhat, query: query, args: args, scan: scanNotification,
 	})
 }
@@ -90,7 +90,7 @@ func (s *NotificationStore) ListForServices(
 
 	clause, args := inClause(serviceIDs)
 
-	return queryRows(ctx, s.db.sql, rowQuery[model.Notification]{
+	return queryRows(ctx, s.db.read, rowQuery[model.Notification]{
 		what: notificationsWhat,
 		query: `SELECT id, service_id, kind, title, body, created_at, read_at
 		 FROM notifications WHERE service_id IN ` + clause + ` ORDER BY id DESC LIMIT ?`,
@@ -217,7 +217,7 @@ func (s *NotificationStore) CountUnread(ctx context.Context, serviceID string) (
 
 	var count int64
 
-	if err := s.db.sql.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+	if err := s.db.read.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("counting unread notifications: %w", err)
 	}
 
@@ -254,7 +254,7 @@ func (s *NotificationStore) CountUnreadForServices(ctx context.Context, serviceI
 
 	var count int64
 
-	if err := s.db.sql.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+	if err := s.db.read.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("counting unread notifications: %w", err)
 	}
 
@@ -263,19 +263,5 @@ func (s *NotificationStore) CountUnreadForServices(ctx context.Context, serviceI
 
 // TrimBefore deletes notifications older than cutoff and reports the count.
 func (s *NotificationStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(
-		ctx,
-		"DELETE FROM notifications WHERE created_at < ?",
-		formatTime(cutoff),
-	)
-	if err != nil {
-		return 0, fmt.Errorf("trimming notifications: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed notifications: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: tableNotifications, column: columnCreatedAt}, formatTime(cutoff))
 }

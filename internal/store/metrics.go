@@ -21,20 +21,43 @@ func NewMetricStore(db *DB) *MetricStore {
 
 // Insert records one sample.
 func (s *MetricStore) Insert(ctx context.Context, metric model.Metric) error {
-	if metric.SampledAt.IsZero() {
-		metric.SampledAt = time.Now()
+	return s.InsertBatch(ctx, []model.Metric{metric})
+}
+
+// InsertBatch records one collection cycle's samples in a single transaction,
+// so a cycle takes the write connection once instead of once per container.
+func (s *MetricStore) InsertBatch(ctx context.Context, metrics []model.Metric) error {
+	if len(metrics) == 0 {
+		return nil
 	}
 
-	_, err := s.db.sql.ExecContext(ctx,
-		`INSERT INTO metrics (service_id, container_name, sampled_at, cpu_percent,
-		  mem_bytes, mem_limit, disk_bytes, restarts, uptime_secs)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		metric.ServiceID, metric.ContainerName, formatTime(metric.SampledAt),
-		metric.CPUPercent, metric.MemBytes, metric.MemLimit,
-		metric.DiskBytes, metric.Restarts, metric.UptimeSecs,
-	)
+	tx, err := s.db.sql.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("inserting metric: %w", err)
+		return fmt.Errorf("starting metric batch: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+
+	for _, metric := range metrics {
+		if metric.SampledAt.IsZero() {
+			metric.SampledAt = now
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO metrics (service_id, container_name, sampled_at, cpu_percent,
+			  mem_bytes, mem_limit, disk_bytes, restarts, uptime_secs)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			metric.ServiceID, metric.ContainerName, formatTime(metric.SampledAt),
+			metric.CPUPercent, metric.MemBytes, metric.MemLimit,
+			metric.DiskBytes, metric.Restarts, metric.UptimeSecs,
+		); err != nil {
+			return fmt.Errorf("inserting metric: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing metric batch: %w", err)
 	}
 
 	return nil
@@ -63,7 +86,7 @@ func (s *MetricStore) ListByService(
 
 	args = append(args, limit)
 
-	rows, err := s.db.sql.QueryContext(ctx, query, args...)
+	rows, err := s.db.read.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying metrics: %w", err)
 	}
@@ -91,7 +114,8 @@ func (s *MetricStore) ListRange(ctx context.Context, query model.PerformanceRang
 		limit = 10000
 	}
 	args = append(args, limit)
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying metric range: %w", err)
 	}
@@ -101,7 +125,7 @@ func (s *MetricStore) ListRange(ctx context.Context, query model.PerformanceRang
 
 // LatestByService returns the newest sample per container for alerting.
 func (s *MetricStore) LatestByService(ctx context.Context, serviceID string) ([]model.Metric, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT id, service_id, container_name, sampled_at, cpu_percent,
 		  mem_bytes, mem_limit, disk_bytes, restarts, uptime_secs
 		 FROM metrics WHERE id IN (
@@ -153,15 +177,5 @@ func collectMetrics(rows *sql.Rows) ([]model.Metric, error) {
 
 // TrimBefore deletes samples older than cutoff and reports the count.
 func (s *MetricStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx, "DELETE FROM metrics WHERE sampled_at < ?", formatTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming metrics: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed metrics: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: tableMetrics, column: columnSampledAt}, formatTime(cutoff))
 }

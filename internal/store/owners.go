@@ -47,7 +47,7 @@ func (s *OwnerStore) ServiceOf(ctx context.Context, kind model.ResourceKind, id 
 
 	var serviceID sql.NullString
 
-	if err := s.db.sql.QueryRowContext(ctx, query, id).Scan(&serviceID); err != nil {
+	if err := s.db.read.QueryRowContext(ctx, query, id).Scan(&serviceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrResourceNotFound
 		}

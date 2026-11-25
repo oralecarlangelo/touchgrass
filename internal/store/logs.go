@@ -107,7 +107,7 @@ func (s *LogStore) Search(ctx context.Context, filter LogFilter) ([]model.LogLin
 		// per row (5s+ at 100k rows; the subquery is ~10ms).
 		extra, extraArgs := logFilterClauses("l.", filter)
 
-		return queryRows(ctx, s.db.sql, rowQuery[model.LogLine]{
+		return queryRows(ctx, s.db.read, rowQuery[model.LogLine]{
 			what: "log lines",
 			query: `SELECT l.id, l.service_id, l.container, l.stream, l.line, l.ts, l.created_at
 			 FROM log_lines l
@@ -121,7 +121,7 @@ func (s *LogStore) Search(ctx context.Context, filter LogFilter) ([]model.LogLin
 
 	extra, extraArgs := logFilterClauses("", filter)
 
-	return queryRows(ctx, s.db.sql, rowQuery[model.LogLine]{
+	return queryRows(ctx, s.db.read, rowQuery[model.LogLine]{
 		what: "log lines",
 		query: `SELECT id, service_id, container, stream, line, ts, created_at
 		 FROM log_lines
@@ -156,7 +156,7 @@ func logFilterClauses(prefix string, filter LogFilter) (string, []any) {
 
 // Get returns one log line.
 func (s *LogStore) Get(ctx context.Context, id int64) (model.LogLine, error) {
-	row := s.db.sql.QueryRowContext(ctx,
+	row := s.db.read.QueryRowContext(ctx,
 		`SELECT id, service_id, container, stream, line, ts, created_at
 		 FROM log_lines WHERE id = ?`,
 		id,
@@ -186,7 +186,7 @@ func (s *LogStore) Context(
 		return model.LogContext{}, err
 	}
 
-	older, err := queryRows(ctx, s.db.sql, rowQuery[model.LogLine]{
+	older, err := queryRows(ctx, s.db.read, rowQuery[model.LogLine]{
 		what: "log context",
 		query: `SELECT id, service_id, container, stream, line, ts, created_at
 		 FROM log_lines
@@ -198,7 +198,7 @@ func (s *LogStore) Context(
 		return model.LogContext{}, err
 	}
 
-	newer, err := queryRows(ctx, s.db.sql, rowQuery[model.LogLine]{
+	newer, err := queryRows(ctx, s.db.read, rowQuery[model.LogLine]{
 		what: "log context",
 		query: `SELECT id, service_id, container, stream, line, ts, created_at
 		 FROM log_lines
@@ -221,7 +221,7 @@ func (s *LogStore) Context(
 func (s *LogStore) CountByService(ctx context.Context, serviceID string) (int64, error) {
 	var count int64
 
-	if err := s.db.sql.QueryRowContext(ctx,
+	if err := s.db.read.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM log_lines WHERE service_id = ?", serviceID,
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("counting log lines: %w", err)
@@ -237,38 +237,12 @@ func (s *LogStore) TrimBeyondCap(
 	serviceID string,
 	maximum int,
 ) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx,
-		`DELETE FROM log_lines WHERE service_id = ? AND id NOT IN (
-		   SELECT id FROM log_lines WHERE service_id = ? ORDER BY id DESC LIMIT ?
-		 )`,
-		serviceID, serviceID, maximum,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("trimming log lines beyond cap: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed log lines: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimBeyondCap(ctx, ageTrim{table: tableLogLines, what: "log lines beyond cap"}, serviceID, maximum)
 }
 
 // TrimBefore deletes lines emitted before cutoff and reports the count.
 func (s *LogStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx,
-		"DELETE FROM log_lines WHERE ts < ?", formatFixedTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming log lines: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed log lines: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: tableLogLines, column: "ts", what: "log lines"}, formatFixedTime(cutoff))
 }
 
 // defaultSearchLimit bounds unpaginated searches.

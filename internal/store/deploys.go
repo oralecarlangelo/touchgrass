@@ -51,7 +51,7 @@ func (s *DeployStore) ListByService(
 	serviceID string,
 	limit int,
 ) ([]model.Deploy, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT id, service_id, sha, actor, type, outcome, started_at,
 		  finished_at, duration_secs, downtime_secs, notes, created_at
 		 FROM deploys WHERE service_id = ? ORDER BY id DESC LIMIT ?`, serviceID, limit)
@@ -82,7 +82,8 @@ func (s *DeployStore) ListRange(ctx context.Context, query model.PerformanceRang
 		limit = 1000
 	}
 	args = append(args, limit)
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying deploy range: %w", err)
 	}
@@ -176,7 +177,7 @@ func (s *DeployStore) FailedProbeCount(
 ) (int, error) {
 	var count int
 
-	err := s.db.sql.QueryRowContext(ctx,
+	err := s.db.read.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM deploy_probes
 		 WHERE service_id = ? AND ok = 0 AND sampled_at >= ? AND sampled_at < ?`,
 		serviceID, formatTime(since), formatTime(until),
@@ -190,30 +191,10 @@ func (s *DeployStore) FailedProbeCount(
 
 // TrimProbes deletes samples taken before cutoff and reports the count.
 func (s *DeployStore) TrimProbes(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx, "DELETE FROM deploy_probes WHERE sampled_at < ?", formatTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming deploy probes: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed deploy probes: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: tableDeployProbes, column: columnSampledAt, what: "deploy probes"}, formatTime(cutoff))
 }
 
 // TrimBefore deletes entries created before cutoff and reports the count.
 func (s *DeployStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx, "DELETE FROM deploys WHERE created_at < ?", formatTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming deploys: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed deploys: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: tableDeploys, column: columnCreatedAt}, formatTime(cutoff))
 }

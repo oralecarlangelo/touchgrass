@@ -63,7 +63,7 @@ func (s *DBJobStore) Get(ctx context.Context, id int64) (model.DBJob, error) {
 		finishedAt sql.NullString
 	)
 
-	if err := s.db.sql.QueryRowContext(ctx,
+	if err := s.db.read.QueryRowContext(ctx,
 		`SELECT id, kind, target, status, detail, started_at, finished_at
 		 FROM db_jobs WHERE id = ?`, id,
 	).Scan(
@@ -142,7 +142,7 @@ func (s *DBJobStore) FailRunning(ctx context.Context, detail string) (int64, err
 
 // List returns jobs newest first, bounded by limit.
 func (s *DBJobStore) List(ctx context.Context, limit int) ([]model.DBJob, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT id, kind, target, status, detail, started_at, finished_at
 		 FROM db_jobs ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
@@ -208,11 +208,11 @@ func (s *DBJobStore) trim(ctx context.Context, keep int) error {
 func (db *DB) SQLiteHealth(ctx context.Context) (model.SQLiteHealth, error) {
 	var health model.SQLiteHealth
 
-	if err := db.sql.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&health.Version); err != nil {
+	if err := db.read.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&health.Version); err != nil {
 		return model.SQLiteHealth{}, fmt.Errorf("querying sqlite version: %w", err)
 	}
 
-	if err := db.sql.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&health.Integrity); err != nil {
+	if err := db.read.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&health.Integrity); err != nil {
 		return model.SQLiteHealth{}, fmt.Errorf("checking sqlite integrity: %w", err)
 	}
 

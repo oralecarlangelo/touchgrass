@@ -166,7 +166,7 @@ func (s *PerformanceStore) listHTTP(ctx context.Context, table, prefix string, q
 	statement += " ORDER BY bucket_start, service_id, method, route_family, upstream, status_class LIMIT ?"
 	args = append(args, limit)
 
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing HTTP buckets: %w", err)
 	}
@@ -373,7 +373,8 @@ func (s *PerformanceStore) ListLogVolume(ctx context.Context, query model.Perfor
 	}
 	statement += " ORDER BY bucket_start, service_id, severity LIMIT ?"
 	args = append(args, nativeLimit(query.Limit))
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing log volume: %w", err)
 	}
@@ -428,7 +429,8 @@ func (s *PerformanceStore) ListContainerEvents(ctx context.Context, query model.
 	}
 	statement += " ORDER BY occurred_at, source_event_id LIMIT ?"
 	args = append(args, nativeLimit(query.Limit))
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing container events: %w", err)
 	}
@@ -493,7 +495,8 @@ func (s *PerformanceStore) ListPostgresStatements(ctx context.Context, query mod
 	}
 	statement += " ORDER BY bucket_start, service_id, query_id LIMIT ?"
 	args = append(args, nativeLimit(query.Limit))
-	rows, err := s.db.sql.QueryContext(ctx, statement, args...)
+
+	rows, err := s.db.read.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("listing postgres statements: %w", err)
 	}
@@ -554,7 +557,8 @@ func (s *PerformanceStore) nativeRows(ctx context.Context, statement string, que
 	}
 	statement += " ORDER BY bucket_start, service_id, " + order + " LIMIT ?"
 	args = append(args, nativeLimit(query.Limit))
-	return s.db.sql.QueryContext(ctx, statement, args...)
+
+	return s.db.read.QueryContext(ctx, statement, args...)
 }
 
 func nativeLimit(limit int) int {

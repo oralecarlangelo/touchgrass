@@ -52,7 +52,7 @@ func (s *KeyStore) Create(ctx context.Context, key model.APIKey) (model.APIKey, 
 // ByHash returns the live key for a hash, or ErrKeyNotFound when unknown
 // or revoked.
 func (s *KeyStore) ByHash(ctx context.Context, hash string) (model.APIKey, error) {
-	row := s.db.sql.QueryRowContext(ctx,
+	row := s.db.read.QueryRowContext(ctx,
 		`SELECT id, service_id, key_hash, key_prefix, sample_rate, revoked_at, created_at
 		 FROM api_keys WHERE key_hash = ?`,
 		hash,
@@ -76,7 +76,7 @@ func (s *KeyStore) ByHash(ctx context.Context, hash string) (model.APIKey, error
 
 // ListByService returns keys newest first, bounded by limit.
 func (s *KeyStore) ListByService(ctx context.Context, serviceID string, limit int) ([]model.APIKey, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT id, service_id, key_hash, key_prefix, sample_rate, revoked_at, created_at
 		 FROM api_keys WHERE service_id = ? ORDER BY id DESC LIMIT ?`,
 		serviceID, limit,

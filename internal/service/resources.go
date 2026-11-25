@@ -179,7 +179,7 @@ func (s *Sampler) collect(ctx context.Context) error {
 	}
 	statsByID := s.collectContainerStats(ctx, containers)
 
-	var group sync.WaitGroup
+	metrics := []model.Metric{}
 
 	for _, def := range defs {
 		names, err := serviceNames(def)
@@ -201,11 +201,16 @@ func (s *Sampler) collect(ctx context.Context) error {
 			if !ok {
 				continue
 			}
-			group.Go(func() { s.recordMetric(ctx, def.ID, c, diskByID[c.ID], stats) })
+
+			metrics = append(metrics, buildMetric(def.ID, c, diskByID[c.ID], stats))
 		}
 	}
 
-	group.Wait()
+	// One transaction per cycle: the samples are already collected, so
+	// writing them one goroutine each only queued them on the write lock.
+	if err := s.metrics.InsertBatch(ctx, metrics); err != nil {
+		s.logger.Warn("metric insert failed", "samples", len(metrics), "error", err)
+	}
 
 	return s.sampleFleet(ctx, defs, containers, statsByID, time.Now())
 }
@@ -234,15 +239,15 @@ func (s *Sampler) collectContainerStats(ctx context.Context, containers []docker
 	return result
 }
 
-// recordMetric records one already-collected managed container sample.
-func (s *Sampler) recordMetric(ctx context.Context, serviceID string, c docker.Container, disk int64, stats docker.Stats) {
+// buildMetric shapes one already-collected managed container sample.
+func buildMetric(serviceID string, c docker.Container, disk int64, stats docker.Stats) model.Metric {
 	var uptime int64
 
 	if !stats.StartedAt.IsZero() {
 		uptime = max(int64(time.Since(stats.StartedAt).Seconds()), 0)
 	}
 
-	metric := model.Metric{
+	return model.Metric{
 		ServiceID:     serviceID,
 		ContainerName: c.Name,
 		SampledAt:     time.Now(),
@@ -252,10 +257,6 @@ func (s *Sampler) recordMetric(ctx context.Context, serviceID string, c docker.C
 		DiskBytes:     disk,
 		Restarts:      stats.Restarts,
 		UptimeSecs:    uptime,
-	}
-
-	if err := s.metrics.Insert(ctx, metric); err != nil {
-		s.logger.Warn("metric insert failed", "container", c.Name, "error", err)
 	}
 }
 

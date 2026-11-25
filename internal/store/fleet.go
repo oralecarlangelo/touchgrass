@@ -44,23 +44,51 @@ func (s *FleetStore) InsertHost(ctx context.Context, sample model.HostSample) er
 
 // InsertContainer records one container sample.
 func (s *FleetStore) InsertContainer(ctx context.Context, sample model.ContainerSample) error {
-	if sample.SampledAt.IsZero() {
-		sample.SampledAt = time.Now()
-	}
+	return s.InsertContainers(ctx, []model.ContainerSample{sample})
+}
 
-	managed := 0
-
-	if sample.Managed {
-		managed = 1
+// InsertContainers records one collection cycle's container samples in a
+// single transaction, so a cycle takes the write connection once instead of
+// once per container.
+func (s *FleetStore) InsertContainers(ctx context.Context, samples []model.ContainerSample) error {
+	if len(samples) == 0 {
+		return nil
 	}
 
 	tx, err := s.db.sql.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning container sample: %w", err)
+		return fmt.Errorf("beginning container samples: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.ExecContext(ctx,
+	now := time.Now()
+
+	for _, sample := range samples {
+		if sample.SampledAt.IsZero() {
+			sample.SampledAt = now
+		}
+
+		if err := insertContainerSample(ctx, tx, sample); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing container samples: %w", err)
+	}
+
+	return nil
+}
+
+// insertContainerSample writes one sample row and refreshes the live metrics
+// of the container it belongs to.
+func insertContainerSample(ctx context.Context, tx *sql.Tx, sample model.ContainerSample) error {
+	managed := 0
+	if sample.Managed {
+		managed = 1
+	}
+
+	_, err := tx.ExecContext(ctx,
 		`INSERT INTO container_samples (sampled_at, container_id, container_name, project,
 		  managed, service_id, state, cpu_percent, mem_bytes, mem_limit,
 		  restarts)
@@ -73,17 +101,17 @@ func (s *FleetStore) InsertContainer(ctx context.Context, sample model.Container
 	if err != nil {
 		return fmt.Errorf("inserting container sample: %w", err)
 	}
-	if sample.ContainerID != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE container_instances SET
-			cpu_percent = ?, mem_bytes = ?, mem_limit = ?, restarts = ?, updated_at = ?
-			WHERE container_id = ? AND current = 1 AND state = 'running'`,
-			sample.CPUPercent, sample.MemBytes, sample.MemLimit, sample.Restarts,
-			formatTime(sample.SampledAt), sample.ContainerID); err != nil {
-			return fmt.Errorf("updating live container metrics: %w", err)
-		}
+
+	if sample.ContainerID == "" {
+		return nil
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing container sample: %w", err)
+
+	if _, err := tx.ExecContext(ctx, `UPDATE container_instances SET
+		cpu_percent = ?, mem_bytes = ?, mem_limit = ?, restarts = ?, updated_at = ?
+		WHERE container_id = ? AND current = 1 AND state = 'running'`,
+		sample.CPUPercent, sample.MemBytes, sample.MemLimit, sample.Restarts,
+		formatTime(sample.SampledAt), sample.ContainerID); err != nil {
+		return fmt.Errorf("updating live container metrics: %w", err)
 	}
 
 	return nil
@@ -92,7 +120,7 @@ func (s *FleetStore) InsertContainer(ctx context.Context, sample model.Container
 // LatestContainers returns the newest sample per container, hottest CPU
 // first with a name tiebreak so the fleet order is deterministic.
 func (s *FleetStore) LatestContainers(ctx context.Context) ([]model.FleetContainer, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT COALESCE(container_id, ''), container_name, project, managed, service_id, state,
 		  cpu_percent, mem_bytes, mem_limit, restarts, sampled_at
 		 FROM container_samples WHERE id IN (
@@ -167,7 +195,7 @@ func (s *FleetStore) History(
 	}
 
 	//nolint:gosec // column comes from the fixed hostHistoryColumns allowlist, never user input.
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT CAST(strftime('%s', sampled_at) / ? AS INTEGER) * ?,
 		  AVG(`+column+`)
 		 FROM host_samples WHERE sampled_at >= ?
@@ -211,36 +239,12 @@ func (s *FleetStore) History(
 
 // TrimHostsBefore deletes host samples older than cutoff.
 func (s *FleetStore) TrimHostsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(ctx, "DELETE FROM host_samples WHERE sampled_at < ?", formatTime(cutoff))
-	if err != nil {
-		return 0, fmt.Errorf("trimming host samples: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed host samples: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: "host_samples", column: columnSampledAt, what: "host samples"}, formatTime(cutoff))
 }
 
 // TrimContainersBefore deletes container samples older than cutoff.
 func (s *FleetStore) TrimContainersBefore(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.sql.ExecContext(
-		ctx,
-		"DELETE FROM container_samples WHERE sampled_at < ?",
-		formatTime(cutoff),
-	)
-	if err != nil {
-		return 0, fmt.Errorf("trimming container samples: %w", err)
-	}
-
-	trimmed, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("counting trimmed container samples: %w", err)
-	}
-
-	return trimmed, nil
+	return s.db.trimOlderThan(ctx, ageTrim{table: "container_samples", column: columnSampledAt, what: "container samples"}, formatTime(cutoff))
 }
 
 // nullFloat renders an optional float for storage.

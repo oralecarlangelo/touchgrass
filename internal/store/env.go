@@ -33,7 +33,7 @@ const envEntryColumns = `service_id, key, ciphertext, nonce, key_id, is_secret, 
 
 // ListEntries returns every entry for a service ordered by key.
 func (s *EnvStore) ListEntries(ctx context.Context, serviceID string) ([]model.EnvEntry, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT `+envEntryColumns+` FROM env_entries WHERE service_id = ? ORDER BY key`, serviceID)
 	if err != nil {
 		return nil, fmt.Errorf("querying env entries: %w", err)
@@ -62,7 +62,7 @@ func (s *EnvStore) ListEntries(ctx context.Context, serviceID string) ([]model.E
 
 // GetEntry returns one entry or ErrEnvEntryNotFound.
 func (s *EnvStore) GetEntry(ctx context.Context, serviceID, key string) (model.EnvEntry, error) {
-	row := s.db.sql.QueryRowContext(ctx,
+	row := s.db.read.QueryRowContext(ctx,
 		`SELECT `+envEntryColumns+` FROM env_entries WHERE service_id = ? AND key = ?`, serviceID, key)
 
 	entry, err := scanEnvEntry(row)
@@ -254,7 +254,7 @@ const envRevisionColumns = `id, service_id, created_by, created_at, summary, ren
 
 // ListRevisions returns revisions newest first, bounded by limit.
 func (s *EnvStore) ListRevisions(ctx context.Context, serviceID string, limit int) ([]model.EnvRevision, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT `+envRevisionColumns+` FROM env_revisions WHERE service_id = ? ORDER BY id DESC LIMIT ?`,
 		serviceID, limit)
 	if err != nil {
@@ -284,7 +284,7 @@ func (s *EnvStore) ListRevisions(ctx context.Context, serviceID string, limit in
 
 // GetRevision returns one revision of a service or ErrEnvRevisionNotFound.
 func (s *EnvStore) GetRevision(ctx context.Context, serviceID string, id int64) (model.EnvRevision, error) {
-	row := s.db.sql.QueryRowContext(ctx,
+	row := s.db.read.QueryRowContext(ctx,
 		`SELECT `+envRevisionColumns+` FROM env_revisions WHERE service_id = ? AND id = ?`, serviceID, id)
 
 	revision, err := scanEnvRevision(row)
@@ -302,7 +302,7 @@ func (s *EnvStore) GetRevision(ctx context.Context, serviceID string, id int64) 
 // AppliedRevision returns the currently applied revision; found is false
 // when nothing has been applied yet.
 func (s *EnvStore) AppliedRevision(ctx context.Context, serviceID string) (model.EnvRevision, bool, error) {
-	row := s.db.sql.QueryRowContext(ctx,
+	row := s.db.read.QueryRowContext(ctx,
 		`SELECT `+envRevisionColumns+` FROM env_revisions WHERE service_id = ? AND applied = 1 ORDER BY id DESC LIMIT 1`,
 		serviceID)
 
@@ -320,7 +320,7 @@ func (s *EnvStore) AppliedRevision(ctx context.Context, serviceID string) (model
 
 // RevisionEntries returns a revision's snapshot ordered by key.
 func (s *EnvStore) RevisionEntries(ctx context.Context, revisionID int64) ([]model.EnvRevisionEntry, error) {
-	rows, err := s.db.sql.QueryContext(ctx,
+	rows, err := s.db.read.QueryContext(ctx,
 		`SELECT revision_id, key, ciphertext, nonce, key_id, is_secret
 		 FROM env_revision_entries WHERE revision_id = ? ORDER BY key`, revisionID)
 	if err != nil {
@@ -426,7 +426,7 @@ func (s *EnvStore) GetRun(ctx context.Context, serviceID, id string) (model.EnvR
 		restored   int
 	)
 
-	if err := s.db.sql.QueryRowContext(ctx,
+	if err := s.db.read.QueryRowContext(ctx,
 		`SELECT id, service_id, revision_id, state, started_at, finished_at, steps_json,
 		   error, validation_lines_json, restored
 		 FROM env_runs WHERE service_id = ? AND id = ?`, serviceID, id,
@@ -535,7 +535,7 @@ func (s *EnvStore) GetValidation(ctx context.Context, serviceID string) (model.E
 		at         string
 	)
 
-	if err := s.db.sql.QueryRowContext(ctx,
+	if err := s.db.read.QueryRowContext(ctx,
 		`SELECT service_id, ok, lines_json, at FROM env_validations WHERE service_id = ?`, serviceID,
 	).Scan(&validation.ServiceID, &ok, &lines, &at); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

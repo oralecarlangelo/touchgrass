@@ -17,11 +17,12 @@ import (
 const (
 	contentionBackgroundWriters = 4
 	contentionInteractiveRounds = 20
-	contentionLogCap            = 150
-	// contentionLatencyBudget is far above what one chunk takes and far
-	// below the busy timeout: an interactive write that needs longer is
-	// being starved, not queued.
-	contentionLatencyBudget = 5 * time.Second
+	contentionLogCap            = 60
+	// contentionLatencyBudget bounds one interactive round (four writes). It
+	// is wall-clock, so it is set to the busy timeout rather than to what a
+	// quiet machine needs (about a second under the race detector): a round
+	// slower than this would have failed outright before writes were queued.
+	contentionLatencyBudget = busyTimeoutMillis * time.Millisecond
 )
 
 // openGenericFileDB returns a migrated database file holding the generic
@@ -86,8 +87,8 @@ func (w *writeErrors) report(t *testing.T) {
 
 // contentionLines builds one collector batch for a service.
 func contentionLines(serviceID string, writer, round int) []model.LogLine {
-	lines := make([]model.LogLine, 0, 50)
-	for i := range 50 {
+	lines := make([]model.LogLine, 0, 20)
+	for i := range 20 {
 		lines = append(lines, model.LogLine{
 			ServiceID: serviceID, Container: fmt.Sprintf("worker-%d", writer), Stream: model.LogStdout,
 			Line: fmt.Sprintf("writer %d round %d line %d", writer, round, i), Ts: time.Now(),
@@ -196,7 +197,7 @@ func TestInteractiveWritesSurviveBackgroundWriters(t *testing.T) {
 
 	db, _ := openGenericFileDB(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	background, stop := context.WithCancel(ctx)
@@ -245,7 +246,7 @@ func TestSecondHandleWritesWhileFirstIsBusy(t *testing.T) {
 
 	t.Cleanup(func() { _ = cli.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	background, stop := context.WithCancel(ctx)

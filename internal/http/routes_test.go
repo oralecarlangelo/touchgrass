@@ -546,7 +546,7 @@ func TestEveryRouteIsGuarded(t *testing.T) {
 }
 
 // An all-services viewer is refused exactly the routes requireAdmin
-// refused, plus the two S31 made admin-only. An admin reaches all.
+// refused, plus later admin-only additions. An admin reaches all.
 func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 	t.Parallel()
 
@@ -556,6 +556,11 @@ func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 	admin := authCookie(t, fixture.server)
 
 	adminOnly := append(slices.Clone(legacyAdminOnly), adminOnlySince31...)
+	adminOnly = append(adminOnly,
+		"GET /api/storage/buckets",
+		"GET /api/storage/objects",
+		"POST /api/storage/action",
+	)
 
 	for _, name := range adminOnly {
 		if !slices.ContainsFunc(fixture.server.routes(), func(rt route) bool { return routeName(rt) == name }) {

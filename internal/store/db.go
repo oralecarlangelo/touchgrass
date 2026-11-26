@@ -208,7 +208,12 @@ func (db *DB) vacuumInto(ctx context.Context, destination string) error {
 func memoryDSN() string {
 	id := memDBCounter.Add(1)
 
-	return fmt.Sprintf("file:tgmem%d?mode=memory&cache=shared&_pragma=foreign_keys(1)", id)
+	// auto_vacuum matches writeDSN so a test exercises the same freelist
+	// behaviour as a file; a fresh memory database is empty, so it takes.
+	return fmt.Sprintf(
+		"file:tgmem%d?mode=memory&cache=shared&_pragma=foreign_keys(1)&_pragma=auto_vacuum(incremental)",
+		id,
+	)
 }
 
 // commonPragmas apply to every connection of a database file:
@@ -235,9 +240,17 @@ func commonPragmas() string {
 //   - journal_mode(WAL): readers and the writer do not block each other.
 //   - wal_autocheckpoint: move WAL pages into the main file every ~4 MiB.
 //   - journal_size_limit: shrink the WAL file after a checkpoint resets it.
+//   - auto_vacuum(incremental): keep a freelist the maintenance sweep can hand
+//     back to the filesystem with PRAGMA incremental_vacuum. Without it a
+//     deleted row's pages are reused but never released, so the file is a
+//     permanent high-water mark: a GRID host reached 935 MB and stayed there
+//     even once retention worked again. ⚠ SQLite only honours this on an EMPTY
+//     database. An existing file keeps auto_vacuum=none until a full VACUUM
+//     rewrites it, so the sweep reports the mode rather than assuming it.
 func writeDSN(path string) string {
 	return fmt.Sprintf(
-		"file:%s?_txlock=immediate&%s&_pragma=journal_mode(WAL)&_pragma=wal_autocheckpoint(%d)&_pragma=journal_size_limit(%d)",
+		"file:%s?_txlock=immediate&%s&_pragma=journal_mode(WAL)&_pragma=wal_autocheckpoint(%d)"+
+			"&_pragma=journal_size_limit(%d)&_pragma=auto_vacuum(incremental)",
 		path, commonPragmas(), walAutocheckpointPages, journalSizeLimitBytes,
 	)
 }

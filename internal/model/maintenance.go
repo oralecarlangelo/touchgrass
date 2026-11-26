@@ -64,6 +64,15 @@ type MaintenanceResult struct {
 	WALBusy                int              `json:"wal_busy"`
 	WALLogFrames           int              `json:"wal_log_frames"`
 	WALCheckpointedFrames  int              `json:"wal_checkpointed_frames"`
+	// AutoVacuum is the database's mode: "incremental" releases freed pages,
+	// "none" cannot. A file created before auto_vacuum was set keeps "none"
+	// until a full VACUUM rewrites it, which is an operator's decision, so the
+	// sweep reports the mode instead of changing it.
+	AutoVacuum string `json:"auto_vacuum"`
+	// FreelistPages is how many pages were free AFTER the incremental vacuum;
+	// VacuumedPages is how many it handed back to the filesystem.
+	FreelistPages int64 `json:"freelist_pages"`
+	VacuumedPages int64 `json:"vacuumed_pages"`
 }
 
 // MaintenanceStatus exposes the last pass without hiding stale state.

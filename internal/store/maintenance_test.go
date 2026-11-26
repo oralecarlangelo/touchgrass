@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -341,4 +342,76 @@ func openFileTestDB(t *testing.T) *DB {
 	seedDogfoodServices(t, db)
 
 	return db
+}
+
+func TestMaintenanceReportsAutoVacuumMode(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	result, err := NewMaintenanceStore(db).Run(ctx, model.MaintenancePolicy{
+		Now: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), MaxBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	// Set on an empty database by the DSN. A database that predates the pragma
+	// reports "none" instead, which is the signal that it needs a full VACUUM.
+	if result.AutoVacuum != autoVacuumIncremental {
+		t.Fatalf("AutoVacuum = %q, want %q", result.AutoVacuum, autoVacuumIncremental)
+	}
+}
+
+func TestMaintenanceReleasesFreePagesAfterRetention(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	ctx := context.Background()
+
+	// Enough rows that deleting them frees whole pages rather than part of one.
+	stale := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	line := strings.Repeat("x", 512)
+
+	for index := range 400 {
+		if _, err := db.sql.ExecContext(ctx, `INSERT INTO log_lines(service_id, container, stream, line, ts, created_at)
+			VALUES (?, 'api', 'stdout', ?, ?, ?)`,
+			testServiceAPI, line, formatFixedTime(stale), formatFixedTime(stale)); err != nil {
+			t.Fatalf("seeding log %d: %v", index, err)
+		}
+	}
+
+	store := NewMaintenanceStore(db)
+
+	grown, err := store.databaseBytes(ctx)
+	if err != nil {
+		t.Fatalf("databaseBytes() error = %v", err)
+	}
+
+	result, err := store.Run(ctx, model.MaintenancePolicy{
+		Now: stale.Add(48 * time.Hour), RetentionLogs: time.Hour,
+		BatchSize: 1000, MaxBytes: 1 << 30,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if result.DeletedRows != 400 {
+		t.Fatalf("DeletedRows = %d, want 400", result.DeletedRows)
+	}
+
+	// The point of the change: deleting rows alone leaves the pages on the
+	// freelist and the file at its high-water mark. The sweep hands them back.
+	if result.VacuumedPages == 0 {
+		t.Errorf("VacuumedPages = 0, want the freed pages released")
+	}
+
+	if result.FreelistPages != 0 {
+		t.Errorf("FreelistPages = %d, want every freed page released", result.FreelistPages)
+	}
+
+	if result.DatabaseBytes >= grown {
+		t.Errorf("DatabaseBytes = %d, want below the pre-sweep %d", result.DatabaseBytes, grown)
+	}
 }

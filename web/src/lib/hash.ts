@@ -16,6 +16,7 @@ const views: ViewId[] = [
   'databases',
   'environment',
   'users',
+  'updates',
   'help',
 ];
 

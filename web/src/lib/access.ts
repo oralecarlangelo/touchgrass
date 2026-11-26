@@ -35,7 +35,8 @@ export type Capability =
   | 'databases.backup'
   | 'databases.restore'
   | 'services.manage'
-  | 'users.manage';
+  | 'users.manage'
+  | 'updates.manage';
 
 // can(capability) asks "may this user ever do this"; can(capability,
 // serviceId) asks "may they do it on this service".
@@ -107,6 +108,7 @@ const viewRequirements: Record<ViewId, ViewRequirement> = {
   rules: { capability: 'alerts.read' },
   keys: { capability: 'keys.read', fleetOnly: true },
   users: { capability: 'users.manage', adminOnly: true },
+  updates: { capability: 'updates.manage', adminOnly: true, fleetOnly: true },
   audit: { capability: 'audit.read' },
   help: { capability: null },
 };

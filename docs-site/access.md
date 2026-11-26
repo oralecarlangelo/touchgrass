@@ -14,7 +14,7 @@ user may do. The scope decides on which services.
 | **All services**      | Every service, services added later, and the host screens               |
 | **Selected services** | Only the listed services. No host screens, and nothing of other services |
 
-The host screens are Fleet, Security, Databases, Images, API keys,
+The host screens are Fleet, Security, Databases, Images, API keys, Updates,
 fleet-wide Performance, and the audit rows that belong to no service
 (logins, user management). They describe the whole machine, including
 containers of other stacks, so they cannot be cut down to one service.
@@ -163,6 +163,7 @@ the all-services scope. `self` applies to the user's own account.
 | `databases.restore` | Restore a backup | fleet | no | no | yes |
 | `services.manage` | Create and delete a service, onboarding suggestion | fleet | no | no | yes |
 | `users.manage` | All user and access management | fleet | no | no | yes |
+| `updates.manage` | Check and install a console release | fleet | no | no | yes |
 
 Reading the table for a user limited to selected services: every `fleet`
 row is "no", whatever the role. The API key screen is a host screen in

@@ -83,6 +83,8 @@ func (s *Server) routes() []route {
 		{method: nethttp.MethodPost, pattern: "/api/auth/login", kind: guardPublic, handler: s.handleLogin},
 		{method: nethttp.MethodPost, pattern: "/api/auth/logout", kind: guardSession, capability: authz.SessionSelf, handler: s.handleLogout},
 		{method: nethttp.MethodGet, pattern: "/api/auth/me", kind: guardSession, capability: authz.SessionSelf, handler: s.handleMe},
+		{method: nethttp.MethodGet, pattern: "/api/self-update", kind: guardFleet, capability: authz.UpdatesManage, handler: s.handleSelfUpdate},
+		{method: nethttp.MethodPost, pattern: "/api/self-update", kind: guardFleet, capability: authz.UpdatesManage, handler: s.handleStartSelfUpdate},
 		{method: nethttp.MethodPost, pattern: "/api/auth/password", kind: guardSession, capability: authz.SessionSelf, handler: s.handleChangePassword},
 		// The stream is open to any session; the hub filters each event
 		// by the subscriber's role and scope.

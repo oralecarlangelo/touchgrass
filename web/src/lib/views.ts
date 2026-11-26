@@ -14,6 +14,7 @@ export type ViewId =
   | 'databases'
   | 'environment'
   | 'users'
+  | 'updates'
   | 'help';
 
 export interface NavTab {
@@ -68,6 +69,7 @@ export const navGroups: NavGroup[] = [
       { id: 'rules', label: 'Rules' },
       { id: 'keys', label: 'API keys' },
       { id: 'users', label: 'Users' },
+      { id: 'updates', label: 'Updates' },
       { id: 'audit', label: 'Audit' },
     ],
   },

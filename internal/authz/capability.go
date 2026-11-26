@@ -116,6 +116,8 @@ const (
 	ServicesManage Capability = "services.manage"
 	// UsersManage covers all user and access management.
 	UsersManage Capability = "users.manage"
+	// UpdatesManage covers the console's own release and update job.
+	UpdatesManage Capability = "updates.manage"
 )
 
 // scopes is the scope class of every capability, in matrix order.
@@ -153,6 +155,7 @@ var scopes = []struct {
 	{capability: DatabasesRestore, scope: ScopeFleet},
 	{capability: ServicesManage, scope: ScopeFleet},
 	{capability: UsersManage, scope: ScopeFleet},
+	{capability: UpdatesManage, scope: ScopeFleet},
 }
 
 // Capabilities returns every capability in matrix order.

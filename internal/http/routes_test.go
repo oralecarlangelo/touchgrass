@@ -406,8 +406,8 @@ func TestRouteTableIsConsistent(t *testing.T) {
 		}
 	}
 
-	if len(seen) != 97 {
-		t.Errorf("route table has %d routes, want 97 (including four storage routes)", len(seen))
+	if len(seen) != 99 {
+		t.Errorf("route table has %d routes, want 99 (including four storage routes)", len(seen))
 	}
 }
 
@@ -557,6 +557,8 @@ func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 
 	adminOnly := append(slices.Clone(legacyAdminOnly), adminOnlySince31...)
 	adminOnly = append(adminOnly,
+		"GET /api/self-update",
+		"POST /api/self-update",
 		"GET /api/storage/buckets",
 		"GET /api/storage/objects",
 		"POST /api/storage/action",

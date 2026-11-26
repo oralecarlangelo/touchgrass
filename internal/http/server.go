@@ -49,6 +49,7 @@ type Config struct {
 	Env            *service.Env
 	Owners         *service.Owners
 	Maintenance    MaintenanceReporter
+	SelfUpdate     *service.SelfUpdate
 	Dist           fs.FS
 	Docs           fs.FS
 	DevProxy       string
@@ -81,6 +82,7 @@ type Server struct {
 	eventHeartbeat time.Duration
 	owners         *service.Owners
 	maintenance    MaintenanceReporter
+	selfUpdate     *service.SelfUpdate
 	handler        nethttp.Handler
 }
 
@@ -121,6 +123,7 @@ func New(cfg Config) *Server {
 		eventHeartbeat: eventHeartbeat,
 		owners:         cfg.Owners,
 		maintenance:    cfg.Maintenance,
+		selfUpdate:     cfg.SelfUpdate,
 	}
 
 	// Every API route comes from the route table and is wrapped in its

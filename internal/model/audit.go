@@ -37,6 +37,7 @@ const (
 	AuditIssueRuleDelete      = "issue_rule_delete"
 	AuditNotificationRead     = "notification_read"
 	AuditStorageAction        = "storage_action"
+	AuditSelfUpdate           = "self_update"
 )
 
 // Audit results recorded in the append-only log.

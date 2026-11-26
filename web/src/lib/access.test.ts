@@ -60,6 +60,7 @@ const admin: SessionInfo = {
     'deploy.trigger',
     'env.apply',
     'users.manage',
+    'updates.manage',
     'services.manage',
     'keys.manage',
   ],

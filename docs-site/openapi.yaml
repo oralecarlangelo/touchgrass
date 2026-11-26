@@ -205,6 +205,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /self-update:
+    get:
+      x-touchgrass-capability: updates.manage
+      x-touchgrass-scope: fleet
+      operationId: getSelfUpdate
+      tags: [system]
+      summary: Show installed version, latest compatible release, and update job status
+      responses:
+        '200': { description: Update status }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      x-touchgrass-capability: updates.manage
+      x-touchgrass-scope: fleet
+      operationId: startSelfUpdate
+      tags: [system]
+      summary: Start one exact published console release through the configured host helper
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag, confirm]
+              properties:
+                tag: { type: string, pattern: '^v[0-9]+[.][0-9]+[.][0-9]+$' }
+                confirm: { type: boolean }
+      responses:
+        '202': { description: Update job accepted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /users:
     get:
       x-touchgrass-capability: users.manage

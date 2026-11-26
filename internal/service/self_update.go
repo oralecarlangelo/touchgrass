@@ -126,6 +126,7 @@ func (u *SelfUpdate) Start(ctx context.Context, tag string) error {
 	if release.Tag != tag || !newer(tag, u.version) {
 		return ErrUpdateInvalid
 	}
+	//nolint:gosec // The exact release tag is validated above; the configured absolute helper is passed without a shell.
 	command := exec.CommandContext(ctx, "sudo", "-n", u.helper, tag)
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("starting update helper: %w", err)
@@ -164,7 +165,7 @@ func (u *SelfUpdate) readJob() (*UpdateJob, error) {
 	}
 }
 
-func (u *SelfUpdate) latest(ctx context.Context, force bool) (*UpdateRelease, error) {
+func (u *SelfUpdate) latest(ctx context.Context, force bool) (release *UpdateRelease, resultErr error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if !force && u.cached != nil && time.Since(u.cachedAt) < 2*time.Minute {
@@ -179,10 +180,24 @@ func (u *SelfUpdate) latest(ctx context.Context, force bool) (*UpdateRelease, er
 	if err != nil {
 		return nil, fmt.Errorf("fetching release: %w", err)
 	}
-	defer resp.Body.Close()
+
+	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("release lookup returned %d", resp.StatusCode)
 	}
+
+	candidate, err := decodeLatestRelease(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	u.cached = candidate
+	u.cachedAt = time.Now()
+
+	return u.cached, nil
+}
+
+func decodeLatestRelease(bodyReader io.Reader) (*UpdateRelease, error) {
 	var body struct {
 		Tag         string `json:"tag_name"`
 		URL         string `json:"html_url"`
@@ -193,7 +208,7 @@ func (u *SelfUpdate) latest(ctx context.Context, force bool) (*UpdateRelease, er
 			Name string `json:"name"`
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(bodyReader, 1<<20)).Decode(&body); err != nil {
 		return nil, fmt.Errorf("decoding release: %w", err)
 	}
 	if body.Draft || body.Prerelease || !updateTagPattern.MatchString(body.Tag) {
@@ -212,9 +227,8 @@ func (u *SelfUpdate) latest(ctx context.Context, force bool) (*UpdateRelease, er
 	if body.URL != wantURL {
 		return nil, ErrUpdateUnavailable
 	}
-	u.cached = &UpdateRelease{Tag: body.Tag, URL: body.URL, PublishedAt: body.PublishedAt}
-	u.cachedAt = time.Now()
-	return u.cached, nil
+
+	return &UpdateRelease{Tag: body.Tag, URL: body.URL, PublishedAt: body.PublishedAt}, nil
 }
 
 func newer(tag, installed string) bool {

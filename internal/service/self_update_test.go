@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,10 +20,7 @@ func TestSelfUpdateChecksCompatibleReleaseAndDurableJob(t *testing.T) {
 	}))
 	defer fixture.Close()
 	statusPath := filepath.Join(t.TempDir(), "status.json")
-	helper := filepath.Join(t.TempDir(), "request")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	helper := "/usr/bin/true"
 	if err := os.WriteFile(statusPath, []byte(`{"tag":"v0.7.0","state":"succeeded"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +34,8 @@ func TestSelfUpdateChecksCompatibleReleaseAndDurableJob(t *testing.T) {
 	if err := os.WriteFile(statusPath, []byte(`{"tag":"v0.8.0","state":"running"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := updater.Start(context.Background(), "v0.8.0"); err != ErrUpdateBusy {
+
+	if err := updater.Start(context.Background(), "v0.8.0"); !errors.Is(err, ErrUpdateBusy) {
 		t.Fatalf("Start() = %v, want ErrUpdateBusy", err)
 	}
 }
@@ -47,10 +46,8 @@ func TestSelfUpdateRefusesMissingAsset(t *testing.T) {
 		_, _ = w.Write([]byte(`{"tag_name":"v0.8.0","html_url":"https://github.com/oralecarlangelo/touchgrass/releases/tag/v0.8.0","assets":[{"name":"checksums.txt"}]}`))
 	}))
 	defer fixture.Close()
-	helper := filepath.Join(t.TempDir(), "request")
-	if err := os.WriteFile(helper, []byte("#!/bin/sh\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+
+	helper := "/usr/bin/true"
 	updater := NewSelfUpdate(helper, filepath.Join(t.TempDir(), "status.json"), "https://console.example.com", "0.7.0")
 	updater.platform = "linux"
 	updater.releaseURL = fixture.URL

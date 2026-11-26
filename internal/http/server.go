@@ -11,6 +11,7 @@ import (
 
 	nethttp "net/http"
 
+	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 )
 
@@ -45,6 +46,7 @@ type Config struct {
 	Security       *service.Security
 	Env            *service.Env
 	Owners         *service.Owners
+	Maintenance    MaintenanceReporter
 	Dist           fs.FS
 	Docs           fs.FS
 	DevProxy       string
@@ -75,7 +77,16 @@ type Server struct {
 	env            *service.Env
 	eventHeartbeat time.Duration
 	owners         *service.Owners
+	maintenance    MaintenanceReporter
 	handler        nethttp.Handler
+}
+
+// MaintenanceReporter is the SQLite maintenance pillar as /api/health reads it:
+// the last sweep's outcome. The sweep is a WRITE, so its status is the cheapest
+// honest answer to "can this instance still record anything" — a read probe
+// cannot tell, because a locked database still serves every read.
+type MaintenanceReporter interface {
+	Status() model.MaintenanceStatus
 }
 
 // New builds a Server.
@@ -105,6 +116,7 @@ func New(cfg Config) *Server {
 		env:            cfg.Env,
 		eventHeartbeat: eventHeartbeat,
 		owners:         cfg.Owners,
+		maintenance:    cfg.Maintenance,
 	}
 
 	// Every API route comes from the route table and is wrapped in its
@@ -176,13 +188,87 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// healthResponse is the /api/health payload.
+// healthResponse is the /api/health payload. `checks` is additive: a caller
+// that only reads `status` or the HTTP code keeps working.
 type healthResponse struct {
-	Status  string `json:"status"`
-	Version string `json:"version"`
+	Status  string        `json:"status"`
+	Version string        `json:"version"`
+	Checks  []healthCheck `json:"checks,omitempty"`
 }
 
-// handleHealth reports process liveness.
+// healthCheck is one named assertion behind the status.
+type healthCheck struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+const (
+	checkPass      = "pass"
+	checkWarn      = "warn"
+	checkFail      = "fail"
+	healthOK       = "ok"
+	healthDegraded = "degraded"
+
+	maintenanceCheckName = "sqlite_maintenance"
+)
+
+// handleHealth reports readiness, not merely liveness, and answers 503 once
+// this instance can no longer record anything.
+//
+// It used to answer a flat `{"status":"ok"}` without touching the database. A
+// GRID production host then ran from 10 to 26 Nov 2026 — sixteen days — with
+// every insert failing on SQLITE_BUSY while this endpoint, the installer's
+// probe and any uptime monitor all read "ok". An endpoint that asserts nothing
+// cannot report anything, so it reported health it had never checked.
 func (s *Server) handleHealth(w nethttp.ResponseWriter, _ *nethttp.Request) {
-	writeJSON(w, s.logger, nethttp.StatusOK, healthResponse{Status: "ok", Version: s.version})
+	response := healthResponse{Status: healthOK, Version: s.version}
+	code := nethttp.StatusOK
+
+	if check, ok := s.maintenanceCheck(); ok {
+		response.Checks = append(response.Checks, check)
+		if check.Status == checkFail {
+			response.Status = healthDegraded
+			code = nethttp.StatusServiceUnavailable
+		}
+	}
+
+	writeJSON(w, s.logger, code, response)
+}
+
+// maintenanceCheck turns the last SQLite sweep into one assertion.
+//
+// The sweep writes, so its outcome answers "can this instance still record
+// anything" — which a read probe cannot, because a write-locked database still
+// serves every read, as it did for those sixteen days.
+//
+// A sweep that has not run yet PASSES: the first one is up to one maintenance
+// interval after start-up, and a fresh install must not answer 503 to the
+// installer's probe. A storage-budget overrun WARNS rather than fails — it
+// already logs its own warning and the instance stays usable, so 503 keeps its
+// single meaning of "do not trust what this instance records".
+func (s *Server) maintenanceCheck() (healthCheck, bool) {
+	if s.maintenance == nil {
+		return healthCheck{}, false
+	}
+
+	status := s.maintenance.Status()
+	check := healthCheck{Name: maintenanceCheckName, Status: checkPass}
+
+	switch {
+	case status.LastError != "":
+		check.Status = checkFail
+		check.Detail = status.LastError
+	case status.LastSuccessAt.IsZero():
+		check.Detail = "no sweep yet"
+	case status.Stale:
+		check.Status = checkFail
+		check.Detail = "last successful sweep " + status.LastSuccessAt.UTC().Format(time.RFC3339)
+	case status.LastResult.OverBudget:
+		check.Status = checkWarn
+		check.Detail = fmt.Sprintf("database %d bytes over the %d byte budget",
+			status.LastResult.DatabaseBytes-status.LastResult.MaxBytes, status.LastResult.MaxBytes)
+	}
+
+	return check, true
 }

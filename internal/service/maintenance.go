@@ -173,6 +173,19 @@ func (m *Maintenance) runOnce(ctx context.Context) {
 	m.status.LastSuccessAt = now
 	m.status.LastError = ""
 	m.status.LastResult = result
+	// A successful sweep used to log nothing, so retention was unfalsifiable from
+	// the outside: on a GRID host the trim could not run for sixteen days (every
+	// write failed on SQLITE_BUSY) and the only visible symptom was a database
+	// growing past its window. One line per sweep makes "did retention run, and
+	// what did it delete" answerable from the journal.
+	m.logger.Info("sqlite maintenance swept",
+		"deleted_rows", result.DeletedRows,
+		"deleted_by_table", result.DeletedByTable,
+		"database_bytes", result.DatabaseBytes,
+		"max_bytes", result.MaxBytes,
+		"over_budget", result.OverBudget,
+		"wal_checkpointed_frames", result.WALCheckpointedFrames,
+	)
 	backupDue := m.lastBackupAt.IsZero() || now.Sub(m.lastBackupAt) >= m.backupInterval
 	m.mu.Unlock()
 

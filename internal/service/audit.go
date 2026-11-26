@@ -29,7 +29,7 @@ func (a *Audit) Record(ctx context.Context, record model.AuditRecord) (int64, er
 	}
 
 	switch record.Action {
-	case model.AuditCutover,
+	case model.AuditStorageAction, model.AuditCutover,
 		model.AuditRollback,
 		model.AuditLogin,
 		model.AuditDeploy,

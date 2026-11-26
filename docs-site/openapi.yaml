@@ -1365,6 +1365,80 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/LogLine' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /storage/usage:
+    get:
+      x-touchgrass-capability: host.read
+      x-touchgrass-scope: fleet
+      operationId: storageUsage
+      tags: [system]
+      summary: Docker storage accounting with unknown sizes preserved
+      responses:
+        '200':
+          description: Storage result. See docs/storage-management.md for fields and limits.
+        '403':
+          description: Required fleet capability or bucket write permission is missing.
+  /storage/buckets:
+    get:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: storageBuckets
+      tags: [system]
+      summary: Configured S3-compatible bucket allowlist
+      responses:
+        '200':
+          description: Storage result. See docs/storage-management.md for fields and limits.
+        '403':
+          description: Required fleet capability or bucket write permission is missing.
+  /storage/objects:
+    get:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: storageObjects
+      tags: [system]
+      summary: Browse a bucket prefix with opaque pagination
+      parameters:
+        - in: query
+          name: bucket
+          required: true
+          schema: { type: string }
+        - in: query
+          name: prefix
+          required: false
+          schema: { type: string }
+        - in: query
+          name: after
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Storage result. See docs/storage-management.md for fields and limits.
+        '403':
+          description: Required fleet capability or bucket write permission is missing.
+  /storage/action:
+    post:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: storageAction
+      tags: [system]
+      summary: Audited object operations and five-minute upload or download grants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action, bucket, key]
+              properties:
+                action: { type: string, enum: [download, upload, folder, delete] }
+                bucket: { type: string }
+                key: { type: string }
+                filename: { type: string }
+                confirmation: { type: string, description: Exact key required for deletion }
+      responses:
+        '200':
+          description: Storage result. See docs/storage-management.md for fields and limits.
+        '403':
+          description: Required fleet capability or bucket write permission is missing.
   /docker/images:
     get:
       x-touchgrass-capability: host.read
@@ -2181,7 +2255,7 @@ paths:
               type: object
               required: [value]
               properties:
-                value: { type: string, description: UTF-8 without newlines, at most 64 KiB }
+                value: { type: string, description: "UTF-8 without newlines, at most 64 KiB" }
                 is_secret: { type: boolean, default: false }
       responses:
         '200':
@@ -2676,7 +2750,7 @@ components:
         steps:
           type: array
           items: { $ref: '#/components/schemas/EnvRunStep' }
-        error: { type: string, description: Failure cause, value-free }
+        error: { type: string, description: "Failure cause, value-free" }
         validation_lines:
           type: array
           items: { type: string }
@@ -2705,7 +2779,7 @@ components:
         critical: { type: integer, minimum: 0 }
         high: { type: integer, minimum: 0 }
         suppressed: { type: integer, minimum: 0 }
-        coverage_complete: { type: boolean, description: True only when posture, process, and writable-layer collectors are complete and each reported within twice its effective interval }
+        coverage_complete: { type: boolean, description: "True only when posture, process, and writable-layer collectors are complete and each reported within twice its effective interval" }
         last_observed_at: { type: ['string', 'null'], format: date-time }
     SecurityFinding:
       type: object

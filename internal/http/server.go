@@ -12,6 +12,7 @@ import (
 	nethttp "net/http"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
+	"github.com/oralecarlangelo/touchgrass/internal/objectstore"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 )
 
@@ -24,6 +25,7 @@ const (
 
 // Config wires a Server.
 type Config struct {
+	Objects        *objectstore.Client
 	Addr           string
 	Version        string
 	Logger         *slog.Logger
@@ -54,6 +56,7 @@ type Config struct {
 
 // Server is the touchgrass HTTP server.
 type Server struct {
+	objects        *objectstore.Client
 	addr           string
 	version        string
 	logger         *slog.Logger
@@ -93,6 +96,7 @@ type MaintenanceReporter interface {
 func New(cfg Config) *Server {
 	mux := nethttp.NewServeMux()
 	server := &Server{
+		objects:        cfg.Objects,
 		addr:           cfg.Addr,
 		version:        cfg.Version,
 		logger:         cfg.Logger,

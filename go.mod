@@ -14,6 +14,16 @@ require (
 )
 
 require (
+	github.com/go-ini/ini v1.67.0 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
+	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/minio/crc64nvme v1.0.1 // indirect
+	github.com/minio/md5-simd v1.1.2 // indirect
+	github.com/rs/xid v1.6.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
+)
+
+require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
@@ -25,8 +35,10 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
+	github.com/google/uuid v1.6.0
+	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/minio/minio-go/v7 v7.0.91
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/sys/atomicwriter v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect

@@ -202,3 +202,7 @@ The authoritative map is `docs/PROJECT_STRUCTURE.md`.
 ## License
 
 Apache-2.0 — see `LICENSE`.
+
+## Storage management
+
+Operations → Storage shows host capacity, Docker usage and an optional MinIO/S3-compatible bucket manager. See [storage management](docs/storage-management.md) for connection setup, permissions, accounting limits and deployment checks.

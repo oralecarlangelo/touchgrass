@@ -102,3 +102,8 @@ GET /api/databases/jobs	reach	403	403
 GET /api/databases/jobs/{id}	reach	403	403
 POST /api/databases/backups/{name}/verify	403	403	403
 POST /api/databases/restore	403	403	403
+
+GET /api/storage/usage	reach	403	403
+GET /api/storage/buckets	403	403	403
+GET /api/storage/objects	403	403	403
+POST /api/storage/action	403	403	403

@@ -70,6 +70,7 @@ jobs:
           if [ -n "$(git status --porcelain -- go.mod go.sum)" ]; then
             echo "::error::go mod tidy produced changes; run it locally and commit the result"
             git status --porcelain -- go.mod go.sum
+            git diff -- go.mod go.sum
             exit 1
           fi
 

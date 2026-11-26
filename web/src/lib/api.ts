@@ -1704,3 +1704,23 @@ export async function rollbackEnvRevision(
     jsonBody({ confirm }),
   );
 }
+
+export interface StorageUsage {
+ sampled_at: string;
+ image_layers_bytes: number | null;
+ entries: { id: string; name: string; kind: string; size_bytes: number | null; status: string }[];
+}
+export function fetchStorageUsage(): Promise<StorageUsage> {
+ return request<StorageUsage>('/api/storage/usage');
+}
+
+export interface BucketConnection { configured: boolean; writable: boolean; buckets: string[] }
+export interface BucketObject { key: string; size: number; modified: string; folder: boolean }
+export interface ObjectPage { objects: BucketObject[]; next: string }
+export function fetchBuckets(): Promise<BucketConnection> { return request('/api/storage/buckets'); }
+export function fetchObjects(bucket: string, prefix: string, after: string): Promise<ObjectPage> {
+  return request(`/api/storage/objects?${new URLSearchParams({ bucket, prefix, after })}`);
+}
+export function objectAction<T>(body: { action: string; bucket: string; key: string; filename?: string; confirmation?: string }): Promise<T> {
+  return request('/api/storage/action', jsonBody(body));
+}

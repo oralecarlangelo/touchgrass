@@ -149,7 +149,10 @@ func TestHandleHealth(t *testing.T) {
 				t.Fatalf("decoding body: %v", err)
 			}
 
-			if got != tt.expectedBody {
+			// Compared field by field rather than with !=: healthResponse carries the
+			// readiness checks in a slice now, which makes the struct uncomparable.
+			// The checks themselves are asserted in health_test.go.
+			if got.Status != tt.expectedBody.Status || got.Version != tt.expectedBody.Version {
 				t.Errorf("body = %+v, want %+v", got, tt.expectedBody)
 			}
 		})

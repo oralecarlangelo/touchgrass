@@ -249,6 +249,10 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 		return result, fmt.Errorf("checkpointing sqlite WAL: %w", err)
 	}
 
+	if err := s.releaseFreePages(ctx, &result); err != nil {
+		return result, err
+	}
+
 	result.DatabaseBytes, err = s.databaseBytes(ctx)
 	if err != nil {
 		return result, err
@@ -256,6 +260,86 @@ func (s *MaintenanceStore) Run(ctx context.Context, policy model.MaintenancePoli
 	result.OverBudget = result.DatabaseBytes > policy.MaxBytes || len(result.OverBudgetClasses) > 0
 
 	return result, nil
+}
+
+// incrementalVacuumPages caps one sweep's release. At the usual 4 KiB page that
+// is ~8 MiB per sweep, so a default five-minute interval gives back ~96 MiB an
+// hour without ever holding the write lock long enough to stall a sampler.
+const incrementalVacuumPages = 2000
+
+// releaseFreePages hands pages the retention deletes freed back to the
+// filesystem, in a bounded step, and records the mode it found.
+//
+// Deleting rows alone never shrinks a SQLite file: the pages go on the freelist
+// and are reused. That is why a GRID host stayed at 935 MB. With
+// auto_vacuum=incremental this call releases them; with auto_vacuum=none it
+// reports the mode and changes nothing, because switching an existing database
+// needs a full VACUUM that rewrites the whole file — far too long to run
+// unattended inside a sweep.
+func (s *MaintenanceStore) releaseFreePages(ctx context.Context, result *model.MaintenanceResult) error {
+	var mode int64
+	if err := s.db.read.QueryRowContext(ctx, "PRAGMA auto_vacuum").Scan(&mode); err != nil {
+		return fmt.Errorf("reading sqlite auto_vacuum mode: %w", err)
+	}
+
+	result.AutoVacuum = autoVacuumName(mode)
+
+	before, err := s.freelistPages(ctx)
+	if err != nil {
+		return err
+	}
+
+	if result.AutoVacuum != autoVacuumIncremental || before == 0 {
+		result.FreelistPages = before
+
+		return nil
+	}
+
+	if _, err := s.db.sql.ExecContext(ctx,
+		fmt.Sprintf("PRAGMA incremental_vacuum(%d)", incrementalVacuumPages),
+	); err != nil {
+		return fmt.Errorf("releasing sqlite free pages: %w", err)
+	}
+
+	after, err := s.freelistPages(ctx)
+	if err != nil {
+		return err
+	}
+
+	result.FreelistPages = after
+	if before > after {
+		result.VacuumedPages = before - after
+	}
+
+	return nil
+}
+
+// freelistPages counts the pages SQLite holds free inside the file.
+func (s *MaintenanceStore) freelistPages(ctx context.Context) (int64, error) {
+	var pages int64
+	if err := s.db.read.QueryRowContext(ctx, "PRAGMA freelist_count").Scan(&pages); err != nil {
+		return 0, fmt.Errorf("reading sqlite freelist count: %w", err)
+	}
+
+	return pages, nil
+}
+
+const (
+	autoVacuumNone        = "none"
+	autoVacuumFull        = "full"
+	autoVacuumIncremental = "incremental"
+)
+
+// autoVacuumName names the PRAGMA auto_vacuum value (0 none, 1 full, 2 incremental).
+func autoVacuumName(mode int64) string {
+	switch mode {
+	case 1:
+		return autoVacuumFull
+	case 2:
+		return autoVacuumIncremental
+	default:
+		return autoVacuumNone
+	}
 }
 
 func (s *MaintenanceStore) applyAgeRetention(

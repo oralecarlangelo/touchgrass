@@ -36,11 +36,14 @@ func TestSelfUpdateRequiresAdminAndConfiguredOrigin(t *testing.T) {
 			t.Parallel()
 			req := httptest.NewRequestWithContext(t.Context(), tt.method, "/api/self-update", strings.NewReader(tt.body))
 			req.AddCookie(tt.cookie)
+
 			if tt.origin != "" {
 				req.Header.Set("Origin", tt.origin)
 			}
+
 			rec := httptest.NewRecorder()
 			server.handler.ServeHTTP(rec, req)
+
 			if rec.Code != tt.want {
 				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
 			}

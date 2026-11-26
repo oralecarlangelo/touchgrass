@@ -58,6 +58,12 @@ shells out to its configured validate and restart commands (ADR-0012). Repositor
 blue-green adapter, but the engine has no Ticketnation-specific branch.
 Notification providers POST webhooks or send email through generic contracts.
 
+The optional console self-update boundary (ADR-0017) reads a published Touch
+Grass release and starts only an exact version tag through a configured,
+root-owned helper. A detached host job owns installation and durable status;
+the HTTP process never replaces its own binary. This integration is disabled
+unless the helper, status path, and public origin are configured.
+
 ## Project-agnostic boundary (decided)
 
 Touch Grass core models deployments, services, signals, incidents, and

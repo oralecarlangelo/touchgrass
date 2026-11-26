@@ -24,6 +24,7 @@ import ServicesList from './components/ServicesList.tsx';
 import ServiceWorkspace, { type ServiceTab } from './components/service/ServiceWorkspace.tsx';
 import FleetScreen from './components/FleetScreen.tsx';
 import UsersScreen from './components/UsersScreen.tsx';
+import UpdatesScreen from './components/UpdatesScreen.tsx';
 import AppShell from './components/layout/AppShell.tsx';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -509,6 +510,8 @@ export default function App() {
             currentUsername={session.username}
             onUnauthorized={handleUnauthorized}
           />
+        ) : view === 'updates' ? (
+          <UpdatesScreen onUnauthorized={handleUnauthorized} />
         ) : (
           <>
             <div className="flex items-center justify-between">

@@ -28,6 +28,23 @@ export interface ServiceView {
   containers: ContainerView[];
 }
 
+export interface SelfUpdateStatus {
+  installed: string;
+  configured: boolean;
+  release?: { tag: string; url: string; published_at: string };
+  job?: { tag: string; state: 'pending' | 'running' | 'succeeded' | 'failed'; started_at?: string; finished_at?: string };
+  check_error?: string;
+  can_install: boolean;
+}
+
+export function fetchSelfUpdate(): Promise<SelfUpdateStatus> {
+  return request<SelfUpdateStatus>('/api/self-update');
+}
+
+export function startSelfUpdate(tag: string): Promise<SelfUpdateStatus> {
+  return request<SelfUpdateStatus>('/api/self-update', jsonBody({ tag, confirm: true }));
+}
+
 export type PerformanceResolution = 'auto' | 'minute' | 'hour';
 export type PerformanceRouteSort = 'p95_ms' | 'request_count' | 'error_rate' | 'route_family';
 

@@ -239,9 +239,15 @@ func newServeServer(
 		return nil, fmt.Errorf("configuring object storage: %w", err)
 	}
 	return http.New(http.Config{
-		Objects:        objects,
-		Addr:           cfg.Addr,
-		Version:        version,
+		Objects: objects,
+		Addr:    cfg.Addr,
+		Version: version,
+		SelfUpdate: service.NewSelfUpdate(
+			os.Getenv("TOUCHGRASS_UPDATE_HELPER"),
+			os.Getenv("TOUCHGRASS_UPDATE_STATUS_FILE"),
+			os.Getenv("TOUCHGRASS_PUBLIC_ORIGIN"),
+			version,
+		),
 		Logger:         logger,
 		Inventory:      services.inventory,
 		Sampler:        services.sampler,
@@ -437,9 +443,9 @@ func runServe(args []string) error {
 		cutover: cutover, audit: audit, auth: auth, users: managedUsers, events: hub,
 		ingestor: ingestor, logs: collector, sdkLogs: sdkLogs, system: sys,
 		database: databases, onboarding: onboarding, performance: performance,
-		fleet:    fleetInventory,
-		security: securityService,
-		env:      envService,
+		fleet:       fleetInventory,
+		security:    securityService,
+		env:         envService,
 		owners:      service.NewOwners(store.NewOwnerStore(db)),
 		maintenance: maintenance,
 	}, version)

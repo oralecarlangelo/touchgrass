@@ -80,6 +80,9 @@ Environment only (no config file):
 | `DOCKER_HOST`                        | unix socket        | Docker daemon (standard client env)                    |
 | `TOUCHGRASS_ADMIN_PASSWORD`          | (empty)            | Optional: seeds `admin` on first boot (12+ chars). Empty = a one-time password is generated in `initial-admin-password` beside the DB |
 | `TOUCHGRASS_COOKIE_SECURE`           | `false`            | Set `true` when serving behind TLS                     |
+| `TOUCHGRASS_PUBLIC_ORIGIN`           | empty              | Exact browser origin required for admin update requests |
+| `TOUCHGRASS_UPDATE_HELPER`           | empty              | Absolute path to root-owned console update request helper; empty disables self-update |
+| `TOUCHGRASS_UPDATE_STATUS_FILE`      | empty              | Absolute path to root-owned job status JSON, readable by the service user |
 | `TOUCHGRASS_ENV_KEY_FILE`            | (empty)            | 0600 file with the AES-256 key for the env pillar; empty = pillar off |
 | `TOUCHGRASS_ENV_KEY`                 | (empty)            | Hex key inline (development only)                      |
 | `TOUCHGRASS_METRICS_INTERVAL`        | `30s`              | Metric sample cadence                                  |

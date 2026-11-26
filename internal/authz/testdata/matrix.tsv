@@ -33,3 +33,4 @@ databases.backup	fleet	no	no	yes
 databases.restore	fleet	no	no	yes
 services.manage	fleet	no	no	yes
 users.manage	fleet	no	no	yes
+updates.manage	fleet	no	no	yes

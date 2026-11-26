@@ -11,6 +11,8 @@
 # guard to the handler; a number is the status the guard answered.
 POST /api/auth/logout	reach	reach	reach
 GET /api/auth/me	reach	reach	reach
+GET /api/self-update	403	403	403
+POST /api/self-update	403	403	403
 POST /api/auth/password	reach	reach	reach
 GET /api/events	reach	reach	reach
 GET /api/users	403	403	403

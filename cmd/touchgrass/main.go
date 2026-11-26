@@ -23,6 +23,7 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/http"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/nginxlog"
+	"github.com/oralecarlangelo/touchgrass/internal/objectstore"
 	"github.com/oralecarlangelo/touchgrass/internal/probe"
 	"github.com/oralecarlangelo/touchgrass/internal/securitylog"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
@@ -233,7 +234,12 @@ func newServeServer(
 		devProxy = http.DefaultDevProxy
 	}
 
+	objects, err := objectstore.Open(os.Getenv("TOUCHGRASS_OBJECT_STORAGE_FILE"))
+	if err != nil {
+		return nil, fmt.Errorf("configuring object storage: %w", err)
+	}
 	return http.New(http.Config{
+		Objects:        objects,
 		Addr:           cfg.Addr,
 		Version:        version,
 		Logger:         logger,

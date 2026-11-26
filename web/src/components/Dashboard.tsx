@@ -251,7 +251,7 @@ export default function Dashboard({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground text-xs">Disk</dt>
+                  <dt className="text-muted-foreground text-xs"><button className="underline underline-offset-4" onClick={() => onView('images')}>Disk · manage storage</button></dt>
                   <dd className="font-mono text-lg font-semibold">
                     {system.disk_used_bytes === null || system.disk_total_bytes === null
                       ? 'n/a'

@@ -406,8 +406,8 @@ func TestRouteTableIsConsistent(t *testing.T) {
 		}
 	}
 
-	if len(seen) != 93 {
-		t.Errorf("route table has %d routes, want 93 (the 92 before S31 plus PUT /api/users/{id}/access)", len(seen))
+	if len(seen) != 97 {
+		t.Errorf("route table has %d routes, want 97 (including four storage routes)", len(seen))
 	}
 }
 

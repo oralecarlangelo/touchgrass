@@ -58,7 +58,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { id: 'databases', label: 'Databases' },
       { id: 'environment', label: 'Environment' },
-      { id: 'images', label: 'Images' },
+      { id: 'images', label: 'Storage' },
     ],
   },
   {

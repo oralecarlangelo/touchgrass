@@ -22,6 +22,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
+import StoragePanel from './StoragePanel';
+import BucketManager from './BucketManager';
 import {
   fetchImages,
   isUnauthorized,
@@ -41,6 +43,7 @@ export default function ImagesScreen({
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pruning, setPruning] = useState(false);
+ const [revision, setRevision] = useState(0);
 
   const load = useCallback(async () => {
     setError(null);
@@ -70,6 +73,7 @@ export default function ImagesScreen({
         `Pruned ${result.deleted} image${result.deleted === 1 ? '' : 's'}, reclaimed ${formatBytes(result.reclaimed_bytes)}.`,
       );
       setConfirmOpen(false);
+      setRevision(value => value + 1);
       await load();
     } catch (err) {
       if (isUnauthorized(err)) {
@@ -83,18 +87,14 @@ export default function ImagesScreen({
     }
   }
 
-  if (error !== null) {
-    return <ErrorState title="Couldn't load images" message={error} onRetry={() => void load()} />;
-  }
-
   const totalBytes = (images ?? []).reduce((sum, image) => sum + image.size_bytes, 0);
-  const dangling = (images ?? []).filter((image) => image.dangling);
+  const dangling = (images ?? []).filter((image) => image.dangling && image.containers === 0);
   const reclaimableBytes = dangling.reduce((sum, image) => sum + image.size_bytes, 0);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">Docker images</h1>
+        <h1 className="text-lg font-semibold tracking-tight">Storage management</h1>
         {isAdmin && (
           <Button
             variant="destructive"
@@ -108,6 +108,11 @@ export default function ImagesScreen({
         )}
       </div>
 
+      <StoragePanel revision={revision} onUnauthorized={onUnauthorized} />
+      {isAdmin && <BucketManager onUnauthorized={onUnauthorized} />}
+      <h2 className="text-lg font-semibold">Docker images</h2>
+      {error !== null && <ErrorState title="Couldn't load images" message={error} onRetry={() => void load()} />}
+      <p className="text-muted-foreground text-sm">Image sizes include shared layers. Totals below are logical estimates, not physical disk usage or guaranteed reclaimable space.</p>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
@@ -147,7 +152,7 @@ export default function ImagesScreen({
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Reclaimable</CardTitle>
+            <CardTitle className="text-sm font-medium">Dangling size estimate</CardTitle>
           </CardHeader>
           <CardContent>
             {images === null ? (
@@ -223,7 +228,7 @@ export default function ImagesScreen({
             <DialogTitle>Prune dangling images?</DialogTitle>
             <DialogDescription>
               Removes {dangling.length} dangling image{dangling.length === 1 ? '' : 's'} that no
-              container references — about {formatBytes(reclaimableBytes)} reclaimable. Tagged
+              container references — {formatBytes(reclaimableBytes)} logical size. Actual reclaimed space may be lower because layers are shared. Tagged
               images are left alone. This can&apos;t be undone.
             </DialogDescription>
           </DialogHeader>

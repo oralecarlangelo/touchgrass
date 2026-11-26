@@ -687,8 +687,6 @@ type jobRequest struct {
 
 // execute runs one backup or restore, then records and audits it.
 func (d *Database) execute(ctx context.Context, req jobRequest) {
-	defer d.release()
-
 	var (
 		detail string
 		err    error
@@ -747,7 +745,14 @@ func (d *Database) finishJob(ctx context.Context, outcome jobOutcome) {
 
 	d.audit(ctx, outcome.actor, action, result, auditDetail)
 
-	if err := d.jobs.Finish(ctx, outcome.id, status, detail, time.Now()); err != nil {
+	// Keep the terminal row and the in-memory guard in the same transition:
+	// Job may observe a finished row before Active can acquire this lock.
+	d.mutex.Lock()
+	err := d.jobs.Finish(ctx, outcome.id, status, detail, time.Now())
+	d.busy = false
+	d.mutex.Unlock()
+
+	if err != nil {
 		d.logger.Error("finishing database job failed", "job", outcome.id, "error", err)
 	}
 }

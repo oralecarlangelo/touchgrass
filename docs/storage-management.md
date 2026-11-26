@@ -43,7 +43,7 @@ An audit intent must persist before issuing a grant or executing a mutation. Com
 
 ## Verification and deployment
 
-Entry points: `ImagesScreen`, `StoragePanel`, `BucketManager`; API client: `web/src/lib/api.ts`; route policy: `internal/http/routes.go`; storage adapters: `internal/docker/storage.go` and `internal/objectstore/`; audit migration: `0025_storage_audit.sql`.
+Entry points: `ImagesScreen`, `StoragePanel`, `BucketManager`; API client: `web/src/lib/api.ts`; route policy: `internal/http/routes.go`; storage adapters: `internal/docker/storage.go` and `internal/objectstore/`; audit migration: `0026_storage_audit.sql`.
 
 Tests cover unknown sizes, shared cache accounting, persistent-volume labels, bucket allowlists, read-only writes, bounded listings, pagination, unique upload grants and request cancellation. Route policy matrices and OpenAPI cover all new endpoints. Migration tests preserve existing audit records.
 

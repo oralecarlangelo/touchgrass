@@ -15,16 +15,17 @@ import {
 
 const stateLabel: Record<State, string> = {
   healthy: 'healthy',
-  degraded: 'data loss',
+  degraded: 'degraded',
   stale: 'stale',
   'not-configured': 'setup needed',
+  disabled: 'disabled',
 };
 
 function StateIcon({ state }: { state: State }) {
   if (state === 'healthy') {
     return <CircleCheck className="h-4 w-4 text-emerald-600" aria-hidden />;
   }
-  if (state === 'not-configured') {
+  if (state === 'not-configured' || state === 'disabled') {
     return <CircleDashed className="text-muted-foreground h-4 w-4" aria-hidden />;
   }
   return <CircleX className="text-destructive h-4 w-4" aria-hidden />;
@@ -89,6 +90,7 @@ export default function CollectorStatus({
               const state = collectorState(collector);
               const lastSuccessAt = collectorLastSuccessAt(collector);
               const guidance = collectorGuidance(collector);
+              const showIncident = state === 'degraded' || state === 'stale';
 
               return (
                 <div key={collector.source} className="rounded-md border p-3">
@@ -102,22 +104,21 @@ export default function CollectorStatus({
                     </Badge>
                   </div>
                   <p className="text-muted-foreground mt-2 text-xs">
-                    {lastSuccessAt === null
-                      ? 'No successful sample yet. Check source setup and permissions.'
-                      : `Last success ${timeAgo(lastSuccessAt)}`}
+                    {lastSuccessAt !== null && `Last success ${timeAgo(lastSuccessAt)}`}
+                    {lastSuccessAt === null && state !== 'disabled' && 'No successful sample yet.'}
                   </p>
                   {collector.dropped_records > 0 && (
                     <p className="text-muted-foreground mt-1 text-xs">
                       {collector.dropped_records.toLocaleString()} records dropped in collector history
                     </p>
                   )}
-                  {state !== 'not-configured' && collector.last_error !== undefined && collector.last_error !== '' && (
+                  {showIncident && collector.last_error && (
                     <p className="text-destructive mt-1 truncate text-xs" title={collector.last_error}>
                       {collector.last_error}
                     </p>
                   )}
-                  {state !== 'not-configured' && !collector.coverage_complete && (
-                    <p className="text-destructive mt-1 text-xs">Partial coverage; prior findings remain active.</p>
+                  {showIncident && !collector.coverage_complete && (
+                    <p className="text-destructive mt-1 text-xs">Partial coverage. Prior findings remain active.</p>
                   )}
                   {guidance !== null && <p className="text-muted-foreground mt-1 text-xs">{guidance}</p>}
                   {collector.effective_interval_secs !== undefined && collector.effective_interval_secs > 0 && (

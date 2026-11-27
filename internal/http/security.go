@@ -185,24 +185,32 @@ func (s *Server) handleDeleteSecurityPolicy(w nethttp.ResponseWriter, r *nethttp
 }
 
 func parseSecurityFindingQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.Request) (model.SecurityFindingQuery, bool) {
+	params := r.URL.Query()
 	query := model.SecurityFindingQuery{
-		ContainerID: r.URL.Query().Get("container_id"), Sort: r.URL.Query().Get("sort"),
+		ContainerID: params.Get("container_id"), Sort: params.Get("sort"),
+		Source: params.Get("source"), Search: strings.TrimSpace(params.Get("q")),
 	}
-	if raw := r.URL.Query().Get("status"); raw != "" {
+	if !validFindingSearch(query) {
+		writeError(w, s.logger, errors.New("invalid finding search"), "invalid finding source or search", "invalid_request", nethttp.StatusBadRequest)
+		return model.SecurityFindingQuery{}, false
+	}
+
+	if raw := params.Get("status"); raw != "" {
 		query.Status = model.SecurityFindingStatus(raw)
 		switch query.Status {
 		case model.SecurityFindingStatusOpen, model.SecurityFindingStatusAcknowledged,
 			model.SecurityFindingStatusResolved, model.SecurityFindingStatusSuppressed:
-		case model.SecurityFindingStatusUnknown:
+		default:
 			writeError(w, s.logger, errors.New("invalid status"), "invalid status", "invalid_request", nethttp.StatusBadRequest)
 			return model.SecurityFindingQuery{}, false
 		}
 	}
-	if raw := r.URL.Query().Get("severity"); raw != "" {
+
+	if raw := params.Get("severity"); raw != "" {
 		query.Severity = model.SecuritySeverity(raw)
 		switch query.Severity {
 		case model.SecuritySeverityLow, model.SecuritySeverityMedium, model.SecuritySeverityHigh, model.SecuritySeverityCritical:
-		case model.SecuritySeverityUnknown:
+		default:
 			writeError(w, s.logger, errors.New("invalid severity"), "invalid severity", "invalid_request", nethttp.StatusBadRequest)
 			return model.SecurityFindingQuery{}, false
 		}
@@ -212,17 +220,28 @@ func parseSecurityFindingQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.R
 		return model.SecurityFindingQuery{}, false
 	}
 	var err error
-	query.Limit, err = optionalNonNegativeInt(r.URL.Query().Get("limit"))
+
+	query.Limit, err = optionalNonNegativeInt(params.Get("limit"))
 	if err != nil || query.Limit > 1000 {
 		writeError(w, s.logger, errors.New("invalid limit"), "invalid limit (want 1-1000)", "invalid_request", nethttp.StatusBadRequest)
 		return model.SecurityFindingQuery{}, false
 	}
-	query.Offset, err = optionalNonNegativeInt(r.URL.Query().Get("offset"))
+
+	query.Offset, err = optionalNonNegativeInt(params.Get("offset"))
 	if err != nil {
 		writeError(w, s.logger, errors.New("invalid offset"), "invalid offset", "invalid_request", nethttp.StatusBadRequest)
 		return model.SecurityFindingQuery{}, false
 	}
 	return query, true
+}
+
+func validFindingSearch(query model.SecurityFindingQuery) bool {
+	switch query.Source {
+	case "", "workload", "collector":
+		return len(query.Search) <= 512
+	default:
+		return false
+	}
 }
 
 func securityID(w nethttp.ResponseWriter, s *Server, r *nethttp.Request) (int64, bool) {

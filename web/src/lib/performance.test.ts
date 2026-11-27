@@ -142,7 +142,7 @@ describe('formatPercentile', () => {
 });
 
 describe('collectorState', () => {
-  it('distinguishes setup, stale, degraded, and healthy collectors', () => {
+  it('distinguishes disabled, setup, stale, failed, and healthy collectors', () => {
     expect(
       collectorState({ source: 'nginx_http', dropped_records: 0, coverage_complete: false, stale: true }),
     ).toBe('not-configured');
@@ -183,7 +183,10 @@ describe('collectorState', () => {
         coverage_complete: false,
         stale: true,
       }),
-    ).toBe('not-configured');
+    ).toBe('disabled');
+    expect(
+      collectorState({ source: 'redis', last_error: 'timeout', dropped_records: 0, coverage_complete: false, stale: true }),
+    ).toBe('degraded');
     expect(
       collectorState({
         source: 'docker_events',

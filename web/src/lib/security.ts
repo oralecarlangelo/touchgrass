@@ -1,26 +1,16 @@
 import type { SecurityFinding, SecuritySeverity } from './api.ts';
 
-export interface SecurityFilters {
-  severity: SecuritySeverity | 'all';
-  status: SecurityFinding['status'] | 'all';
-  query: string;
-}
-
 export function severityRank(value: SecuritySeverity): number {
   return { low: 1, medium: 2, high: 3, critical: 4 }[value];
 }
 
-export function filterSecurityFindings(
-  findings: SecurityFinding[],
-  filters: SecurityFilters,
-): SecurityFinding[] {
-  const query = filters.query.trim().toLowerCase();
-  return findings.filter((finding) =>
-    (filters.severity === 'all' || finding.severity === filters.severity) &&
-    (filters.status === 'all' || finding.status === filters.status) &&
-    (query === '' || finding.rule_id.toLowerCase().includes(query) ||
-      finding.container_id.toLowerCase().includes(query)),
-  );
+export function findingCollector(finding: SecurityFinding): string | null {
+  switch (finding.container_id) {
+    case 'collector:security_posture': return 'Container inspection';
+    case 'collector:security_process': return 'Runtime process scan';
+    case 'collector:security_diff': return 'Writable-layer scan';
+    default: return null;
+  }
 }
 
 export function countUrgentFindings(findings: SecurityFinding[]): { critical: number; high: number } {
@@ -38,6 +28,9 @@ export function severityLabel(value: SecuritySeverity): string {
 }
 
 export function recommendedResponse(finding: SecurityFinding): string {
+  if (findingCollector(finding) !== null) {
+    return 'Check the collector error and last successful sample in Performance. Open workload findings stay active until coverage recovers.';
+  }
   if (finding.rule_id.startsWith('correlation.')) {
     return 'Verify the executable source and deployment history, then isolate through your normal incident runbook if unauthorized.';
   }

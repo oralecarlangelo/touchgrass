@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { SecurityFinding } from '@/lib/api.ts';
-import { recommendedResponse, severityLabel } from '@/lib/security.ts';
+import { findingCollector, recommendedResponse, severityLabel } from '@/lib/security.ts';
 import { formatTime } from '@/lib/format.ts';
 
 export default function FindingDetail({
@@ -40,6 +40,7 @@ export default function FindingDetail({
   const [until, setUntil] = useState('');
   const evidence = useMemo(() => Object.entries(finding.evidence).sort(([a], [b]) => a.localeCompare(b)), [finding.evidence]);
   const canSuppress = reason.trim() !== '' && (expiryMode === 'non-expiring' || until !== '');
+  const collector = findingCollector(finding);
 
   return (
     <section aria-label="Security finding detail" tabIndex={-1} className="space-y-4">
@@ -63,9 +64,11 @@ export default function FindingDetail({
             <CardDescription>{recommendedResponse(finding)}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <button className="text-primary font-mono text-xs underline underline-offset-4" type="button" onClick={() => onContainer(finding.container_id)}>
-              Container {finding.container_id}
-            </button>
+            {collector === null ? (
+              <button className="text-primary break-all text-left font-mono text-xs underline underline-offset-4" type="button" onClick={() => onContainer(finding.container_id)}>
+                Container {finding.container_id}
+              </button>
+            ) : <p className="font-medium">{collector}</p>}
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">
               <dt className="text-muted-foreground">Category</dt><dd>{finding.category}</dd>
               <dt className="text-muted-foreground">Confidence</dt><dd>{finding.confidence}</dd>

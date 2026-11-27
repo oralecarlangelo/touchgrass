@@ -157,18 +157,21 @@ type SecurityFindingQuery struct {
 	Status      SecurityFindingStatus
 	Severity    SecuritySeverity
 	ContainerID string
+	Source      string
+	Search      string
 	Sort        string
 	Limit       int
 	Offset      int
 }
 
 type SecuritySummary struct {
-	Open             int        `json:"open"`
-	Critical         int        `json:"critical"`
-	High             int        `json:"high"`
-	Suppressed       int        `json:"suppressed"`
-	CoverageComplete bool       `json:"coverage_complete"`
-	LastObservedAt   *time.Time `json:"last_observed_at,omitempty"`
+	Open             int               `json:"open"`
+	Critical         int               `json:"critical"`
+	High             int               `json:"high"`
+	Suppressed       int               `json:"suppressed"`
+	CoverageComplete bool              `json:"coverage_complete"`
+	LastObservedAt   *time.Time        `json:"last_observed_at,omitempty"`
+	Collectors       []CollectorStatus `json:"collectors"`
 }
 
 type FindingSuppression struct {

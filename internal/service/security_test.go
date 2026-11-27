@@ -169,6 +169,26 @@ func TestSecuritySummaryMarksStalledCollectorIncomplete(t *testing.T) {
 	if summary.CoverageComplete {
 		t.Fatalf("summary = %+v, want stalled collector to make coverage incomplete", summary)
 	}
+
+	if err := cursors.Upsert(t.Context(), model.CollectorCursor{
+		Source: "security_process", LastRecordedAt: now, LastSuccessAt: now,
+		CoverageComplete: true, EffectiveIntervalSecs: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MarkCollectorDisabled(t.Context(), cursors, "security_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err = security.Summary(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !summary.CoverageComplete {
+		t.Fatalf("enabled collectors are current, got %+v", summary)
+	}
 }
 
 func TestSecurityCollectorEvaluationFailureCannotResolve(t *testing.T) {

@@ -2197,6 +2197,11 @@ paths:
       tags: [security]
       summary: List bounded finding episodes
       parameters:
+        - { name: source, in: query, schema: { type: string, enum: [workload, collector] } }
+        - name: q
+          in: query
+          description: Case-insensitive substring of a rule or container identifier (up to 512 bytes).
+          schema: { type: string, maxLength: 512 }
         - { name: status, in: query, schema: { type: string, enum: [open, acknowledged, resolved, suppressed] } }
         - { name: severity, in: query, schema: { type: string, enum: [low, medium, high, critical] } }
         - { name: container_id, in: query, schema: { type: string } }
@@ -2957,8 +2962,9 @@ components:
         critical: { type: integer, minimum: 0 }
         high: { type: integer, minimum: 0 }
         suppressed: { type: integer, minimum: 0 }
-        coverage_complete: { type: boolean, description: "True only when posture, process, and writable-layer collectors are complete and each reported within twice its effective interval" }
+        coverage_complete: { type: boolean, description: "True when each enabled security collector is complete and reported within twice its effective interval, with disabled collectors explicitly identified" }
         last_observed_at: { type: ['string', 'null'], format: date-time }
+        collectors: { $ref: '#/components/schemas/CollectorStatuses/properties/collectors' }
     SecurityFinding:
       type: object
       required: [id, fingerprint, episode, container_id, rule_id, category, severity, confidence, status, occurrence_count, opened_at, last_seen_at, evidence]

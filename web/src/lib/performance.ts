@@ -8,7 +8,7 @@ import type {
   ServiceView,
 } from './api.ts';
 
-export type CollectorState = 'healthy' | 'degraded' | 'stale' | 'not-configured';
+export type CollectorState = 'healthy' | 'degraded' | 'stale' | 'not-configured' | 'disabled';
 export interface TimelineMarker {
   id: string;
   at: string;
@@ -115,7 +115,10 @@ export function formatPercentile(value: number | null | undefined): string {
 
 export function collectorState(status: CollectorStatusView): CollectorState {
   if (status.last_error === 'disabled') {
-    return 'not-configured';
+    return 'disabled';
+  }
+  if (status.last_error) {
+    return 'degraded';
   }
   if (collectorLastSuccessAt(status) === null) {
     return 'not-configured';
@@ -125,7 +128,7 @@ export function collectorState(status: CollectorStatusView): CollectorState {
     return 'stale';
   }
 
-  if (!status.coverage_complete || (status.last_error ?? '') !== '') {
+  if (!status.coverage_complete) {
     return 'degraded';
   }
 
@@ -179,7 +182,7 @@ export function collectorSetupSnippet(
 ): string {
   const missing = new Set(
     collectors
-      .filter((collector) => collectorState(collector) === 'not-configured')
+      .filter((collector) => !collectorLastSuccessAt(collector) || collectorState(collector) === 'disabled')
       .map((collector) => collector.source),
   );
   const service = services.find((candidate) => candidate.id === serviceId) ?? services[0];

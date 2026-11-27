@@ -54,6 +54,49 @@ func TestHandleSecurityReadMatrixAndSafeDTO(t *testing.T) {
 	}
 }
 
+func TestSecurityFindingsFilterBeforePaging(t *testing.T) {
+	t.Parallel()
+	server, _ := fullTestServer(t)
+
+	for _, item := range []struct{ container, rule string }{
+		{container: "example-api", rule: "posture.first"},
+		{container: "example-worker", rule: "posture.second"},
+		{container: "collector:security_process", rule: "collector.security_process.failure"},
+	} {
+		_, err := server.security.Evaluate(t.Context(), model.SecurityEvaluation{Observation: model.SecurityObservation{
+			ContainerID: item.container, RuleID: item.rule, Category: model.SecurityCategoryPosture,
+			Severity: model.SecuritySeverityHigh, Confidence: model.SecurityConfidenceHigh,
+			Detected: true, CoverageComplete: true,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cookie := viewerCookie(t, server)
+
+	for _, tt := range []struct{ query, rule string }{
+		{query: "source=workload&status=open&limit=1&offset=1", rule: "posture.first"},
+		{query: "source=workload&status=open&limit=1&q=EXAMPLE-API", rule: "posture.first"},
+		{query: "source=collector&limit=1", rule: "collector.security_process.failure"},
+	} {
+		t.Run(tt.query, func(t *testing.T) {
+			t.Parallel()
+
+			status, body := securityRequest(t, server, cookie, nethttp.MethodGet, "/api/security/findings?"+tt.query, "")
+
+			var response securityFindingsResponse
+			if err := json.Unmarshal([]byte(body), &response); err != nil {
+				t.Fatalf("decode status %d: %v", status, err)
+			}
+
+			if status != nethttp.StatusOK || len(response.Findings) != 1 || response.Findings[0].RuleID != tt.rule {
+				t.Fatalf("status=%d body=%s, want one finding for %s", status, body, tt.rule)
+			}
+		})
+	}
+}
+
 func TestHandleSecurityWorkflowAuthorizationAndActor(t *testing.T) {
 	t.Parallel()
 	server, _ := fullTestServer(t)

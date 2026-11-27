@@ -512,9 +512,16 @@ export async function deleteRule(id: number): Promise<void> {
   await request<undefined>(`/api/alerts/rules/${id}`, { method: 'DELETE' });
 }
 
-export async function fetchDeploys(serviceId: string, signal?: AbortSignal, limit = 50): Promise<Deploy[]> {
+export async function fetchDeploys(
+  serviceId: string,
+  signal?: AbortSignal,
+  limit = 50,
+  beforeId?: number,
+): Promise<Deploy[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (beforeId !== undefined) query.set('before_id', String(beforeId));
   const body = await request<DeploysResponse>(
-    `/api/services/${encodeURIComponent(serviceId)}/deploys?limit=${limit}`,
+    `/api/services/${encodeURIComponent(serviceId)}/deploys?${query}`,
     { signal },
   );
 
@@ -1167,12 +1174,18 @@ export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}, 
   return (body.lines ?? []).map(normalizeSdkLogEntry);
 }
 
-export async function fetchAudit(serviceId: string, limit = 100, signal?: AbortSignal): Promise<AuditEntry[]> {
-  const params = new URLSearchParams({ limit: String(limit) });
+export async function fetchAudit(
+  serviceId: string,
+  bounds: { start?: string; end?: string },
+  signal: AbortSignal,
+): Promise<AuditEntry[]> {
+  const params = new URLSearchParams({ limit: '100' });
 
   if (serviceId !== '') {
     params.set('service_id', serviceId);
   }
+  if (bounds.start) params.set('start', bounds.start);
+  if (bounds.end) params.set('end', bounds.end);
 
   const body = await request<AuditResponse>(`/api/audit?${params.toString()}`, { signal });
 
@@ -1398,19 +1411,18 @@ export async function fetchFleetContainerSummary(signal?: AbortSignal): Promise<
   return request<FleetContainerSummary>('/api/system/containers?view=summary', { signal });
 }
 
-export async function fetchFleetContainers(signal?: AbortSignal): Promise<FleetContainersResponse> {
-  const pageSize = 500;
-  const containers: FleetContainer[] = [];
-  let freshness: ContainerFreshness | undefined;
-  for (let offset = 0; ; offset += pageSize) {
-    const body = await request<FleetContainersResponse>(`/api/system/containers?limit=${pageSize}&offset=${offset}`, { signal });
-    const page = body.containers ?? [];
-    containers.push(...page);
-    freshness = body.freshness;
-    if (page.length < pageSize) break;
-  }
-  if (!freshness) throw new Error('Container inventory response did not include freshness metadata');
-  return { containers, freshness };
+export async function fetchFleetContainerPage(
+  query: { offset: number; limit: number; sort: string; filter: string; search: string },
+  signal: AbortSignal,
+): Promise<FleetContainersResponse> {
+  const params = new URLSearchParams({
+    limit: String(query.limit), offset: String(query.offset), sort: query.sort,
+  });
+  if (query.filter !== 'all') params.set('filter', query.filter);
+  if (query.search !== '') params.set('q', query.search);
+  const body = await request<FleetContainersResponse>(`/api/system/containers?${params}`, { signal });
+  if (!body.freshness) throw new Error('Container inventory response did not include freshness metadata');
+  return { containers: body.containers ?? [], freshness: body.freshness };
 }
 
 export interface SafeContainerInspection {

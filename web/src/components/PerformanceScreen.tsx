@@ -22,7 +22,7 @@ import PerformanceSummary, {
 import RouteTable from './performance/RouteTable.tsx';
 import {
   fetchCollectorStatuses,
-  fetchFleetContainers,
+  fetchDatabases,
   fetchPerformancePostgres,
   fetchPerformanceRedis,
   fetchPerformanceRoutes,
@@ -94,7 +94,7 @@ export default function PerformanceScreen({
   const postgres = usePanelRead(scope, hasScope && dependenciesOpen ? readPostgres : null, refresh, onUnauthorized);
   const redis = usePanelRead(scope, hasScope && dependenciesOpen ? readRedis : null, refresh, onUnauthorized);
   const collectors = usePanelRead('fleet', canFleet ? fetchCollectorStatuses : null, refresh, onUnauthorized);
-  const discovery = usePanelRead('fleet', canFleet && discoveryOpen ? fetchFleetContainers : null, refresh, onUnauthorized);
+  const discovery = usePanelRead('fleet', canFleet && discoveryOpen ? fetchDatabases : null, refresh, onUnauthorized);
 
   const refreshing = summary.loading || collectors.loading;
   const collectorWarnings = (collectors.data ?? []).filter((collector) => {
@@ -182,7 +182,7 @@ export default function PerformanceScreen({
         <p className="text-muted-foreground text-sm" role="status">Loading collector status…</p>
       )}
       {collectors.data !== null && (
-        <CollectorStatus collectors={collectors.data} services={services} serviceId={serviceId} fleetContainers={[]} />
+        <CollectorStatus collectors={collectors.data} services={services} serviceId={serviceId} />
       )}
 
       <DetailsPanel title="Timeline" description="Compare latency, deploys, and runtime events" onChange={setTimelineOpen}>
@@ -256,14 +256,19 @@ export default function PerformanceScreen({
         <DetailsPanel title="Discover collector setup" description="Find Docker database sources" onChange={setDiscoveryOpen}>
           <PanelError name="discovered sources" error={discovery.error} retry={discovery.retry} />
           {discovery.loading && discovery.data === null && <p role="status">Loading discovered sources…</p>}
-          {discovery.data !== null && (
+          {discovery.data?.inventory_status === 'current' && (
             <CollectorStatus
               collectors={collectors.data ?? []}
               services={services}
               serviceId={serviceId}
-              fleetContainers={discovery.data.containers}
+              databaseSources={discovery.data.databases}
               setupOnly
             />
+          )}
+          {discovery.data && discovery.data.inventory_status !== 'current' && (
+            <p role="status" className="text-muted-foreground text-sm">
+              Database inventory is {discovery.data.inventory_status}. Setup suggestions resume with a current snapshot.
+            </p>
           )}
         </DetailsPanel>
       )}

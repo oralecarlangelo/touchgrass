@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +25,7 @@ import {
 import ErrorState from './ErrorState.tsx';
 import PromoteDialog from './PromoteDialog.tsx';
 import {
-  fetchFleetContainers,
+  fetchFleetContainerPage,
   fetchSystem,
   fetchSystemHistory,
   isUnauthorized,
@@ -37,6 +37,7 @@ import {
 import { formatBytes, formatDuration, timeAgo } from '@/lib/format.ts';
 
 const refreshIntervalMs = 30_000;
+const containerPageSize = 40;
 
 const rangeOptions = [
   { hours: 1, label: '1h' },
@@ -170,32 +171,13 @@ function memPercent(container: FleetContainer): number | null {
   return (container.mem_bytes / container.mem_limit) * 100;
 }
 
-export type ContainerFilter = 'all' | 'running' | 'stopped' | 'unknown' | 'risky';
+const containerFilters = ['all', 'running', 'stopped', 'unknown', 'risky'] as const;
 
-export function filterFleetContainers(
-  containers: FleetContainer[],
-  filter: ContainerFilter,
-  query: string,
-): FleetContainer[] {
-  const needle = query.trim().toLowerCase();
-
-  return containers
-    .filter((container) => {
-      const matchesText = needle === '' || container.name.toLowerCase().includes(needle) ||
-        container.project.toLowerCase().includes(needle) || container.id.toLowerCase().includes(needle);
-      if (!matchesText) return false;
-      switch (filter) {
-        case 'running': return container.state === 'running';
-        case 'stopped': return container.state !== 'running';
-        case 'unknown': return container.classification === 'unknown';
-        case 'risky': return Object.values(container.risk_counts).some((count) => count > 0);
-        case 'all': return true;
-      }
-    })
-    .sort((a, b) => {
-      if (a.managed !== b.managed) return a.managed ? 1 : -1;
-      return (b.cpu_percent ?? -1) - (a.cpu_percent ?? -1) || a.name.localeCompare(b.name);
-    });
+interface ContainerPage {
+  scope: string;
+  rows: FleetContainer[];
+  freshness: ContainerFreshness;
+  hasNext: boolean;
 }
 
 export default function FleetScreen({
@@ -210,10 +192,10 @@ export default function FleetScreen({
   isAdmin: boolean;
 }) {
   const [system, setSystem] = useState<SystemSnapshot | null>(null);
-  const [containers, setContainers] = useState<FleetContainer[] | null>(null);
-  const [freshness, setFreshness] = useState<ContainerFreshness | null>(null);
+  const [containerPage, setContainerPage] = useState<ContainerPage | null>(null);
+  const [topCPU, setTopCPU] = useState<FleetContainer[] | null>(null);
   const [systemError, setSystemError] = useState<string | null>(null);
-  const [containersError, setContainersError] = useState<string | null>(null);
+  const [containerFailure, setContainerFailure] = useState<{ scope: string; message: string } | null>(null);
   const [range, setRange] = useState(24);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [cpu, setCpu] = useState<HistoryPoint[] | null>(null);
@@ -224,10 +206,18 @@ export default function FleetScreen({
   const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
   const promoteTrigger = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<ContainerFilter>('all');
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<(typeof containerFilters)[number]>('all');
+  const [sort, setSort] = useState('cpu');
+  const [page, setPage] = useState(0);
   const [systemAttempt, setSystemAttempt] = useState(0);
   const [containersAttempt, setContainersAttempt] = useState(0);
   const [historyAttempt, setHistoryAttempt] = useState(0);
+  const pageScope = JSON.stringify([page, filter, search, sort]);
+  const containers = containerPage?.scope === pageScope ? containerPage.rows : null;
+  const freshness = containerPage?.freshness ?? null;
+  const containersError = containerFailure?.scope === pageScope ? containerFailure.message : null;
+  const showingTopPage = page === 0 && search === '' && filter === 'all' && sort === 'cpu';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -274,11 +264,16 @@ export default function FleetScreen({
       if (timer !== undefined) clearTimeout(timer);
       running = true;
       try {
-        const fleet = await fetchFleetContainers(controller.signal);
+        const fleet = await fetchFleetContainerPage({
+          offset: page * containerPageSize, limit: containerPageSize + 1, sort, filter, search,
+        }, controller.signal);
         if (!controller.signal.aborted) {
-          setContainers(fleet.containers);
-          setFreshness(fleet.freshness);
-          setContainersError(null);
+          setContainerPage({
+            scope: pageScope, rows: fleet.containers.slice(0, containerPageSize), freshness: fleet.freshness,
+            hasNext: fleet.containers.length > containerPageSize,
+          });
+          if (showingTopPage) setTopCPU(fleet.containers.slice(0, 5).filter((container) => (container.cpu_percent ?? 0) > 0));
+          setContainerFailure(null);
         }
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -286,10 +281,10 @@ export default function FleetScreen({
           onUnauthorized();
           return;
         }
-        setContainersError(err instanceof Error ? err.message : String(err));
+        setContainerFailure({ scope: pageScope, message: err instanceof Error ? err.message : String(err) });
       } finally {
         running = false;
-        if (!controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
+        if (page === 0 && !controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
       }
     };
     void load();
@@ -300,7 +295,7 @@ export default function FleetScreen({
       controller.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [containersAttempt, onUnauthorized]);
+  }, [containersAttempt, filter, onUnauthorized, page, pageScope, search, showingTopPage, sort]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -346,16 +341,6 @@ export default function FleetScreen({
   const memSeries = useMemo(() => toSeries(mem ?? [], range), [mem, range]);
   const loadSeries = useMemo(() => toSeries(loadAvg ?? [], range), [loadAvg, range]);
   const historyLoading = loadedRange !== range || cpu === null || mem === null || loadAvg === null;
-
-  const managedCount = useMemo(
-    () => (containers ?? []).filter((container) => container.managed).length,
-    [containers],
-  );
-  const unmanagedCount = (containers?.length ?? 0) - managedCount;
-
-  const visibleContainers = useMemo(() => {
-    return filterFleetContainers(containers ?? [], filter, query);
-  }, [containers, filter, query]);
 
   return (
     <div className="space-y-4">
@@ -421,18 +406,18 @@ export default function FleetScreen({
         </>
       )}
 
-      {containers !== null && (
+      {topCPU !== null && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Top container CPU</CardTitle>
-            <CardDescription>Latest available samples. 100% represents one CPU core.</CardDescription>
+            <CardDescription>
+              {showingTopPage ? 'Latest available samples.' : 'Last samples from the unfiltered CPU view.'}
+              {' '}100% represents one CPU core.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="divide-y">
-              {containers.filter((container) => (container.cpu_percent ?? 0) > 0)
-                .sort((a, b) => (b.cpu_percent ?? 0) - (a.cpu_percent ?? 0))
-                .slice(0, 5)
-                .map((container) => (
+              {topCPU.map((container) => (
                   <li key={container.id} className="flex justify-between gap-3 py-1.5 text-sm">
                     <button type="button" className="min-w-0 truncate text-left underline-offset-4 hover:underline"
                       onClick={() => onSelectContainer(container.id)}>{container.name}</button>
@@ -440,7 +425,7 @@ export default function FleetScreen({
                   </li>
                 ))}
             </ul>
-            {!containers.some((container) => (container.cpu_percent ?? 0) > 0) && (
+            {topCPU.length === 0 && (
               <p className="text-muted-foreground text-sm">No container CPU usage sampled.</p>
             )}
           </CardContent>
@@ -448,27 +433,37 @@ export default function FleetScreen({
       )}
 
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-4">
+            <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-4">
               <div className="space-y-1.5">
                 <CardTitle className="text-sm font-medium">
-                  Containers{containers === null ? '' : ` (${containers.length})`}
+                  Containers
                 </CardTitle>
                 {containers !== null && (
                   <CardDescription>
-                    {managedCount} managed · {unmanagedCount} unmanaged
-                    {unmanagedCount > 0
-                      ? ' — press Manage on an unmanaged container to bring it under touchgrass deploys.'
-                      : ' — everything on this host is under management.'}
+                    {freshness?.observed_count ?? 0} seen in the last inventory
                   </CardDescription>
                 )}
               </div>
-              <Input
-                placeholder="Filter…"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="max-w-44"
-                aria-label="Filter containers"
-              />
+              <form className="flex min-w-0 gap-2" onSubmit={(event) => {
+                event.preventDefault();
+                setSearch(query.trim());
+                setPage(0);
+              }}>
+                <Input
+                  placeholder="Name, project or ID"
+                  value={query}
+                  maxLength={128}
+                  onChange={(event) => setQuery(event.target.value)}
+                  className="w-44 min-w-0"
+                  aria-label="Search containers"
+                />
+                <Button type="submit" variant="outline" size="sm">Search</Button>
+                {search !== '' && <Button variant="ghost" type="button" size="sm" onClick={() => {
+                  setQuery('');
+                  setSearch('');
+                  setPage(0);
+                }}>Clear</Button>}
+              </form>
             </CardHeader>
             <CardContent>
               {containersError !== null && containers === null && (
@@ -493,17 +488,24 @@ export default function FleetScreen({
                 </div>
               )}
               <div className="mb-4 flex flex-wrap gap-2" aria-label="Container filters">
-                {(['all', 'running', 'stopped', 'unknown', 'risky'] as ContainerFilter[]).map((value) => (
+                {containerFilters.map((value) => (
                   <Button
                     key={value}
                     size="sm"
                     variant={filter === value ? 'default' : 'outline'}
                     aria-pressed={filter === value}
-                    onClick={() => setFilter(value)}
+                    onClick={() => { setFilter(value); setPage(0); }}
                   >
                     {value[0]?.toUpperCase()}{value.slice(1)}
                   </Button>
                 ))}
+                <Select value={sort} onValueChange={(value) => { setSort(value); setPage(0); }}>
+                  <SelectTrigger className="sm:ml-auto" aria-label="Sort containers"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cpu">Highest CPU</SelectItem>
+                    <SelectItem value="project">Group by Compose project</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               {containers === null && containersError === null ? (
                 <div className="space-y-2" aria-label="Loading containers">
@@ -512,7 +514,10 @@ export default function FleetScreen({
                 </div>
               ) : containers === null ? null : containers.length === 0 ? (
                 <p className="text-muted-foreground py-6 text-center text-sm">
-                  No containers reported by the daemon.
+                  {page > 0 ? 'This page is empty. Go back to the previous page.'
+                    : filter !== 'all' || search !== '' ? 'No containers match these filters.'
+                    : freshness?.reconciled_at ? 'No containers reported by the daemon.'
+                    : 'Waiting for the first container inventory.'}
                 </p>
               ) : (
                 <Table>
@@ -530,101 +535,122 @@ export default function FleetScreen({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {visibleContainers.map((container) => {
+                    {containers.map((container, index) => {
                       const mem = memPercent(container);
                       const serviceId = container.service_id ?? '';
+                      const projectStart = sort === 'project' &&
+                        (index === 0 || containers[index - 1]?.project !== container.project);
 
                       return (
-                        <TableRow key={container.id}>
-                          <TableCell className="font-mono text-xs font-medium">
-                            <button type="button" className="max-w-40 break-all whitespace-normal text-left hover:underline md:max-w-none md:break-normal md:whitespace-nowrap" onClick={() => onSelectContainer(container.id)}>
-                              {container.name}
-                            </button>
-                            <div className="text-muted-foreground mt-1 space-y-1 font-sans font-normal whitespace-normal md:hidden">
-                              <p className="break-words">{[container.project, container.state].filter(Boolean).join(' · ')}</p>
-                              <ManagedBadge container={container} onSelectService={onSelectService} />
-                              {container.mem_bytes !== null && <p>Memory {formatBytes(container.mem_bytes)}</p>}
-                            </div>
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell">
-                            {container.project === '' ? (
-                              <span className="text-muted-foreground">—</span>
-                            ) : (
-                              <Badge variant="outline">{container.project}</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell">
-                            <ManagedBadge container={container} onSelectService={onSelectService} />
-                          </TableCell>
-                          <TableCell className="hidden md:table-cell">
-                            <div className="space-y-1">
-                              {container.state === 'running' ? (
-                                <Badge variant="default">{container.state}</Badge>
+                        <Fragment key={container.id}>
+                          {projectStart && (
+                            <TableRow className="bg-muted/40">
+                              <TableCell colSpan={9} className="break-words whitespace-normal text-sm font-medium">
+                                {container.project || 'No Compose project'}
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          <TableRow>
+                            <TableCell className="font-mono text-xs font-medium">
+                              <button type="button" className="max-w-40 break-all whitespace-normal text-left hover:underline md:max-w-none md:break-normal md:whitespace-nowrap" onClick={() => onSelectContainer(container.id)}>
+                                {container.name}
+                              </button>
+                              <div className="text-muted-foreground mt-1 space-y-1 font-sans font-normal whitespace-normal md:hidden">
+                                <p className="break-words">{[container.project, container.state].filter(Boolean).join(' · ')}</p>
+                                <ManagedBadge container={container} onSelectService={onSelectService} />
+                                {container.mem_bytes !== null && <p>Memory {formatBytes(container.mem_bytes)}</p>}
+                              </div>
+                            </TableCell>
+                            <TableCell className="hidden md:table-cell">
+                              {container.project === '' ? (
+                                <span className="text-muted-foreground">—</span>
                               ) : (
-                                <Badge variant="secondary">{container.state}</Badge>
+                                <Badge variant="outline">{container.project}</Badge>
                               )}
-                              {container.status !== undefined && container.status !== '' && (
-                                <p className="text-muted-foreground max-w-56 text-xs">
-                                  {container.status}
-                                </p>
+                            </TableCell>
+                            <TableCell className="hidden md:table-cell">
+                              <ManagedBadge container={container} onSelectService={onSelectService} />
+                            </TableCell>
+                            <TableCell className="hidden md:table-cell">
+                              <div className="space-y-1">
+                                {container.state === 'running' ? (
+                                  <Badge variant="default">{container.state}</Badge>
+                                ) : (
+                                  <Badge variant="secondary">{container.state}</Badge>
+                                )}
+                                {container.status !== undefined && container.status !== '' && (
+                                  <p className="text-muted-foreground max-w-56 text-xs">
+                                    {container.status}
+                                  </p>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right font-mono">
+                              {container.cpu_percent === null ? 'n/a' : `${container.cpu_percent.toFixed(1)}%`}
+                            </TableCell>
+                            <TableCell className="hidden text-right font-mono md:table-cell">
+                              {container.mem_bytes === null ? 'n/a' : formatBytes(container.mem_bytes)}
+                              {mem !== null && (
+                                <span className="text-muted-foreground"> ({mem.toFixed(1)}%)</span>
                               )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {container.cpu_percent === null ? 'n/a' : `${container.cpu_percent.toFixed(1)}%`}
-                          </TableCell>
-                          <TableCell className="hidden text-right font-mono md:table-cell">
-                            {container.mem_bytes === null ? 'n/a' : formatBytes(container.mem_bytes)}
-                            {mem !== null && (
-                              <span className="text-muted-foreground"> ({mem.toFixed(1)}%)</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="hidden text-right font-mono md:table-cell">
-                            {container.restarts === null ? 'n/a' : container.restarts > 0 ? (
-                              <Badge variant="destructive">{container.restarts}</Badge>
-                            ) : (
-                              container.restarts
-                            )}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground hidden text-right text-xs md:table-cell">
-                            {container.sampled_at === undefined && container.last_seen_at === undefined
-                              ? 'n/a'
-                              : timeAgo(container.sampled_at ?? container.last_seen_at ?? '')}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {!container.managed ? (
-                              isAdmin ? (
-                                <Button size="sm" onClick={(event) => {
-                                  promoteTrigger.current = event.currentTarget;
-                                  setPromoteTarget(container.name);
-                                }}>
-                                  Manage
-                                </Button>
-                              ) : null
-                            ) : (
-                              serviceId !== '' && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => onSelectService(serviceId)}
-                                >
-                                  Open
-                                </Button>
-                              )
-                            )}
-                          </TableCell>
-                        </TableRow>
+                            </TableCell>
+                            <TableCell className="hidden text-right font-mono md:table-cell">
+                              {container.restarts === null ? 'n/a' : container.restarts > 0 ? (
+                                <Badge variant="destructive">{container.restarts}</Badge>
+                              ) : (
+                                container.restarts
+                              )}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground hidden text-right text-xs md:table-cell">
+                              {container.sampled_at === undefined && container.last_seen_at === undefined
+                                ? 'n/a'
+                                : timeAgo(container.sampled_at ?? container.last_seen_at ?? '')}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {!container.managed ? (
+                                isAdmin ? (
+                                  <Button size="sm" onClick={(event) => {
+                                    promoteTrigger.current = event.currentTarget;
+                                    setPromoteTarget(container.name);
+                                  }}>
+                                    Manage
+                                  </Button>
+                                ) : null
+                              ) : (
+                                serviceId !== '' && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => onSelectService(serviceId)}
+                                  >
+                                    Open
+                                  </Button>
+                                )
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        </Fragment>
                       );
                     })}
-                    {visibleContainers.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={9} className="text-muted-foreground text-center">
-                          No containers match this filter.
-                        </TableCell>
-                      </TableRow>
-                    )}
                   </TableBody>
                 </Table>
+              )}
+              {(page > 0 || containerPage?.scope === pageScope && containerPage.hasNext) && (
+                <div className="mt-4 flex flex-wrap items-center justify-end gap-2" aria-label="Container pages">
+                  <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((value) => value - 1)}>
+                    Previous
+                  </Button>
+                  <span className="text-muted-foreground text-sm">Page {page + 1}</span>
+                  <Button variant="outline" size="sm" disabled={containerPage?.scope !== pageScope || !containerPage.hasNext}
+                    onClick={() => setPage((value) => value + 1)}>
+                    Next
+                  </Button>
+                  {page > 0 && (
+                    <Button variant="ghost" size="sm" onClick={() => setContainersAttempt((value) => value + 1)}>
+                      Refresh page
+                    </Button>
+                  )}
+                </div>
               )}
             </CardContent>
       </Card>

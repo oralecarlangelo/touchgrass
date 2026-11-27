@@ -43,7 +43,7 @@ export function EnvNotConfigured({
           environment entry. {isAdmin ? 'Set one on the host and restart the server.' : 'Ask an admin to set one on the host.'}
         </p>
         {isAdmin && (
-          <pre className="rounded-md bg-zinc-950 p-3 text-left font-mono text-xs leading-relaxed text-zinc-100 dark:bg-zinc-900">
+          <pre className="rounded-md bg-zinc-950 p-3 text-left font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-100 dark:bg-zinc-900">
             {[
               '# generate once: 32 random bytes in a file only the server user can read',
               'sudo install -d -m 0700 /etc/touchgrass',
@@ -75,7 +75,7 @@ export function EnvNotConfigured({
       {isAdmin && (
         <pre
           aria-label="Service config snippet"
-          className="rounded-md bg-zinc-950 p-3 text-left font-mono text-xs leading-relaxed text-zinc-100 dark:bg-zinc-900"
+          className="rounded-md bg-zinc-950 p-3 text-left font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-100 dark:bg-zinc-900"
         >
           {envTargetConfigSnippet(serviceId)}
         </pre>

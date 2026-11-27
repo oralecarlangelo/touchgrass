@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	nethttp "net/http"
@@ -50,7 +51,18 @@ func (s *Server) handleDeploys(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	deploys, err := s.deploys.History(r.Context(), r.PathValue("id"), limit)
+	var beforeID int64
+
+	if raw := r.URL.Query().Get("before_id"); raw != "" {
+		beforeID, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || beforeID <= 0 {
+			writeError(w, s.logger, errors.New("invalid history cursor"), "before_id must be positive", "invalid_request", nethttp.StatusBadRequest)
+
+			return
+		}
+	}
+
+	deploys, err := s.deploys.HistoryBefore(r.Context(), r.PathValue("id"), limit, beforeID)
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to load deploy history")
 

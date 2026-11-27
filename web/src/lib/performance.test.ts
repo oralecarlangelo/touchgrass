@@ -267,7 +267,7 @@ describe('collectorState', () => {
     ).toContain('TOUCHGRASS_REDIS_CONTAINER');
   });
 
-  it('builds one setup snippet from discovered generic containers', () => {
+  it('builds one setup snippet from a current database inventory', () => {
     expect(
       collectorSetupSnippet(
         [
@@ -282,23 +282,27 @@ describe('collectorState', () => {
         ],
         'api',
         [
-          {
-            id: '1', name: 'postgres-db-1', project: 'infra', managed: false, state: 'running',
-            classification: 'unknown', current: true, present: true, health: 'healthy', cpu_percent: null,
-            mem_bytes: null, mem_limit: null, restarts: null, risk_counts: { critical: 0, high: 0, medium: 0, low: 0 },
-          },
-          {
-            id: '2', name: 'redis-cache-1', project: 'infra', managed: false, state: 'running',
-            classification: 'unknown', current: true, present: true, health: 'healthy', cpu_percent: null,
-            mem_bytes: null, mem_limit: null, restarts: null, risk_counts: { critical: 0, high: 0, medium: 0, low: 0 },
-          },
+          { id: '1', label: 'PostgreSQL', container: 'data-primary', configured: false, reachable: true, status: 'running' },
+          { id: '2', label: 'Redis', container: 'shared-cache', configured: false, reachable: true, status: 'running' },
         ],
       ),
     ).toBe(
       'TOUCHGRASS_PERFORMANCE_SERVICE_ID="api"\n' +
-        'TOUCHGRASS_POSTGRES_CONTAINER="postgres-db-1"\n' +
-        'TOUCHGRASS_REDIS_CONTAINER="redis-cache-1"',
+        'TOUCHGRASS_POSTGRES_CONTAINER="data-primary"\n' +
+        'TOUCHGRASS_REDIS_CONTAINER="shared-cache"',
     );
+  });
+
+  it('leaves the setup empty when more than one unmatched database could be used', () => {
+    expect(collectorSetupSnippet(
+      [{ source: 'postgres', dropped_records: 0, coverage_complete: false, stale: false }],
+      [{ id: 'api', name: 'Generic API', strategy: 'compose', live_color: '', health: 'healthy', colors: [], containers: [] }],
+      'api',
+      [
+        { id: '1', label: 'PostgreSQL', container: 'data-a', configured: false, reachable: true, status: 'running' },
+        { id: '2', label: 'PostgreSQL', container: 'data-b', configured: false, reachable: true, status: 'running' },
+      ],
+    )).toBe('');
   });
 });
 

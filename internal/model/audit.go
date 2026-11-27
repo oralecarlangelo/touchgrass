@@ -57,6 +57,15 @@ type Audit struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// AuditQuery filters entries before limiting the response. Nil ServiceIDs
+// selects every service, while an empty non-nil list selects no entries.
+type AuditQuery struct {
+	ServiceIDs []string
+	Start      *time.Time
+	End        *time.Time
+	Limit      int
+}
+
 // AuditRecord carries new-entry input. An empty ServiceID records a
 // global action such as login.
 type AuditRecord struct {

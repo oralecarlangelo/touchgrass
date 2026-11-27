@@ -35,11 +35,13 @@ container, and promotion does not approve its security baseline.
 
 ## The page
 
-Host stat cards sit above CPU/memory/load charts and the fleet table. The
-table shows lifecycle state, classification, ownership, image, CPU, memory,
-restart count, and freshness. Open a row for normalized security posture,
-baseline state, current findings, and safe operator actions. Stopped rows
-show unavailable live metrics as null/“not running”; zero is never invented.
+Host stat cards and the busiest containers sit above the fleet table.
+Search by name, Compose project, or ID. The table loads one page at a time
+and can group containers by Compose project. Expand **Host history** to
+review the CPU, memory, and load charts.
+
+Open a container for its image, normalized security posture, baseline,
+and current findings. Live metrics are shown for containers with a sample.
 
 ## Security activation and findings
 
@@ -72,15 +74,15 @@ and dropped records.
 
 ## API
 
-- `GET /api/system/containers` — complete current inventory and freshness.
+- `GET /api/system/containers` — paged current inventory and freshness.
 - `GET /api/system/containers/{id}` — lifecycle and safe posture detail.
-- `GET /api/system/history?metric=cpu|mem|load&hours=N` — host history,
+- `GET /api/system/history?metric=all&hours=N` — host history,
   bucketed to at most 1500 points (default 24h, max 168h).
 - `GET /api/security/summary` and `/api/security/findings` — posture and
   bounded finding episodes.
 - `GET/POST/PATCH/DELETE /api/security/policies...` — audited global or
   service policy management; mutations are admin-only.
-- `GET /api/onboarding/suggest?container=<name>` and `POST /api/services` —
+- `GET /api/onboarding/suggest?container=<name>&probe=false` and `POST /api/services` —
   promotion draft and creation.
 
 Shapes and bounds are in the [REST API reference](/api/).

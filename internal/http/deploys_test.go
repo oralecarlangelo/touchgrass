@@ -2,9 +2,13 @@ package http
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	nethttp "net/http"
+
+	"github.com/oralecarlangelo/touchgrass/internal/model"
+	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
 func TestHandleRecordListDeploys(t *testing.T) {
@@ -43,6 +47,42 @@ func TestHandleRecordListDeploys(t *testing.T) {
 
 	if len(got.Deploys) != 1 || got.Deploys[0].SHA != "abc123" || got.Deploys[0].Type != "manual" {
 		t.Errorf("deploys = %+v, want the manual record", got.Deploys)
+	}
+}
+
+func TestHandleDeployHistoryBeforeID(t *testing.T) {
+	t.Parallel()
+
+	server, db := fullTestServer(t)
+	deploys := store.NewDeployStore(db)
+	ids := []int64{}
+
+	for _, sha := range []string{"first", "second", "third"} {
+		id, err := deploys.Record(t.Context(), model.Deploy{
+			ServiceID: testServiceAPI, SHA: sha, Actor: "example-operator",
+			Type: model.DeployManual, Outcome: model.DeploySuccess,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ids = append(ids, id)
+	}
+
+	target := testDeploysPath + "?limit=1&before_id=" + strconv.FormatInt(ids[1], 10)
+
+	status, body := doRequest(t, server, nethttp.MethodGet, target, "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
+	}
+
+	var got deploysResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Deploys) != 1 || got.Deploys[0].ID != ids[0] {
+		t.Fatalf("history = %s, want the entry before the cursor", body)
 	}
 }
 
@@ -85,6 +125,12 @@ func TestHandleRecordDeployErrors(t *testing.T) {
 			target: "/api/services/nope/deploys",
 			body:   "",
 			status: nethttp.StatusNotFound,
+		},
+		{
+			name:   "invalid history cursor",
+			method: nethttp.MethodGet,
+			target: testDeploysPath + "?before_id=-3",
+			status: nethttp.StatusBadRequest,
 		},
 	}
 

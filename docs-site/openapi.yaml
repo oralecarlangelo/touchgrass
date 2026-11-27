@@ -751,6 +751,10 @@ paths:
       summary: Deploy history, newest first
       parameters:
         - $ref: '#/components/parameters/ServicePath'
+        - name: before_id
+          in: query
+          description: Return deploys older than this ID.
+          schema: { type: integer, minimum: 1 }
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
@@ -1109,6 +1113,14 @@ paths:
         - name: service_id
           in: query
           schema: { type: string }
+        - name: start
+          in: query
+          description: Include entries at or after this time.
+          schema: { type: string, format: date-time }
+        - name: end
+          in: query
+          description: Include entries before this time.
+          schema: { type: string, format: date-time }
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
@@ -1631,7 +1643,7 @@ paths:
       x-touchgrass-scope: fleet
       operationId: listFleetContainers
       tags: [system]
-      summary: Complete current container inventory, including stopped containers
+      summary: Current container inventory, including stopped containers
       parameters:
         - name: view
           in: query
@@ -1649,9 +1661,16 @@ paths:
         - name: include_historical
           in: query
           schema: { type: boolean, default: false }
+        - name: q
+          in: query
+          description: Search by container name, Compose project, or ID.
+          schema: { type: string, maxLength: 128 }
+        - name: filter
+          in: query
+          schema: { type: string, enum: [all, running, stopped, unknown, risky], default: all }
         - name: sort
           in: query
-          schema: { type: string, enum: [name, last_seen, state], default: name }
+          schema: { type: string, enum: [name, last_seen, state, cpu, project], default: name }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }

@@ -86,6 +86,8 @@ type ContainerQuery struct {
 	Classification    ContainerClassification
 	State             string
 	ServiceID         string
+	Search            string
+	Filter            string
 	IncludeHistorical bool
 	Sort              string
 	Limit             int

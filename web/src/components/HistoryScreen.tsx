@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,43 +27,73 @@ import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const pageSize = 25;
 
-export default function HistoryScreen({
-  services,
-  fixedServiceId,
-  onUnauthorized,
-}: {
+interface HistoryProps {
   services: ServiceView[];
   fixedServiceId?: string;
   onUnauthorized: () => void;
-}) {
-  const [serviceId, setServiceId] = useState('all');
+}
+
+export default function HistoryScreen(props: HistoryProps) {
+  const [hash, setHash] = useState(() => window.location.hash);
+
+  useEffect(() => {
+    if (props.fixedServiceId !== undefined) return;
+    const followHash = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', followHash);
+    return () => window.removeEventListener('hashchange', followHash);
+  }, [props.fixedServiceId]);
+
+  return (
+    <AuditHistory
+      key={props.fixedServiceId ?? hash}
+      {...props}
+      link={new URLSearchParams(props.fixedServiceId === undefined ? hash.split('?')[1] : '')}
+    />
+  );
+}
+
+function validBound(value: string | null): string | undefined {
+  if (!value) return undefined;
+  const time = new Date(value);
+  return Number.isNaN(time.valueOf()) ? undefined : time.toISOString();
+}
+
+function AuditHistory({
+  services,
+  fixedServiceId,
+  onUnauthorized,
+  link,
+}: HistoryProps & { link: URLSearchParams }) {
+  const [serviceId, setServiceId] = useState(link.get('service_id') ?? 'all');
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
   const [since, setSince] = useState('');
+  const [showLinkRange, setShowLinkRange] = useState(true);
   const [result, setResult] = useState('all');
   const [page, setPage] = useState(0);
 
   const effectiveServiceId = fixedServiceId ?? (serviceId === 'all' ? '' : serviceId);
+  const linkedStart = showLinkRange ? validBound(link.get('start')) : undefined;
+  const end = showLinkRange ? validBound(link.get('end')) : undefined;
+  const start = since ? validBound(`${since}T00:00:00`) : linkedStart;
 
   const readHistory = useCallback(
-    (signal: AbortSignal) => fetchAudit(effectiveServiceId, 100, signal),
-    [effectiveServiceId],
+    (signal: AbortSignal) => fetchAudit(effectiveServiceId, { start, end }, signal),
+    [effectiveServiceId, start, end],
   );
-  const { data: entries, error, retry } = usePanelRead(effectiveServiceId, readHistory, 0, onUnauthorized);
+  const readScope = JSON.stringify([effectiveServiceId, start, end]);
+  const { data: entries, error, retry } = usePanelRead(readScope, readHistory, 0, onUnauthorized);
 
   const results = useMemo(() => [...new Set((entries ?? []).map((entry) => entry.result))].sort(), [entries]);
   const filtered = useMemo(() => {
     const actionNeedle = action.trim().toLowerCase();
     const actorNeedle = actor.trim().toLowerCase();
-    const after = since === '' ? 0 : new Date(`${since}T00:00:00`).getTime();
-
     return (entries ?? []).filter((entry) =>
       entry.action.toLowerCase().includes(actionNeedle)
       && entry.actor.toLowerCase().includes(actorNeedle)
-      && (result === 'all' || entry.result === result)
-      && new Date(entry.created_at).getTime() >= after,
+      && (result === 'all' || entry.result === result),
     );
-  }, [entries, action, actor, since, result]);
+  }, [entries, action, actor, result]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
@@ -87,7 +117,11 @@ export default function HistoryScreen({
           <Input className="w-36" placeholder="Filter actor…" aria-label="Filter by actor" value={actor}
             onChange={(event) => { setActor(event.target.value); setPage(0); }} />
           <Input type="date" className="w-36" aria-label="Entries since (local date)" value={since}
-            onChange={(event) => { setSince(event.target.value); setPage(0); }} />
+            onChange={(event) => {
+              setSince(event.target.value);
+              setShowLinkRange(false);
+              setPage(0);
+            }} />
           <Select value={result} onValueChange={(value) => { setResult(value); setPage(0); }}>
             <SelectTrigger className="w-32" aria-label="Filter by result"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -119,6 +153,17 @@ export default function HistoryScreen({
         </div>
       </div>
 
+      {(linkedStart || end) && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <p className="text-muted-foreground">
+            Entries {linkedStart && `from ${formatTime(linkedStart)}`}{' '}
+            {end && `before ${formatTime(end)}`}
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => { setShowLinkRange(false); setPage(0); }}>
+            Clear time range
+          </Button>
+        </div>
+      )}
       {error && <ErrorState title="Couldn't load audit history" message={error} onRetry={retry} />}
       {(entries !== null || !error) && <Card>
         <CardContent className="pt-4">

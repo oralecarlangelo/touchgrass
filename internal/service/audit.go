@@ -100,13 +100,23 @@ func (a *Audit) List(
 	serviceID string,
 	limit int,
 ) ([]model.Audit, error) {
+	return a.Search(ctx, serviceID, model.AuditQuery{Limit: limit})
+}
+
+// Search returns matching entries newest first. An explicit service takes
+// precedence over the caller's list, and the HTTP guard authorizes that service.
+func (a *Audit) Search(ctx context.Context, serviceID string, filter model.AuditQuery) ([]model.Audit, error) {
 	if serviceID != "" {
 		if _, err := a.services.Get(ctx, serviceID); err != nil {
 			return nil, err
 		}
+
+		filter.ServiceIDs = []string{serviceID}
 	}
 
-	return a.audits.List(ctx, serviceID, clampLimit(limit))
+	filter.Limit = clampLimit(filter.Limit)
+
+	return a.audits.Search(ctx, filter)
 }
 
 // ListForServices returns the entries of the listed services newest

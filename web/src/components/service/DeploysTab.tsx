@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 
@@ -43,6 +43,7 @@ import {
   type ServiceView,
 } from '@/lib/api.ts';
 import { formatTime } from '@/lib/format.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const downtimeConfig = {
   downtime: { label: 'Downtime (s)', color: 'var(--chart-2)' },
@@ -77,40 +78,35 @@ export default function DeploysTab({
   // server decides it (anyone but an admin); null lets the user type one.
   recordAs: string | null;
 }) {
-  const [deploys, setDeploys] = useState<Deploy[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [sha, setSha] = useState('');
   const [actor, setActor] = useState('');
   const [outcome, setOutcome] = useState('success');
   const [notes, setNotes] = useState('');
   const [recording, setRecording] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
+  const [cursors, setCursors] = useState<number[]>([]);
+  const [refresh, setRefresh] = useState(0);
+  const [trendOpen, setTrendOpen] = useState(false);
   const [selected, setSelected] = useState<Deploy | null>(null);
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
+  const beforeId = cursors[cursors.length - 1];
+  const readHistory = useCallback(
+    (signal: AbortSignal) => fetchDeploys(service.id, signal, historyPageSize + 1, beforeId),
+    [service.id, beforeId],
+  );
+  const readTrend = useCallback((signal: AbortSignal) => fetchDeploys(service.id, signal), [service.id]);
+  const history = usePanelRead(`${service.id}:${beforeId ?? ''}`, readHistory, refresh, onUnauthorized);
+  const trendRead = usePanelRead(service.id, trendOpen ? readTrend : null, refresh, onUnauthorized);
 
-  const load = useCallback(async () => {
-    setError(null);
-
-    try {
-      setDeploys(await fetchDeploys(service.id));
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [service.id, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const reloadLatest = useCallback(() => {
+    setCursors([]);
+    setRefresh((value) => value + 1);
+  }, []);
 
   const handleOperationFinished = useCallback(() => {
-    void load();
+    reloadLatest();
     onServiceChanged();
-  }, [load, onServiceChanged]);
+  }, [reloadLatest, onServiceChanged]);
 
   async function handleRecordDeploy(): Promise<void> {
     const recordedActor = recordAs ?? actor.trim();
@@ -134,7 +130,7 @@ export default function DeploysTab({
       setActor('');
       setNotes('');
       toast.success('Deploy recorded.');
-      await load();
+      reloadLatest();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -149,7 +145,7 @@ export default function DeploysTab({
 
   const trend = useMemo(
     () =>
-      (deploys ?? [])
+      (trendRead.data ?? [])
         .filter((deploy) => deploy.downtime_secs !== null)
         .slice(0, 20)
         .reverse()
@@ -157,19 +153,11 @@ export default function DeploysTab({
           label: `#${deploy.id}`,
           downtime: deploy.downtime_secs ?? 0,
         })),
-    [deploys],
+    [trendRead.data],
   );
 
-  const pageCount = Math.max(1, Math.ceil((deploys ?? []).length / historyPageSize));
-  const safePage = Math.min(page, pageCount - 1);
-  const rows = (deploys ?? []).slice(
-    safePage * historyPageSize,
-    safePage * historyPageSize + historyPageSize,
-  );
-
-  if (error !== null) {
-    return <ErrorState title="Couldn't load deploy history" message={error} onRetry={() => void load()} />;
-  }
+  const rows = history.data?.slice(0, historyPageSize) ?? [];
+  const nextCursor = (history.data?.length ?? 0) > historyPageSize ? rows[rows.length - 1]?.id : undefined;
 
   return (
     <div className="space-y-4">
@@ -194,12 +182,13 @@ export default function DeploysTab({
         <RollbackPanel service={service} onFinished={handleOperationFinished} />
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Downtime per deploy, oldest → newest</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {deploys === null ? (
+      <details className="rounded-lg border" onToggle={(event) => setTrendOpen(event.currentTarget.open)}>
+        <summary className="cursor-pointer p-4 text-sm font-medium">Downtime per deploy</summary>
+        {trendOpen && <div className="p-4 pt-0">
+          {trendRead.error && (
+            <ErrorState title="Couldn't load downtime samples" message={trendRead.error} onRetry={trendRead.retry} />
+          )}
+          {trendRead.data === null ? !trendRead.error && (
             <Skeleton className="h-40 w-full" />
           ) : trend.length === 0 ? (
             <p className="text-muted-foreground text-sm">
@@ -216,20 +205,23 @@ export default function DeploysTab({
               </BarChart>
             </ChartContainer>
           )}
-        </CardContent>
-      </Card>
+        </div>}
+      </details>
 
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">History</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {deploys === null ? (
+          {history.error && (
+            <ErrorState title="Couldn't load deploy history" message={history.error} onRetry={history.retry} />
+          )}
+          {history.data === null ? !history.error && (
             <div className="space-y-2">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
             </div>
-          ) : deploys.length === 0 ? (
+          ) : rows.length === 0 ? (
             <p className="text-muted-foreground text-sm">Nothing recorded yet.</p>
           ) : (
             <Table>
@@ -245,13 +237,15 @@ export default function DeploysTab({
               </TableHeader>
               <TableBody>
                 {rows.map((deploy) => (
-                  <TableRow
-                    key={deploy.id}
-                    onClick={() => setSelected(deploy)}
-                    className="cursor-pointer"
-                  >
+                  <TableRow key={deploy.id}>
                     <TableCell className="font-mono" title={deploy.notes === '' ? undefined : deploy.notes}>
-                      {deploy.sha.slice(0, 12)}
+                      <button type="button" className="underline-offset-4 hover:underline focus-visible:underline"
+                        onClick={(event) => {
+                          detailTrigger.current = event.currentTarget;
+                          setSelected(deploy);
+                        }}>
+                        {deploy.sha.slice(0, 12)}
+                      </button>
                     </TableCell>
                     <TableCell>{deploy.actor}</TableCell>
                     <TableCell>
@@ -274,26 +268,25 @@ export default function DeploysTab({
             </Table>
           )}
 
-          {(deploys ?? []).length > historyPageSize && (
+          {(cursors.length > 0 || nextCursor !== undefined) && (
             <div className="flex items-center justify-between text-sm">
-              <p className="text-muted-foreground">{(deploys ?? []).length} deploys</p>
+              <p className="text-muted-foreground">Page {cursors.length + 1}</p>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={safePage === 0}
-                  onClick={() => setPage(safePage - 1)}
+                  disabled={cursors.length === 0}
+                  onClick={() => setCursors((previous) => previous.slice(0, -1))}
                 >
                   Previous
                 </Button>
-                <span className="text-muted-foreground">
-                  {safePage + 1} / {pageCount}
-                </span>
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={safePage + 1 >= pageCount}
-                  onClick={() => setPage(safePage + 1)}
+                  disabled={nextCursor === undefined}
+                  onClick={() => {
+                    if (nextCursor !== undefined) setCursors((previous) => [...previous, nextCursor]);
+                  }}
                 >
                   Next
                 </Button>
@@ -365,7 +358,12 @@ export default function DeploysTab({
       </Card>
 
       <Sheet open={selected !== null} onOpenChange={(open) => !open && setSelected(null)}>
-        <SheetContent className="overflow-y-auto sm:max-w-md">
+        <SheetContent className="overflow-y-auto sm:max-w-md" onCloseAutoFocus={(event) => {
+          if (detailTrigger.current?.isConnected) {
+            event.preventDefault();
+            detailTrigger.current.focus();
+          }
+        }}>
           <SheetHeader>
             <SheetTitle>Deploy #{selected?.id}</SheetTitle>
             <SheetDescription>Full record for this deploy.</SheetDescription>

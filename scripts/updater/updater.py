@@ -166,6 +166,10 @@ def backup_database(source, destination):
     os.close(fd)
     try:
         with contextlib.closing(sqlite3.connect(pathlib.Path(source).as_uri() + '?mode=ro', uri=True)) as db:
+            # Pin the WAL read snapshot: otherwise each writer commit can
+            # restart the incremental backup and starve a busy console.
+            db.execute('BEGIN')
+            db.execute('SELECT name FROM sqlite_schema LIMIT 1').fetchone()
             with contextlib.closing(sqlite3.connect(temporary)) as backup:
                 db.backup(backup, pages=1000, sleep=0.1)
                 if backup.execute('PRAGMA quick_check').fetchone() != ('ok',):

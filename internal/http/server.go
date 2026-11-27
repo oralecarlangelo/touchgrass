@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"strings"
 	"time"
 
 	nethttp "net/http"
@@ -273,8 +274,12 @@ func (s *Server) maintenanceCheck() (healthCheck, bool) {
 		check.Detail = "last successful sweep " + status.LastSuccessAt.UTC().Format(time.RFC3339)
 	case status.LastResult.OverBudget:
 		check.Status = checkWarn
-		check.Detail = fmt.Sprintf("database %d bytes over the %d byte budget",
-			status.LastResult.DatabaseBytes-status.LastResult.MaxBytes, status.LastResult.MaxBytes)
+		if status.LastResult.DatabaseBytes > status.LastResult.MaxBytes {
+			check.Detail = fmt.Sprintf("database %d bytes over the %d byte budget",
+				status.LastResult.DatabaseBytes-status.LastResult.MaxBytes, status.LastResult.MaxBytes)
+		} else {
+			check.Detail = "storage classes over budget: " + strings.Join(status.LastResult.OverBudgetClasses, ", ")
+		}
 	}
 
 	return check, true

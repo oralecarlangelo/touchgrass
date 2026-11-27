@@ -2,7 +2,6 @@ package http
 
 import (
 	"bufio"
-	"context"
 	"log/slog"
 	"net/http/httptest"
 	"slices"
@@ -56,47 +55,16 @@ func TestHandleEvents(t *testing.T) {
 	t.Parallel()
 
 	server, _ := fullTestServer(t)
-
-	ctx, cancel := context.WithCancel(t.Context())
-
-	req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, "/api/events", nil)
-	req.AddCookie(authCookie(t, server))
-
-	rec := httptest.NewRecorder()
-
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-
-		server.handler.ServeHTTP(rec, req)
-	}()
-
-	time.Sleep(50 * time.Millisecond)
+	lines := streamEvents(t, server, 0)
+	awaitStreamLine(t, lines, ": connected")
 	server.events.Broadcast(model.Event{
 		Type:      model.EventDeployStarted,
 		ServiceID: testServiceAPI,
 		Message:   "cutover started",
 		At:        time.Now(),
 	})
-	time.Sleep(50 * time.Millisecond)
-	cancel()
 
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("events handler did not stop after cancel")
-	}
-
-	body := rec.Body.String()
-
-	if !strings.Contains(body, "data:") || !strings.Contains(body, "deploy_started") {
-		t.Errorf("body = %q, want SSE event", body)
-	}
-
-	if content := rec.Header().Get("Content-Type"); content != "text/event-stream" {
-		t.Errorf("content-type = %q, want text/event-stream", content)
-	}
+	awaitStreamLine(t, lines, `data: {"type":"deploy_started"`)
 }
 
 // streamEvents serves the full handler chain on a real listener, whose
@@ -131,6 +99,10 @@ func streamEvents(t *testing.T, server *Server, serverWriteTimeout time.Duration
 
 	if resp.StatusCode != nethttp.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, nethttp.StatusOK)
+	}
+
+	if content := resp.Header.Get("Content-Type"); content != "text/event-stream" {
+		t.Fatalf("content-type = %q, want text/event-stream", content)
 	}
 
 	lines := make(chan string)

@@ -89,11 +89,13 @@ function confidenceVariant(confidence: string): 'default' | 'secondary' | 'outli
 export default function PromoteDialog({
   container,
   onClose,
+  onRestoreFocus,
   onCreated,
   onUnauthorized,
 }: {
   container: string | null;
   onClose: () => void;
+  onRestoreFocus: () => boolean;
   onCreated: (id: string) => void;
   onUnauthorized: () => void;
 }) {
@@ -346,7 +348,12 @@ export default function PromoteDialog({
 
   return (
     <Dialog open={container !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent
+        className="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
+        onCloseAutoFocus={(event) => {
+          if (onRestoreFocus()) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Manage {container ?? ''}</DialogTitle>
           <DialogDescription>

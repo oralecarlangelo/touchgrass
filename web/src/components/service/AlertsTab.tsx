@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -37,11 +37,11 @@ import {
   deleteIssueRule,
   deleteRule,
   fetchIssueRules,
+  fetchRuleSample,
   fetchRules,
   isUnauthorized,
-  type AlertRule,
-  type IssueRule,
 } from '@/lib/api.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 export default function AlertsTab({
   serviceId,
@@ -52,9 +52,6 @@ export default function AlertsTab({
   onUnauthorized: () => void;
   isAdmin: boolean;
 }) {
-  const [rules, setRules] = useState<AlertRule[] | null>(null);
-  const [issueRules, setIssueRules] = useState<IssueRule[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'metric' | 'issue' | null>(null);
   const [metric, setMetric] = useState('mem');
   const [threshold, setThreshold] = useState('85');
@@ -73,29 +70,14 @@ export default function AlertsTab({
     setDialog(kind);
   }
 
-  const load = useCallback(async () => {
-    setError(null);
-
-    try {
-      const [fetchedRules, fetchedIssueRules] = await Promise.all([
-        fetchRules(serviceId),
-        fetchIssueRules(serviceId),
-      ]);
-      setRules(fetchedRules);
-      setIssueRules(fetchedIssueRules);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [serviceId, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const readMetricRules = useCallback((signal: AbortSignal) => fetchRules(serviceId, signal), [serviceId]);
+  const readIssueRules = useCallback((signal: AbortSignal) => fetchIssueRules(serviceId, signal), [serviceId]);
+  const { data: rules, error: ruleError, retry: reloadRules } = usePanelRead(
+    serviceId, readMetricRules, 0, onUnauthorized,
+  );
+  const { data: issueRules, error: issueRuleError, retry: reloadIssueRules } = usePanelRead(
+    serviceId, readIssueRules, 0, onUnauthorized,
+  );
 
   async function handleCreateMetricRule(): Promise<void> {
     const thresholdValue = Number.parseFloat(threshold);
@@ -126,7 +108,7 @@ export default function AlertsTab({
       setThreshold('85');
       setDuration('300');
       toast.success('Alert rule created.');
-      await load();
+      reloadRules();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -166,7 +148,7 @@ export default function AlertsTab({
       });
       setDialog(null);
       toast.success('Issue rule created.');
-      await load();
+      reloadIssueRules();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -187,13 +169,14 @@ export default function AlertsTab({
     try {
       if (pendingDelete.kind === 'metric') {
         await deleteRule(pendingDelete.id);
+        reloadRules();
       } else {
         await deleteIssueRule(pendingDelete.id);
+        reloadIssueRules();
       }
 
       toast.success('Rule deleted.');
       setPendingDelete(null);
-      await load();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -202,10 +185,6 @@ export default function AlertsTab({
 
       toast.error(err instanceof Error ? err.message : String(err));
     }
-  }
-
-  if (error !== null) {
-    return <ErrorState title="Couldn't load alert rules" message={error} onRetry={() => void load()} />;
   }
 
   return (
@@ -220,8 +199,9 @@ export default function AlertsTab({
           )}
         </CardHeader>
         <CardContent>
+          {ruleError && <ErrorState title="Couldn't load metric rules" message={ruleError} onRetry={reloadRules} />}
           {rules === null ? (
-            <Skeleton className="h-10 w-full" />
+            !ruleError && <Skeleton className="h-10 w-full" />
           ) : rules.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               No rules — breaches will go unnoticed.
@@ -277,8 +257,11 @@ export default function AlertsTab({
           )}
         </CardHeader>
         <CardContent>
+          {issueRuleError && (
+            <ErrorState title="Couldn't load issue rules" message={issueRuleError} onRetry={reloadIssueRules} />
+          )}
           {issueRules === null ? (
-            <Skeleton className="h-10 w-full" />
+            !issueRuleError && <Skeleton className="h-10 w-full" />
           ) : issueRules.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               No issue rules — error spikes won&apos;t page anyone.
@@ -406,6 +389,15 @@ export default function AlertsTab({
               </div>
             </div>
           )}
+          {dialog === 'metric' && (
+            <ThresholdPreview
+              key={`${serviceId}:${metric}`}
+              serviceId={serviceId}
+              metric={metric}
+              threshold={Number.parseFloat(threshold)}
+              onUnauthorized={onUnauthorized}
+            />
+          )}
           {formError !== null && (
             <p role="alert" className="text-destructive text-sm">
               {formError}
@@ -443,6 +435,59 @@ export default function AlertsTab({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ThresholdPreview({
+  serviceId,
+  metric,
+  threshold,
+  onUnauthorized,
+}: {
+  serviceId: string;
+  metric: string;
+  threshold: number;
+  onUnauthorized: () => void;
+}) {
+  const [requested, setRequested] = useState(false);
+  const readSample = useCallback(
+    (signal: AbortSignal) => fetchRuleSample(serviceId, metric, signal),
+    [serviceId, metric],
+  );
+  const { data, error, loading, retry } = usePanelRead(metric, requested ? readSample : null, 0, onUnauthorized);
+
+  function loadSample() {
+    if (requested) {
+      retry();
+    } else {
+      setRequested(true);
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-md border p-3">
+      <Button variant="outline" size="sm" onClick={loadSample} disabled={loading}>
+        {loading ? 'Reading sample…' : 'Preview threshold'}
+      </Button>
+      {error && <p role="alert" className="text-destructive text-sm">{error}</p>}
+      {data && (
+        <div role="status" className="text-muted-foreground text-sm">
+          {data.value === null ? (
+            <p>No usable sample for this metric yet.</p>
+          ) : (
+            <>
+              <p>
+                Recorded value <span className="font-mono">{data.value}</span>
+                {Number.isFinite(threshold) && threshold > 0 &&
+                  (data.value > threshold ? ' exceeds the threshold.' : ' is at or below the threshold.')}
+              </p>
+              {data.sampled_at && <p>Sampled {new Date(data.sampled_at).toLocaleString()}</p>}
+              <p>A live alert requires the condition to hold for the configured duration.</p>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

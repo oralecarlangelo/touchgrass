@@ -406,8 +406,8 @@ func TestRouteTableIsConsistent(t *testing.T) {
 		}
 	}
 
-	if len(seen) != 105 {
-		t.Errorf("route table has %d routes, want 105", len(seen))
+	if len(seen) != 106 {
+		t.Errorf("route table has %d routes, want 106", len(seen))
 	}
 }
 

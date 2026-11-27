@@ -147,6 +147,7 @@ func (s *Server) routes() []route {
 
 		// Alert rules, issue rules, and notifications.
 		{method: nethttp.MethodGet, pattern: "/api/alerts/rules", kind: guardServiceQuery, capability: authz.AlertsRead, handler: s.handleRules},
+		{method: nethttp.MethodGet, pattern: "/api/alerts/rules/preview", kind: guardServiceQuery, capability: authz.AlertsRead, handler: s.handleRuleSample},
 		{method: nethttp.MethodPost, pattern: "/api/alerts/rules", kind: guardServiceBody, capability: authz.AlertsManage, handler: s.handleCreateRule},
 		{method: nethttp.MethodDelete, pattern: "/api/alerts/rules/{id}", kind: guardResource, capability: authz.AlertsManage, resource: model.ResourceAlertRule, handler: s.handleDeleteRule},
 		{method: nethttp.MethodGet, pattern: "/api/issues/rules", kind: guardServiceQuery, capability: authz.AlertsRead, handler: s.handleIssueRules},

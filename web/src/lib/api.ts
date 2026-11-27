@@ -192,6 +192,11 @@ interface RulesResponse {
   rules: AlertRule[];
 }
 
+interface RuleSample {
+  value: number | null;
+  sampled_at?: string;
+}
+
 export interface Deploy {
   id: number;
   service_id: string;
@@ -480,12 +485,18 @@ export async function fetchMetrics(serviceId: string, signal?: AbortSignal): Pro
   return body.metrics ?? [];
 }
 
-export async function fetchRules(serviceId: string): Promise<AlertRule[]> {
+export async function fetchRules(serviceId: string, signal?: AbortSignal): Promise<AlertRule[]> {
   const body = await request<RulesResponse>(
     `/api/alerts/rules?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.rules ?? [];
+}
+
+export async function fetchRuleSample(serviceId: string, metric: string, signal: AbortSignal): Promise<RuleSample> {
+  const query = new URLSearchParams({ service_id: serviceId, metric });
+  return request<RuleSample>(`/api/alerts/rules/preview?${query}`, { signal });
 }
 
 export async function createRule(input: {
@@ -922,9 +933,10 @@ export async function fetchIssueLogs(
   return body.logs ?? [];
 }
 
-export async function fetchIssueRules(serviceId: string): Promise<IssueRule[]> {
+export async function fetchIssueRules(serviceId: string, signal?: AbortSignal): Promise<IssueRule[]> {
   const body = await request<IssueRulesResponse>(
     `/api/issues/rules?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.rules ?? [];

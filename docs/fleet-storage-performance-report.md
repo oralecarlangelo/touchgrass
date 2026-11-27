@@ -1,6 +1,6 @@
 # Fleet, performance and storage reliability
 
-Status: implementation and validation in progress (2026-11-27).
+Status: deployed and verified on 2026-11-27 at 10:33 UTC. Production runs `0.9.0-fleet.1`, commit `381594d`.
 
 ## Verified causes
 
@@ -10,7 +10,7 @@ Status: implementation and validation in progress (2026-11-27).
 - A direct `docker system df` on production took 29.626 seconds, confirming expensive daemon accounting independently of the application queue. Subsequent warm, type-specific queries took 1.65 seconds for images, 3.94 seconds for volumes, 0.01 seconds for build cache and 0.26 seconds for containers.
 - The performance screenshot's dropped-record totals are cumulative, not necessarily active loss. A disabled writable-layer scanner also retains a previous persisted failure. Collector status must distinguish current configuration, partial coverage, fresh failures and historical loss.
 
-## Changes underway
+## Implemented changes
 
 - Include Docker queue wait in each operation deadline. Bound fleet stats producers to two workers, avoiding one queued goroutine per container; a generic 100-container test verifies bounded concurrency and complete collection.
 - Bound mandatory onboarding discovery to two seconds and optional probes to a shared three-second budget. Reuse a selected color's probe result and return partial drafts with explicit warnings. Busy mandatory discovery returns a retryable 503 rather than overrunning the response deadline.
@@ -18,13 +18,14 @@ Status: implementation and validation in progress (2026-11-27).
 - Move expensive storage/image inspection away from page request latency and retain explicit snapshot freshness.
 - Add an administrator connection/discovery flow for S3-compatible storage, including MinIO, explicit bucket selection and read-only defaults.
 
-## Verification recorded so far
+## Verification
 
 - Queue-budget regression failed before the fix and passed after it.
 - Onboarding generic blue/green tests verify a single probe per color, shared deadlines and a useful partial draft when health probes stall.
 - Rendered generic fleet fixture checks passed: delayed host data did not block inventory; a failed refresh retained rows and offered retry; changing history range hid the previous window and did not refetch inventory; closing the management dialog aborted discovery.
 - Rendered generic performance/storage fixtures passed: disabled sources show setup status; historical drops do not imply current failure; missing PostgreSQL extension guidance and detected source config are visible/copyable; host capacity renders before delayed accounting; cold images show collection status; saving a new connection with the same bucket resets prior browser state.
-- Deployment, concurrent endpoint checks and final test gates remain outstanding. No completion or production-fix claim is made yet.
+- Full Go affected selection (all packages), `go vet`, race checks across changed Go packages, frontend type/lint verification, all 150 Vitest tests and production build passed. New-code lint reports zero issues. The shared PostgreSQL test runner was corrected to match complete SQL fixture markers; a ten-run race repetition passed.
+- Production verification and rollback details follow below.
 
 ## Performance collector scope and PostgreSQL limitation
 
@@ -47,3 +48,31 @@ The existing application credentials tested by the setup investigation did not a
 - Full repository style lint still reports 716 findings outside the new-code gate; the new-code lint gate reports zero issues. These pre-existing findings were not expanded into an unrelated cleanup.
 - Vite retains the existing large-bundle warning (about 338 kB gzip); this change targets server latency, request concurrency and independent data display.
 - The installed MinIO release is `RELEASE.2025-09-07T16-13-09Z`, older than the fix named in [MinIO's service-account policy advisory](https://github.com/minio/minio/security/advisories/GHSA-jjjj-jwhf-8rgr). This integration uses a separately restricted regular identity rather than a child of root. A MinIO upgrade remains a separate infrastructure follow-up; no storage-engine replacement/restart was performed here.
+
+## Production verification
+
+The installed ARM64 binary SHA-256 is `7a4a608f72c9987faa374a0fd8ceb33413f6f08c31cd01db9fcdb71b40ff2f88`. The served JS asset matches the local build byte-for-byte (`93d49b95f35233b289b064c8ee13021a598c128bfd8532c4d36ed781aeacd270`). Systemd reports active and zero restarts after deployment.
+
+An authenticated smoke test used four concurrent workers and eight requests per endpoint (56 total), all HTTP 200:
+
+| Endpoint | Observed latency |
+| --- | --- |
+| System snapshot | 22–46 ms |
+| Fleet containers | 29–47 ms |
+| Storage usage | 22–52 ms |
+| Docker images | 20–39 ms |
+| Performance summary | 42–64 ms |
+| Performance timeline (limit 100) | 80–133 ms |
+| Collector status | 26–40 ms |
+
+Storage was complete/fresh with 50 accounting entries and 25 image records. Fleet inventory was complete/fresh with 19 containers. Ten additional requests to the previously failing onboarding suggestion all returned HTTP 200 with usable drafts in 106–156 ms. This is a controlled production smoke test, not a geographical latency study or proof of an unlimited fleet capacity.
+
+Background system heartbeat improved from repeated eight-second deadline failures to 11 ms on the next observed cycle; service inventory heartbeat took 190 ms on that cycle. No write-timeout/502 occurred in the verification requests. Existing browser sessions can require login again after the service restart.
+
+The public HTTPS transfer route accepted a 2,097,152-byte upload and returned it with an identical SHA-256. Only the newly generated object under a unique `.touchgrass-validation/` prefix was deleted, the prefix was verified empty, and the connection was restored to `writable: false`. Both `ticketnation-media` and `ticketnation-pubmats` are now available in the bucket manager. MinIO remains private; Nginx has an exact authenticated-transfer location with matching size/time limits.
+
+Production collector status now reports fresh/complete Nginx, Redis, log-volume, Docker-events, posture and process coverage. PostgreSQL explicitly reports the missing optional statements extension; the intentionally disabled writable-layer scanner reports disabled rather than an active stale failure.
+
+## Rollback
+
+The prior executable, environment and Nginx configuration are retained under `/home/ubuntu/touchgrass/backups/releases/pre-fleet-20261127/`. Restoring the executable and restarting `touchgrass` rolls back the application. Restore the saved Nginx file, validate with `nginx -t`, then reload for proxy rollback. The new scoped MinIO identity/policy is recorded in `storage-provisioning.json` in that backup directory; revoke only that recorded identity/policy if reverting the integration. The mode-0600 connection file contains credentials and must not be printed or committed. No database migration was added by this change.

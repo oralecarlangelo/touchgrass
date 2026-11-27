@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -64,8 +64,10 @@ export default function AlertsTab({
   const [pendingDelete, setPendingDelete] = useState<{ kind: 'metric' | 'issue'; id: number } | null>(
     null,
   );
+  const launcher = useRef<HTMLButtonElement | null>(null);
 
-  function openDialog(kind: 'metric' | 'issue'): void {
+  function openDialog(kind: 'metric' | 'issue', button: HTMLButtonElement): void {
+    launcher.current = button;
     setFormError(null);
     setDialog(kind);
   }
@@ -193,7 +195,7 @@ export default function AlertsTab({
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-medium">Metric rules</CardTitle>
           {isAdmin && (
-            <Button size="sm" onClick={() => openDialog('metric')}>
+            <Button size="sm" onClick={(event) => openDialog('metric', event.currentTarget)}>
               New metric rule
             </Button>
           )}
@@ -251,7 +253,7 @@ export default function AlertsTab({
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-sm font-medium">Issue rules</CardTitle>
           {isAdmin && (
-            <Button size="sm" onClick={() => openDialog('issue')}>
+            <Button size="sm" onClick={(event) => openDialog('issue', event.currentTarget)}>
               New issue rule
             </Button>
           )}
@@ -308,7 +310,12 @@ export default function AlertsTab({
       </Card>
 
       <Dialog open={dialog !== null} onOpenChange={(open) => !open && setDialog(null)}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={(event) => {
+          if (launcher.current?.isConnected) {
+            event.preventDefault();
+            launcher.current.focus();
+          }
+        }}>
           <DialogHeader>
             <DialogTitle>{dialog === 'issue' ? 'New issue rule' : 'New metric rule'}</DialogTitle>
             <DialogDescription>

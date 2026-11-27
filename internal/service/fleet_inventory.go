@@ -32,6 +32,7 @@ type FleetInventoryConfig struct {
 	Security     *store.SecurityStore
 	Evaluator    *Security
 	Audit        *Audit
+	Observe      func([]docker.Container, time.Time, time.Duration)
 }
 
 // FleetInventory reconciles complete Docker inventory into durable identity.
@@ -45,6 +46,7 @@ type FleetInventory struct {
 	security     *store.SecurityStore
 	evaluator    *Security
 	audit        *Audit
+	observe      func([]docker.Container, time.Time, time.Duration)
 	requests     chan struct{}
 	reconcileMu  sync.Mutex
 }
@@ -66,7 +68,7 @@ func NewFleetInventory(cfg FleetInventoryConfig) *FleetInventory {
 	return &FleetInventory{
 		services: cfg.Services, containers: cfg.Containers, docker: cfg.Docker,
 		interval: interval, inspectLimit: inspectLimit, logger: logger,
-		security: cfg.Security, evaluator: cfg.Evaluator, audit: cfg.Audit,
+		security: cfg.Security, evaluator: cfg.Evaluator, audit: cfg.Audit, observe: cfg.Observe,
 		requests: make(chan struct{}, 1),
 	}
 }
@@ -121,6 +123,17 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 	listCtx, cancelList := context.WithTimeout(ctx, 10*time.Second)
 	containers, err := f.docker.ListAll(listCtx)
 	cancelList()
+
+	if f.observe != nil {
+		switch {
+		case err != nil:
+			f.observe(nil, observedAt, 2*f.interval)
+		case containers == nil:
+			f.observe([]docker.Container{}, observedAt, 2*f.interval)
+		default:
+			f.observe(containers, observedAt, 2*f.interval)
+		}
+	}
 	if err != nil {
 		if f.evaluator != nil {
 			_ = f.evaluator.RecordCollector(ctx, "security_posture", false, "docker_inventory_unavailable", f.interval)

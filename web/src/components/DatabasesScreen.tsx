@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -35,8 +35,10 @@ import {
   verifyDatabaseBackup,
   type DatabaseBackup,
   type DatabaseJob,
+  type DatabasesResponse,
   type DatabaseView,
 } from '@/lib/api.ts';
+import { LatestRequest } from '@/lib/latest-request.ts';
 import { formatBytes, formatDuration, formatTime, timeAgo } from '@/lib/format.ts';
 
 const jobPollMs = 2_000;
@@ -48,12 +50,37 @@ function isTerminal(status: string): boolean {
   return status !== 'running';
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function DatabaseStatus({ status }: { status: string }) {
+  const variant = status === 'healthy' ? 'default' :
+    ['unavailable', 'unhealthy', 'missing'].includes(status) ? 'destructive' : 'secondary';
+  return <Badge variant={variant}>{status}</Badge>;
+}
+
+function DatabaseCard({ database, action }: { database: DatabaseView; action?: React.ReactNode }) {
+  const discovered = database.id.startsWith('docker:');
+  const details = [
+    database.image,
+    database.version,
+    database.size_bytes == null ? undefined : formatBytes(database.size_bytes),
+  ].filter(Boolean).join(' · ');
   return (
-    <div className="py-1.5">
-      <p className="text-muted-foreground text-xs">{label}</p>
-      <p className="font-mono text-sm">{value}</p>
-    </div>
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle className="text-sm font-medium">{database.label}</CardTitle>
+          <DatabaseStatus status={database.status} />
+          {discovered && <Badge variant="outline">Discovered</Badge>}
+          {action}
+        </div>
+      </CardHeader>
+      <CardContent className="text-muted-foreground space-y-1 text-sm">
+        {database.container && <p className="font-mono text-xs break-all">{database.container}</p>}
+        {details && <p className="font-mono text-xs break-all">{details}</p>}
+        {database.observed_at && (
+          <p title={formatTime(database.observed_at)}>Observed {timeAgo(database.observed_at)}</p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -95,7 +122,7 @@ export default function DatabasesScreen({
   onUnauthorized: () => void;
   isAdmin: boolean;
 }) {
-  const [databases, setDatabases] = useState<DatabaseView[] | null>(null);
+  const [snapshot, setSnapshot] = useState<DatabasesResponse | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
   const [backups, setBackups] = useState<DatabaseBackup[] | null>(null);
   const [backupsError, setBackupsError] = useState<string | null>(null);
@@ -112,12 +139,19 @@ export default function DatabasesScreen({
   const [restoreJob, setRestoreJob] = useState<DatabaseJob | null>(null);
   const [restoreDone, setRestoreDone] = useState(false);
 
-  const loadHealth = useCallback(async () => {
-    setDbError(null);
+  const requests = useMemo(() => ({
+    health: new LatestRequest<void>(),
+    backups: new LatestRequest<void>(),
+    jobs: new LatestRequest<void>(),
+  }), []);
 
+  const loadHealth = useCallback(() => requests.health.run(async (signal) => {
+    setDbError(null);
     try {
-      setDatabases(await fetchDatabases());
+      const result = await fetchDatabases(signal);
+      if (!signal.aborted) setSnapshot(result);
     } catch (err) {
+      if (signal.aborted) return;
       if (isUnauthorized(err)) {
         onUnauthorized();
         return;
@@ -125,14 +159,15 @@ export default function DatabasesScreen({
 
       setDbError(err instanceof Error ? err.message : String(err));
     }
-  }, [onUnauthorized]);
+  }), [onUnauthorized, requests]);
 
-  const loadBackups = useCallback(async () => {
+  const loadBackups = useCallback(() => requests.backups.run(async (signal) => {
     setBackupsError(null);
-
     try {
-      setBackups(await fetchDatabaseBackups());
+      const result = await fetchDatabaseBackups(signal);
+      if (!signal.aborted) setBackups(result);
     } catch (err) {
+      if (signal.aborted) return;
       if (isUnauthorized(err)) {
         onUnauthorized();
         return;
@@ -140,14 +175,15 @@ export default function DatabasesScreen({
 
       setBackupsError(err instanceof Error ? err.message : String(err));
     }
-  }, [onUnauthorized]);
+  }), [onUnauthorized, requests]);
 
-  const loadJobs = useCallback(async () => {
+  const loadJobs = useCallback(() => requests.jobs.run(async (signal) => {
     setJobsError(null);
-
     try {
-      setJobs(await fetchDatabaseJobs());
+      const result = await fetchDatabaseJobs(signal);
+      if (!signal.aborted) setJobs(result);
     } catch (err) {
+      if (signal.aborted) return;
       if (isUnauthorized(err)) {
         onUnauthorized();
         return;
@@ -155,7 +191,7 @@ export default function DatabasesScreen({
 
       setJobsError(err instanceof Error ? err.message : String(err));
     }
-  }, [onUnauthorized]);
+  }), [onUnauthorized, requests]);
 
   const loadAll = useCallback(async () => {
     setRefreshing(true);
@@ -169,10 +205,20 @@ export default function DatabasesScreen({
 
   useEffect(() => {
     void loadAll();
-    const timer = setInterval(() => void loadAll(), refreshIntervalMs);
+    const refreshVisible = () => {
+      if (!document.hidden) void loadHealth();
+    };
+    const timer = setInterval(refreshVisible, refreshIntervalMs);
+    document.addEventListener('visibilitychange', refreshVisible);
 
-    return () => clearInterval(timer);
-  }, [loadAll]);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+      requests.health.cancel();
+      requests.backups.cancel();
+      requests.jobs.cancel();
+    };
+  }, [loadAll, loadHealth, requests]);
 
   // Poll a running backup job every 2s until it reaches a terminal status.
   useEffect(() => {
@@ -380,9 +426,9 @@ export default function DatabasesScreen({
     }
   }
 
-  const postgres = (databases ?? []).find((db) => db.id === 'postgres') ?? null;
-  const redis = (databases ?? []).find((db) => db.id === 'redis') ?? null;
-  const sqlite = (databases ?? []).find((db) => db.id === 'sqlite') ?? null;
+  const databases = snapshot?.databases ?? [];
+  const postgres = databases.find((db) => db.id === 'postgres');
+  const backupReady = postgres?.configured === true && ['healthy', 'running'].includes(postgres.status);
   const backupRunning = trackedId !== null || tracked?.status === 'running';
   const sortedBackups = [...(backups ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at));
   const restoreMatches = restoreName !== null && restoreConfirm === restoreName;
@@ -396,106 +442,45 @@ export default function DatabasesScreen({
         </Button>
       </div>
 
-      {dbError !== null && databases === null ? (
-        <ErrorState
-          title="Couldn't load database health"
-          message={dbError}
-          onRetry={() => void loadHealth()}
-        />
-      ) : (
-        <Card>
-          <CardHeader>
-            <div className="flex flex-wrap items-center gap-3">
-              <CardTitle className="text-sm font-medium">
-                {postgres === null ? 'PostgreSQL' : postgres.label}
-              </CardTitle>
-              {postgres !== null && postgres.configured && (
-                <Badge variant={postgres.reachable ? 'default' : 'destructive'}>
-                  {postgres.reachable ? 'reachable' : 'unreachable'}
-                </Badge>
-              )}
-              {isAdmin && postgres !== null && postgres.configured && postgres.reachable && (
-                <Button
-                  size="sm"
-                  className="ml-auto"
-                  onClick={() => void handleBackup()}
-                  disabled={startingBackup || backupRunning}
-                >
-                  {startingBackup ? 'Starting…' : backupRunning ? 'Backup running…' : 'Back up now'}
-                </Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {databases === null ? (
-              <div className="space-y-2" aria-label="Loading database health">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-              </div>
-            ) : postgres === null || !postgres.configured ? (
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Postgres isn&apos;t configured</p>
-                <p className="text-muted-foreground text-sm">
-                  Set the Postgres connection in the touchgrass environment to enable health
-                  checks and backups:
-                </p>
-                <ul className="list-disc space-y-1 pl-5 font-mono text-xs">
-                  <li>TOUCHGRASS_POSTGRES_CONTAINER (empty means unconfigured)</li>
-                  <li>TOUCHGRASS_POSTGRES_USER</li>
-                  <li>TOUCHGRASS_POSTGRES_DB</li>
-                  <li>TOUCHGRASS_DB_BACKUP_DIR</li>
-                </ul>
-              </div>
-            ) : !postgres.reachable ? (
-              <ErrorState
-                title="Postgres is unreachable"
-                message="The container may be stopped or the credentials wrong. Check the TOUCHGRASS_POSTGRES_* environment."
-                onRetry={() => void loadHealth()}
-              />
-            ) : (
-              <div className="grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
-                <Stat label="Version" value={postgres.version ?? 'n/a'} />
-                <Stat
-                  label="Size"
-                  value={
-                    postgres.size_bytes === null || postgres.size_bytes === undefined
-                      ? 'n/a'
-                      : formatBytes(postgres.size_bytes)
-                  }
-                />
-                <Stat
-                  label="Connections"
-                  value={
-                    postgres.connections_used === null ||
-                    postgres.connections_used === undefined ||
-                    postgres.connections_max === null ||
-                    postgres.connections_max === undefined
-                      ? 'n/a'
-                      : `${postgres.connections_used} / ${postgres.connections_max}`
-                  }
-                />
-                <Stat
-                  label="Uptime"
-                  value={
-                    postgres.uptime_secs === null || postgres.uptime_secs === undefined
-                      ? 'n/a'
-                      : formatDuration(postgres.uptime_secs)
-                  }
-                />
-                <Stat
-                  label="Last backup"
-                  value={
-                    postgres.last_backup_at === null ||
-                    postgres.last_backup_at === undefined ||
-                    postgres.last_backup_at === ''
-                      ? 'never'
-                      : `${formatTime(postgres.last_backup_at)} (${timeAgo(postgres.last_backup_at)})`
-                  }
-                />
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {dbError !== null && (
+        <ErrorState title="Couldn't load database health" message={dbError} onRetry={() => void loadHealth()} />
+      )}
+      {snapshot === null && dbError === null && (
+        <Skeleton className="h-24 w-full" aria-label="Loading database health" />
+      )}
+      {snapshot !== null && (
+        <>
+          <p className="text-muted-foreground text-sm">
+            {snapshot.inventory_status === 'waiting' && 'Waiting for the first Docker inventory.'}
+            {snapshot.inventory_status === 'unavailable' && 'Docker inventory is unavailable.'}
+            {snapshot.inventory_status === 'stale' && 'Docker inventory is stale. Showing last observed containers.'}
+            {snapshot.inventory_status === 'current' && 'Docker status comes from the host inventory heartbeat.'}
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {databases.filter((db) => db.configured || db.id.startsWith('docker:')).map((database) => (
+              <DatabaseCard key={database.id} database={database} action={
+                isAdmin && database.id === 'postgres' && backupReady ? (
+                  <Button
+                    size="sm"
+                    className="ml-auto"
+                    onClick={() => void handleBackup()}
+                    disabled={startingBackup || backupRunning}
+                  >
+                    {startingBackup ? 'Starting…' : backupRunning ? 'Backup running…' : 'Back up now'}
+                  </Button>
+                ) : undefined
+              } />
+            ))}
+          </div>
+          {snapshot.inventory_status === 'current' && !databases.some((db) => db.container) && (
+            <p className="text-muted-foreground text-sm">No supported database containers detected.</p>
+          )}
+          {isAdmin && !postgres?.configured && (
+            <p className="text-muted-foreground text-sm">
+              Configure a PostgreSQL backup target to enable backups and restores.
+            </p>
+          )}
+        </>
       )}
 
       {backupRunning && (
@@ -518,62 +503,6 @@ export default function DatabasesScreen({
         </Card>
       )}
 
-      {(redis?.configured === true || sqlite?.configured === true) && (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {redis?.configured === true && (
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-2">
-                  <CardTitle className="text-sm font-medium">{redis.label}</CardTitle>
-                  <Badge variant={redis.reachable ? 'default' : 'destructive'}>
-                    {redis.reachable ? 'reachable' : 'unreachable'}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="text-muted-foreground text-sm">
-                {redis.reachable ? (
-                  <span className="font-mono text-xs">
-                    {[redis.version ?? '', redis.used_memory_bytes == null ? '' : formatBytes(redis.used_memory_bytes)]
-                      .filter((part) => part !== '')
-                      .join(' · ') || 'healthy'}
-                  </span>
-                ) : (
-                  'Redis is configured but not answering.'
-                )}
-              </CardContent>
-            </Card>
-          )}
-          {sqlite?.configured === true && (
-            <Card>
-              <CardHeader className="pb-2">
-                <div className="flex items-center gap-2">
-                  <CardTitle className="text-sm font-medium">{sqlite.label}</CardTitle>
-                  <Badge variant={sqlite.reachable ? 'default' : 'destructive'}>
-                    {sqlite.reachable ? 'reachable' : 'unreachable'}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="text-muted-foreground text-sm">
-                {sqlite.reachable ? (
-                  <span className="font-mono text-xs">
-                    {[
-                      sqlite.integrity == null || sqlite.integrity === ''
-                        ? ''
-                        : `integrity: ${sqlite.integrity}`,
-                      sqlite.size_bytes == null ? '' : formatBytes(sqlite.size_bytes),
-                    ]
-                      .filter((part) => part !== '')
-                      .join(' · ') || 'healthy'}
-                  </span>
-                ) : (
-                  "touchgrass's own database isn't answering."
-                )}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
-
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">Backups (newest first)</CardTitle>
@@ -592,7 +521,7 @@ export default function DatabasesScreen({
             </div>
           ) : sortedBackups.length === 0 ? (
             <p className="text-muted-foreground py-6 text-center text-sm">
-              No backups yet — take the first one from the Postgres card above.
+              No backups recorded.
             </p>
           ) : (
             <Table>
@@ -646,7 +575,7 @@ export default function DatabasesScreen({
                             size="sm"
                             className="text-destructive hover:text-destructive"
                             onClick={() => openRestore(backup.name)}
-                            disabled={backupRunning}
+                            disabled={!backupReady || backupRunning}
                           >
                             Restore
                           </Button>

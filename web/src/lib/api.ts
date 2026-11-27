@@ -1405,6 +1405,10 @@ export interface DatabaseView {
   label: string;
   configured: boolean;
   reachable: boolean;
+  container?: string;
+  image?: string;
+  status: string;
+  observed_at?: string;
   version?: string | null;
   size_bytes?: number | null;
   connections_used?: number | null;
@@ -1415,8 +1419,10 @@ export interface DatabaseView {
   last_backup_at?: string | null;
 }
 
-interface DatabasesResponse {
+export interface DatabasesResponse {
   databases: DatabaseView[];
+  inventory_status: 'waiting' | 'current' | 'stale' | 'unavailable';
+  docker_observed_at?: string;
 }
 
 export interface DatabaseBackup {
@@ -1449,14 +1455,12 @@ interface DatabaseJobStartResponse {
   status: string;
 }
 
-export async function fetchDatabases(): Promise<DatabaseView[]> {
-  const body = await request<DatabasesResponse>('/api/databases');
-
-  return body.databases ?? [];
+export async function fetchDatabases(signal?: AbortSignal): Promise<DatabasesResponse> {
+  return request<DatabasesResponse>('/api/databases', { signal });
 }
 
-export async function fetchDatabaseBackups(): Promise<DatabaseBackup[]> {
-  const body = await request<DatabaseBackupsResponse>('/api/databases/backups');
+export async function fetchDatabaseBackups(signal?: AbortSignal): Promise<DatabaseBackup[]> {
+  const body = await request<DatabaseBackupsResponse>('/api/databases/backups', { signal });
 
   return body.backups ?? [];
 }
@@ -1465,8 +1469,8 @@ export async function startDatabaseBackup(): Promise<DatabaseJobStartResponse> {
   return request<DatabaseJobStartResponse>('/api/databases/backups', { method: 'POST' });
 }
 
-export async function fetchDatabaseJobs(): Promise<DatabaseJob[]> {
-  const body = await request<DatabaseJobsResponse>('/api/databases/jobs');
+export async function fetchDatabaseJobs(signal?: AbortSignal): Promise<DatabaseJob[]> {
+  const body = await request<DatabaseJobsResponse>('/api/databases/jobs', { signal });
 
   return body.jobs ?? [];
 }

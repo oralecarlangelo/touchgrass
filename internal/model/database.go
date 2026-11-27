@@ -18,15 +18,24 @@ const (
 	DatabaseSQLiteLabel   = "SQLite"
 )
 
-// Database is one health entry: postgres, redis, or sqlite. Pointer
-// fields stay null where the probe cannot provide them (unconfigured,
-// unreachable, or single-query failure): the view renders "n/a",
-// never an error.
+// DatabaseSnapshot contains the latest background observations.
+type DatabaseSnapshot struct {
+	Databases        []Database `json:"databases"`
+	InventoryStatus  string     `json:"inventory_status"`
+	DockerObservedAt *time.Time `json:"docker_observed_at,omitempty"`
+}
+
+// Database is one configured target, discovered container, or embedded database.
+// Detailed query statistics may be absent when only runtime metadata is available.
 type Database struct {
 	ID              string     `json:"id"`
 	Label           string     `json:"label"`
 	Configured      bool       `json:"configured"`
 	Reachable       bool       `json:"reachable"`
+	Container       string     `json:"container,omitempty"`
+	Image           string     `json:"image,omitempty"`
+	Status          string     `json:"status"`
+	ObservedAt      *time.Time `json:"observed_at,omitempty"`
 	Version         *string    `json:"version,omitempty"`
 	SizeBytes       *int64     `json:"size_bytes,omitempty"`
 	ConnectionsUsed *int64     `json:"connections_used,omitempty"`

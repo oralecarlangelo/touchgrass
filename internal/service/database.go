@@ -51,9 +51,6 @@ var backupNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+\.dump$`)
 // backupHostileRe matches runes outside the backup-name shape.
 var backupHostileRe = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
 
-// postgresVersionRe extracts the numeric version from SELECT version().
-var postgresVersionRe = regexp.MustCompile(`PostgreSQL (\d+(?:\.\d+)?)`)
-
 // CommandRunner executes name with args, streaming stdin to the process
 // and the process stdout to stdout. Stderr folds into the error.
 type CommandRunner func(
@@ -64,14 +61,9 @@ type CommandRunner func(
 	stdout io.Writer,
 ) error
 
-// sqliteIntegrityTTL is how long one integrity verdict is served. The check
-// reads the whole database file, so running it on every page load turns a
-// multi-gigabyte database into minutes of CPU per request.
-const sqliteIntegrityTTL = time.Hour
-
-// SQLiteProber reports the embedded database's version and integrity.
+// SQLiteProber checks the embedded database without scanning its contents.
 type SQLiteProber interface {
-	SQLiteHealth(ctx context.Context) (model.SQLiteHealth, error)
+	SQLiteVersion(ctx context.Context) (string, error)
 }
 
 // DatabaseConfig wires a Database.
@@ -108,11 +100,7 @@ type Database struct {
 	logger         *slog.Logger
 	mutex          sync.Mutex
 	busy           bool
-	// healthMu serializes integrity checks and guards the cached verdict.
-	healthMu  sync.Mutex
-	health    model.SQLiteHealth
-	healthAt  time.Time
-	healthNow func() time.Time
+	snapshot       databaseHeartbeat
 }
 
 // NewDatabase builds a Database. A nil Run defaults to execCommand,
@@ -141,7 +129,6 @@ func NewDatabase(cfg DatabaseConfig) *Database {
 		jobs:           cfg.Jobs,
 		audits:         cfg.Audit,
 		sqlite:         cfg.SQLite,
-		healthNow:      time.Now,
 		run:            run,
 		logger:         cfg.Logger,
 	}
@@ -225,224 +212,6 @@ func (d *Database) postgresInt(ctx context.Context, query string) (int64, error)
 	}
 
 	return value, nil
-}
-
-// postgresVersion reports the numeric server version (e.g. "16.3").
-func (d *Database) postgresVersion(ctx context.Context) (string, error) {
-	raw, err := d.psql(ctx, "SELECT version()")
-	if err != nil {
-		return "", err
-	}
-
-	match := postgresVersionRe.FindStringSubmatch(raw)
-	if match == nil {
-		return "", fmt.Errorf("parsing postgres version %q: unexpected format", raw)
-	}
-
-	return match[1], nil
-}
-
-// Databases reports postgres, redis, and sqlite health. Probes degrade
-// per field: a failed check leaves its entry unreachable or its stat
-// null instead of failing the whole call.
-func (d *Database) Databases(ctx context.Context) ([]model.Database, error) {
-	return []model.Database{
-		d.postgresHealth(ctx),
-		d.redisHealth(ctx),
-		d.sqliteHealth(ctx),
-	}, nil
-}
-
-// postgresHealth probes the postgres container via pg_isready plus psql.
-func (d *Database) postgresHealth(ctx context.Context) model.Database {
-	db := model.Database{
-		ID:         model.DatabasePostgres,
-		Label:      model.DatabasePostgresLabel,
-		Configured: d.container != "",
-	}
-	db.LastBackupAt = d.lastBackupAt()
-
-	if !db.Configured {
-		return db
-	}
-
-	if err := d.run(ctx, dockerBin, dockerArgs(d.container, false,
-		"pg_isready", "-U", d.user, "-d", d.dbName,
-	), nil, io.Discard); err != nil {
-		d.logger.Debug("postgres is not ready", "error", err)
-
-		return db
-	}
-
-	db.Reachable = true
-
-	if version, err := d.postgresVersion(ctx); err != nil {
-		d.logger.Debug("postgres version probe failed", "error", err)
-	} else {
-		db.Version = &version
-	}
-
-	db.SizeBytes = d.probeInt(ctx, "SELECT pg_database_size(current_database())", "size")
-	db.ConnectionsUsed = d.probeInt(ctx, "SELECT count(*) FROM pg_stat_activity", "connections")
-	db.ConnectionsMax = d.probeInt(ctx, "SHOW max_connections", "max connections")
-	db.UptimeSecs = d.probeInt(
-		ctx,
-		"SELECT EXTRACT(EPOCH FROM now() - pg_postmaster_start_time())::bigint",
-		"uptime",
-	)
-
-	return db
-}
-
-// probeInt runs one postgres number query, degrading to nil on failure.
-func (d *Database) probeInt(ctx context.Context, query, noun string) *int64 {
-	value, err := d.postgresInt(ctx, query)
-	if err != nil {
-		d.logger.Debug("postgres probe failed", "stat", noun, "error", err)
-
-		return nil
-	}
-
-	return &value
-}
-
-// redisHealth probes the redis container via redis-cli info.
-func (d *Database) redisHealth(ctx context.Context) model.Database {
-	db := model.Database{
-		ID:         model.DatabaseRedis,
-		Label:      model.DatabaseRedisLabel,
-		Configured: d.redisContainer != "",
-	}
-
-	if !db.Configured {
-		return db
-	}
-
-	server, err := d.execOut(ctx, dockerBin, dockerArgs(
-		d.redisContainer, false, "redis-cli", "info", "server",
-	), nil)
-	if err != nil {
-		d.logger.Debug("redis is not ready", "error", err)
-
-		return db
-	}
-
-	db.Reachable = true
-
-	if version := infoField(server, "redis_version"); version != "" {
-		db.Version = &version
-	}
-
-	db.UptimeSecs = infoSeconds(server, "uptime_in_seconds")
-
-	memory, err := d.execOut(ctx, dockerBin, dockerArgs(
-		d.redisContainer, false, "redis-cli", "info", "memory",
-	), nil)
-	if err != nil {
-		d.logger.Debug("redis memory probe failed", "error", err)
-
-		return db
-	}
-
-	if used, err := infoNumber(memory, "used_memory"); err != nil {
-		d.logger.Debug("redis memory probe failed", "error", err)
-	} else {
-		db.UsedMemoryBytes = &used
-	}
-
-	return db
-}
-
-// infoField extracts one key:value line from redis INFO output.
-func infoField(info, key string) string {
-	for line := range strings.Lines(info) {
-		name, value, ok := strings.Cut(strings.TrimSpace(line), ":")
-		if ok && name == key {
-			return value
-		}
-	}
-
-	return ""
-}
-
-// infoNumber parses one numeric redis INFO field.
-func infoNumber(info, key string) (int64, error) {
-	raw := infoField(info, key)
-
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parsing redis %s %q: %w", key, raw, err)
-	}
-
-	return value, nil
-}
-
-// infoSeconds parses one redis INFO uptime field, degrading to nil.
-func infoSeconds(info, key string) *int64 {
-	secs, err := infoNumber(info, key)
-	if err != nil {
-		return nil
-	}
-
-	return &secs
-}
-
-// sqliteHealth reports the embedded database version, size, and integrity.
-func (d *Database) sqliteHealth(ctx context.Context) model.Database {
-	db := model.Database{
-		ID:         model.DatabaseSQLite,
-		Label:      model.DatabaseSQLiteLabel,
-		Configured: true,
-	}
-	size := databaseBytes(d.dbPath)
-	db.SizeBytes = &size
-
-	health, err := d.cachedSQLiteHealth(ctx)
-	if err != nil {
-		d.logger.Debug("sqlite health probe failed", "error", err)
-
-		return db
-	}
-
-	db.Reachable = true
-	db.Version = &health.Version
-	db.Integrity = &health.Integrity
-
-	return db
-}
-
-// cachedSQLiteHealth returns the integrity verdict, running the check at most
-// once per sqliteIntegrityTTL. Concurrent callers wait for the one check in
-// flight instead of each starting their own. Failures are not cached.
-func (d *Database) cachedSQLiteHealth(ctx context.Context) (model.SQLiteHealth, error) {
-	d.healthMu.Lock()
-	defer d.healthMu.Unlock()
-
-	if !d.healthAt.IsZero() && d.healthNow().Sub(d.healthAt) < sqliteIntegrityTTL {
-		return d.health, nil
-	}
-
-	health, err := d.sqlite.SQLiteHealth(ctx)
-	if err != nil {
-		return model.SQLiteHealth{}, fmt.Errorf("probing sqlite health: %w", err)
-	}
-
-	d.health = health
-	d.healthAt = d.healthNow()
-
-	return health, nil
-}
-
-// lastBackupAt returns the newest backup mtime, or nil when empty.
-func (d *Database) lastBackupAt() *time.Time {
-	backups, err := d.Backups()
-	if err != nil || len(backups) == 0 {
-		return nil
-	}
-
-	newest := backups[0].CreatedAt
-
-	return &newest
 }
 
 // Backups lists pg_dump artifacts newest first. A missing backup

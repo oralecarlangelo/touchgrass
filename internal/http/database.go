@@ -13,21 +13,10 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
-// databasesResponse is the databases payload.
-type databasesResponse struct {
-	Databases []model.Database `json:"databases"`
-}
-
-// handleDatabases lists postgres, redis, and sqlite health.
-func (s *Server) handleDatabases(w nethttp.ResponseWriter, r *nethttp.Request) {
-	databases, err := s.database.Databases(r.Context())
-	if err != nil {
-		writeServiceError(w, s.logger, err, "failed to load databases")
-
-		return
-	}
-
-	writeJSON(w, s.logger, nethttp.StatusOK, databasesResponse{Databases: databases})
+// handleDatabases serves the latest heartbeat without synchronous probes.
+func (s *Server) handleDatabases(w nethttp.ResponseWriter, _ *nethttp.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, s.logger, nethttp.StatusOK, s.database.Databases())
 }
 
 // backupsResponse is the backup list payload.

@@ -38,22 +38,31 @@ type SelfSnapshot struct {
 	DatabaseBytes int64  `json:"database_bytes"`
 }
 
+// CollectionFreshness describes the last background collection attempt.
+type CollectionFreshness struct {
+	ObservedAt        *time.Time `json:"observed_at"`
+	Complete          bool       `json:"complete"`
+	Stale             bool       `json:"stale"`
+	LastErrorCategory string     `json:"last_error_category,omitempty"`
+}
+
 // SystemSnapshot is the host + daemon + self picture. Pointer fields
 // stay null where the platform cannot provide them (non-Linux hosts,
 // unreadable /proc, unreachable daemon): the screen renders "n/a",
 // never an error. CPUPercent is null on the first snapshot — usage
 // needs two /proc/stat samples to form a delta.
 type SystemSnapshot struct {
-	Hostname       string          `json:"hostname"`
-	OS             string          `json:"os"`
-	Arch           string          `json:"arch"`
-	UptimeSecs     *int64          `json:"uptime_secs"`
-	Load1          *float64        `json:"load_1"`
-	CPUPercent     *float64        `json:"cpu_percent"`
-	MemUsedBytes   *int64          `json:"mem_used_bytes"`
-	MemTotalBytes  *int64          `json:"mem_total_bytes"`
-	DiskUsedBytes  *int64          `json:"disk_used_bytes"`
-	DiskTotalBytes *int64          `json:"disk_total_bytes"`
-	Docker         *DaemonSnapshot `json:"docker"`
-	Self           SelfSnapshot    `json:"self"`
+	Hostname       string              `json:"hostname"`
+	OS             string              `json:"os"`
+	Arch           string              `json:"arch"`
+	UptimeSecs     *int64              `json:"uptime_secs"`
+	Load1          *float64            `json:"load_1"`
+	CPUPercent     *float64            `json:"cpu_percent"`
+	MemUsedBytes   *int64              `json:"mem_used_bytes"`
+	MemTotalBytes  *int64              `json:"mem_total_bytes"`
+	DiskUsedBytes  *int64              `json:"disk_used_bytes"`
+	DiskTotalBytes *int64              `json:"disk_total_bytes"`
+	Docker         *DaemonSnapshot     `json:"docker"`
+	Self           SelfSnapshot        `json:"self"`
+	Freshness      CollectionFreshness `json:"freshness"`
 }

@@ -30,13 +30,14 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Toaster } from '@/components/ui/sonner';
 import {
-  fetchServices,
+  fetchServicesSnapshot,
   fetchSession,
   isUnauthorized,
   login,
   logout,
   onForbidden,
   type ServiceView,
+  type ServiceFreshness,
   type SessionInfo,
 } from './lib/api.ts';
 import {
@@ -50,6 +51,7 @@ import {
 } from './lib/access.ts';
 import { navGroups, type ViewId } from './lib/views.ts';
 import { parseHash, writeHash } from './lib/hash.ts';
+import { LatestRequest } from './lib/latest-request.ts';
 
 const refreshIntervalMs = 30_000;
 
@@ -76,6 +78,8 @@ export default function App() {
   const [services, setServices] = useState<ServiceView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [servicesUpdatedAt, setServicesUpdatedAt] = useState<string | null>(null);
+  const [servicesFreshness, setServicesFreshness] = useState<ServiceFreshness | null>(null);
   const [selected, setSelected] = useState<ServiceView | null>(null);
   const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
   const [selectedSecurityFindingId, setSelectedSecurityFindingId] = useState<number | null>(null);
@@ -89,9 +93,12 @@ export default function App() {
   // Deep-link: the hash mirrors the view + selected service both ways.
   // A linked service resolves once the inventory loads.
   const pendingServiceRef = useRef<string | null>(parseHash(window.location.hash).serviceId);
+  const servicesRequestRef = useRef(new LatestRequest<Awaited<ReturnType<typeof fetchServicesSnapshot>>>());
+  const servicesLoadGenerationRef = useRef(0);
 
   // The one-time password typed at login, held only until it is replaced.
   const oneTimePasswordRef = useRef('');
+  const dataScopeRef = useRef<string | null>(null);
 
   useEffect(() => {
     writeHash(view, selected?.id ?? null, serviceTab);
@@ -135,8 +142,14 @@ export default function App() {
   }, [refreshSession]);
 
   const handleUnauthorized = useCallback(() => {
+    servicesLoadGenerationRef.current += 1;
+    servicesRequestRef.current.cancel();
     setSession({ authenticated: false, username: '', role: '' });
     setServices(null);
+    setServicesFreshness(null);
+    setServicesUpdatedAt(null);
+    setError(null);
+    setRefreshing(false);
     setSelected(null);
     setSelectedContainerId(null);
     setSelectedSecurityFindingId(null);
@@ -148,14 +161,40 @@ export default function App() {
   const authed = session !== null && session.authenticated;
   const can = useMemo(() => makeCan(session), [session]);
   const scoped = isScoped(session);
+  const dataScope = JSON.stringify([
+    session?.authenticated,
+    session?.username,
+    session?.role,
+    session?.all_services,
+    [...(session?.services ?? [])].sort(),
+  ]);
+
+  useEffect(() => {
+    if (dataScopeRef.current !== null && dataScopeRef.current !== dataScope) {
+      servicesLoadGenerationRef.current += 1;
+      servicesRequestRef.current.cancel();
+      setServices(null);
+      setServicesFreshness(null);
+      setServicesUpdatedAt(null);
+      setError(null);
+      setRefreshing(false);
+      setSelected(null);
+    }
+    dataScopeRef.current = dataScope;
+  }, [dataScope]);
 
   const load = useCallback(async () => {
+    const generation = servicesLoadGenerationRef.current;
     setRefreshing(true);
-    setError(null);
 
     try {
-      const fetched = await fetchServices();
+      const snapshot = await servicesRequestRef.current.run(fetchServicesSnapshot);
+      if (generation !== servicesLoadGenerationRef.current) return;
+      const fetched = snapshot.services;
       setServices(fetched);
+      setServicesFreshness(snapshot.freshness);
+      setServicesUpdatedAt(snapshot.freshness?.observed_at ?? new Date().toISOString());
+      setError(null);
 
       const pending = pendingServiceRef.current;
 
@@ -189,6 +228,8 @@ export default function App() {
         });
       }
     } catch (err) {
+      if (generation !== servicesLoadGenerationRef.current) return;
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       if (isUnauthorized(err)) {
         handleUnauthorized();
         return;
@@ -196,7 +237,7 @@ export default function App() {
 
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setRefreshing(false);
+      if (generation === servicesLoadGenerationRef.current) setRefreshing(false);
     }
   }, [handleUnauthorized, scoped]);
 
@@ -220,7 +261,10 @@ export default function App() {
     void load();
     const timer = setInterval(() => void load(), refreshIntervalMs);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      servicesRequestRef.current.cancel();
+    };
   }, [authed, session, can, load]);
 
   const handleLogin = useCallback(async () => {
@@ -256,8 +300,13 @@ export default function App() {
       }
     }
 
+    servicesLoadGenerationRef.current += 1;
     setSession({ authenticated: false, username: '', role: '' });
+    servicesRequestRef.current.cancel();
     setServices(null);
+    setServicesFreshness(null);
+    setServicesUpdatedAt(null);
+    setRefreshing(false);
     setSelected(null);
     setSelectedContainerId(null);
     setSelectedSecurityFindingId(null);
@@ -298,26 +347,14 @@ export default function App() {
         return;
       }
 
-      // Unknown id (e.g. a just-promoted service missing from the cached
-      // inventory): refetch once so #/services/<id> still lands on it.
-      void fetchServices()
-        .then((fetched) => {
-          const linked = fetched.find((service) => service.id === id) ?? null;
-
-          setServices(fetched);
-          setSelected(linked);
-          setView('services');
-
-          if (linked === null && scoped) {
-            setDeniedServiceId(id);
-          }
-        })
-        .catch(() => {
-          setSelected(null);
-          setView('services');
-        });
+      // Route cache misses through the one inventory coordinator so navigation,
+      // polling, and retries cannot issue competing service reads.
+      pendingServiceRef.current = id;
+      setSelected(null);
+      setView('services');
+      void load();
     },
-    [services, scoped],
+    [services, load],
   );
 
   const handleDeletedService = useCallback(
@@ -438,6 +475,11 @@ export default function App() {
         ) : view === 'dashboard' ? (
           <Dashboard
             services={services}
+            servicesError={error}
+            servicesRefreshing={refreshing}
+            servicesUpdatedAt={servicesUpdatedAt}
+            servicesFreshness={servicesFreshness}
+            onRetryServices={() => void load()}
             onSelectService={handleSelectService}
             onView={handleView}
             onUnauthorized={handleUnauthorized}
@@ -526,7 +568,7 @@ export default function App() {
               </Button>
             </div>
 
-            {error !== null && (
+            {error !== null && services === null && (
               <ErrorState
                 title="Couldn't load services"
                 message={error}
@@ -534,7 +576,7 @@ export default function App() {
               />
             )}
 
-            {error === null && services !== null && services.length === 0 && (
+            {services !== null && services.length === 0 && (
               <EmptyState
                 title="No services on the radar"
                 body={
@@ -552,14 +594,21 @@ export default function App() {
               />
             )}
 
-            {error === null && (services === null || services.length > 0) && (
+            {error !== null && services !== null && services.length > 0 && (
+              <div role="alert" className="border-destructive/40 flex items-center justify-between rounded-lg border p-3 text-sm">
+                <span>Refresh failed. Showing last known services.</span>
+                <Button variant="outline" size="sm" onClick={() => void load()}>Retry</Button>
+              </div>
+            )}
+
+            {services === null || services.length > 0 ? (
               <ServicesList
                 services={services}
                 onSelect={handleSelectService}
                 onDeleted={handleDeletedService}
                 isAdmin={can('services.manage')}
               />
-            )}
+            ) : null}
           </>
         )}
       </AppShell>

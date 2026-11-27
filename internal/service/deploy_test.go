@@ -50,6 +50,40 @@ type recordingProber struct {
 	healthy map[string]bool
 }
 
+type countingInventoryIO struct {
+	mu         sync.Mutex
+	containers []docker.Container
+	listErr    error
+	probeErr   error
+	listCalls  int
+	probeCalls int
+}
+
+func (c *countingInventoryIO) List(context.Context) ([]docker.Container, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.listCalls++
+
+	return c.containers, c.listErr
+}
+
+func (c *countingInventoryIO) Check(context.Context, string) (probe.Result, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.probeCalls++
+
+	return probe.Result{Healthy: c.probeErr == nil, StatusCode: 200}, c.probeErr
+}
+
+func (c *countingInventoryIO) calls() (int, int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.listCalls, c.probeCalls
+}
+
 func (s *recordingProber) Check(_ context.Context, target string) (probe.Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -172,6 +206,87 @@ func serviceViews(t *testing.T, inv *Inventory) map[string]model.ServiceView {
 	}
 
 	return byID
+}
+
+func TestCachedServicesNeverPerformLiveIO(t *testing.T) {
+	t.Parallel()
+
+	io := &countingInventoryIO{containers: testContainers()}
+	inv := testInventory(t, io, io)
+
+	cold, err := inv.CachedServices(context.Background())
+	if err != nil {
+		t.Fatalf("CachedServices(cold) error = %v, want nil", err)
+	}
+
+	if len(cold.Services) != 3 || cold.Complete || !cold.Stale {
+		t.Fatalf("CachedServices(cold) = %+v, want three unknown stale definitions", cold)
+	}
+
+	assertInventoryCalls(t, io, 0, 0)
+
+	if err := inv.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh() error = %v, want nil", err)
+	}
+
+	lists, probes := io.calls()
+	if lists == 0 || probes == 0 {
+		t.Fatalf("heartbeat calls = (%d lists, %d probes), want live I/O", lists, probes)
+	}
+
+	warm, err := inv.CachedServices(context.Background())
+	if err != nil {
+		t.Fatalf("CachedServices(warm) error = %v, want nil", err)
+	}
+
+	if warm.ObservedAt.IsZero() {
+		t.Errorf("CachedServices(warm) freshness = %+v, want an observation", warm)
+	}
+
+	assertInventoryCalls(t, io, lists, probes)
+}
+
+func assertInventoryCalls(t *testing.T, io *countingInventoryIO, wantLists, wantProbes int) {
+	t.Helper()
+
+	lists, probes := io.calls()
+	if lists != wantLists || probes != wantProbes {
+		t.Fatalf("cached calls = (%d lists, %d probes), want (%d, %d)",
+			lists, probes, wantLists, wantProbes)
+	}
+}
+
+func TestRefreshPreservesLastGoodSnapshotOnFailure(t *testing.T) {
+	t.Parallel()
+
+	io := &countingInventoryIO{containers: testContainers()}
+
+	inv := testInventory(t, io, io)
+	if err := inv.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh() error = %v, want nil", err)
+	}
+
+	io.mu.Lock()
+	io.listErr = errors.New("daemon down")
+	io.mu.Unlock()
+
+	if err := inv.Refresh(context.Background()); err == nil {
+		t.Fatal("Refresh() error = nil, want daemon failure")
+	}
+
+	state, err := inv.CachedServices(context.Background())
+	if err != nil {
+		t.Fatalf("CachedServices() error = %v, want nil", err)
+	}
+
+	hasContainers := false
+	for _, view := range state.Services {
+		hasContainers = hasContainers || len(view.Containers) > 0
+	}
+
+	if !hasContainers || !state.Stale || state.LastError == "" {
+		t.Errorf("CachedServices() = %+v, want stale last-good views with diagnostic", state)
+	}
 }
 
 func TestServicesBlueGreen(t *testing.T) {

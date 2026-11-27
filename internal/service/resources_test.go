@@ -104,7 +104,11 @@ func TestSampleCollects(t *testing.T) {
 	sampler, db := testSampler(t, lister)
 	ctx := context.Background()
 
+	startedAt := lister.stats[containers[0].ID].StartedAt
+	minUptime := int64(time.Since(startedAt).Seconds())
 	sampler.sample(ctx)
+
+	maxUptime := int64(time.Since(startedAt).Seconds())
 
 	metrics, err := store.NewMetricStore(db).ListByService(ctx, testServiceAPI, time.Time{}, 100)
 	if err != nil {
@@ -120,8 +124,8 @@ func TestSampleCollects(t *testing.T) {
 		t.Errorf("sample = %+v, want mapped stats", got)
 	}
 
-	if got.UptimeSecs < 3590 || got.UptimeSecs > 3610 {
-		t.Errorf("uptime = %d, want ~3600", got.UptimeSecs)
+	if got.UptimeSecs < minUptime || got.UptimeSecs > maxUptime {
+		t.Errorf("uptime = %d, want between %d and %d", got.UptimeSecs, minUptime, maxUptime)
 	}
 
 	fe, err := store.NewMetricStore(db).ListByService(ctx, testServiceFE, time.Time{}, 100)

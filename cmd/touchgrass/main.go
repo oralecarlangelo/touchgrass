@@ -101,6 +101,7 @@ type backgroundLoops struct {
 	processSecurity     *service.ProcessScanner
 	diffSecurity        *service.DiffScanner
 	securityEvents      *service.SecurityEventCollector
+	system              *service.System
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -111,7 +112,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(11)
+	group.Add(13)
 
 	go func() {
 		defer group.Done()
@@ -123,6 +124,18 @@ func startBackground(
 		defer group.Done()
 
 		loops.inventory.Watch(ctx, loops.interval, loops.hub.Broadcast)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.inventory.RunHeartbeat(ctx, loops.metrics)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.system.Run(ctx, loops.metrics)
 	}()
 
 	go func() {
@@ -435,6 +448,7 @@ func runServe(args []string) error {
 		processSecurity:     processSecurity,
 		diffSecurity:        diffSecurity,
 		securityEvents:      securityEvents,
+		system:              sys,
 	}, &group, logger)
 	group.Go(func() { securityService.RunSuppressionExpiry(ctx, time.Minute) })
 

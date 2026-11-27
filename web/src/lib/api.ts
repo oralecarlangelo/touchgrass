@@ -149,8 +149,16 @@ export interface CollectorStatusView {
   effective_interval_secs?: number;
 }
 
+export interface ServiceFreshness {
+  observed_at: string | null;
+  complete: boolean;
+  stale: boolean;
+  last_error_category?: string;
+}
+
 interface ServicesResponse {
   services: ServiceView[];
+  freshness?: ServiceFreshness;
 }
 
 export interface Metric {
@@ -322,10 +330,17 @@ function jsonBody(body: unknown): RequestInit {
   };
 }
 
-export async function fetchServices(): Promise<ServiceView[]> {
-  const body = await request<ServicesResponse>('/api/services');
+export async function fetchServices(signal?: AbortSignal): Promise<ServiceView[]> {
+  return (await fetchServicesSnapshot(signal)).services;
+}
 
-  return body.services ?? [];
+export async function fetchServicesSnapshot(signal?: AbortSignal): Promise<{
+  services: ServiceView[];
+  freshness: ServiceFreshness | null;
+}> {
+  const body = await request<ServicesResponse>('/api/services', { signal });
+
+  return { services: body.services ?? [], freshness: body.freshness ?? null };
 }
 
 const performanceResolutions = new Set<PerformanceResolution>(['auto', 'minute', 'hour']);
@@ -717,6 +732,7 @@ interface NotificationsResponse {
 export async function fetchNotifications(
   serviceId: string,
   limit = 100,
+  signal?: AbortSignal,
 ): Promise<{ notifications: Notification[]; unread: number }> {
   const params = new URLSearchParams({ limit: String(limit) });
 
@@ -724,7 +740,7 @@ export async function fetchNotifications(
     params.set('service_id', serviceId);
   }
 
-  const body = await request<NotificationsResponse>(`/api/notifications?${params.toString()}`);
+  const body = await request<NotificationsResponse>(`/api/notifications?${params.toString()}`, { signal });
 
   return { notifications: body.notifications ?? [], unread: body.unread ?? 0 };
 }
@@ -1274,10 +1290,11 @@ export interface SystemSnapshot {
   disk_total_bytes: number | null;
   docker: DaemonSnapshot | null;
   self: SelfSnapshot;
+  freshness: ServiceFreshness;
 }
 
-export async function fetchSystem(): Promise<SystemSnapshot> {
-  return request<SystemSnapshot>('/api/system');
+export async function fetchSystem(signal?: AbortSignal): Promise<SystemSnapshot> {
+  return request<SystemSnapshot>('/api/system', { signal });
 }
 
 export interface FleetContainer {
@@ -1316,12 +1333,12 @@ export interface FleetContainersResponse {
   freshness: ContainerFreshness;
 }
 
-export async function fetchFleetContainers(): Promise<FleetContainersResponse> {
+export async function fetchFleetContainers(signal?: AbortSignal): Promise<FleetContainersResponse> {
   const pageSize = 500;
   const containers: FleetContainer[] = [];
   let freshness: ContainerFreshness | undefined;
   for (let offset = 0; ; offset += pageSize) {
-    const body = await request<FleetContainersResponse>(`/api/system/containers?limit=${pageSize}&offset=${offset}`);
+    const body = await request<FleetContainersResponse>(`/api/system/containers?limit=${pageSize}&offset=${offset}`, { signal });
     const page = body.containers ?? [];
     containers.push(...page);
     freshness = body.freshness;

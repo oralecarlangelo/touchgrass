@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
@@ -40,6 +42,30 @@ type Inventory struct {
 	notifications *store.NotificationStore
 	audit         *Audit
 	activeRun     func(serviceID string) bool
+
+	snapshotMu sync.RWMutex
+	snapshot   inventorySnapshot
+	refreshMu  sync.Mutex
+	probeIssue atomic.Bool
+}
+
+// inventorySnapshot is the last complete service heartbeat. Failed refreshes
+// preserve the last good views and only update the diagnostic error.
+type inventorySnapshot struct {
+	views      []model.ServiceView
+	observedAt time.Time
+	lastError  string
+	complete   bool
+	maxAge     time.Duration
+}
+
+// InventoryState is a request-safe copy of the latest background heartbeat.
+type InventoryState struct {
+	Services   []model.ServiceView
+	ObservedAt time.Time
+	LastError  string
+	Complete   bool
+	Stale      bool
 }
 
 // NewInventory builds an Inventory.
@@ -82,6 +108,110 @@ func (in *Inventory) ServicesIn(ctx context.Context, serviceIDs []string) ([]mod
 	}
 
 	return in.views(ctx, defs)
+}
+
+// CachedServices returns the latest background heartbeat without Docker or
+// health-probe I/O. Before the first successful heartbeat it returns stored
+// service definitions with explicitly unknown live state.
+func (in *Inventory) CachedServices(ctx context.Context) (InventoryState, error) {
+	defs, err := in.services.All(ctx)
+	if err != nil {
+		return InventoryState{}, fmt.Errorf("loading services: %w", err)
+	}
+
+	return in.cachedState(defs), nil
+}
+
+// CachedServicesIn is CachedServices restricted to an authorized service set.
+func (in *Inventory) CachedServicesIn(ctx context.Context, serviceIDs []string) (InventoryState, error) {
+	if len(serviceIDs) == 0 {
+		return InventoryState{Services: []model.ServiceView{}}, nil
+	}
+
+	defs, err := in.services.ByIDs(ctx, serviceIDs)
+	if err != nil {
+		return InventoryState{}, fmt.Errorf("loading services: %w", err)
+	}
+
+	return in.cachedState(defs), nil
+}
+
+func (in *Inventory) cachedState(defs []model.Service) InventoryState {
+	in.snapshotMu.RLock()
+	snapshot := in.snapshot
+	in.snapshotMu.RUnlock()
+
+	byID := make(map[string]model.ServiceView, len(snapshot.views))
+	for _, view := range snapshot.views {
+		byID[view.ID] = view
+	}
+
+	views := make([]model.ServiceView, 0, len(defs))
+	missing := false
+
+	for _, def := range defs {
+		view, ok := byID[def.ID]
+		if !ok {
+			view = unknownServiceView(def)
+			missing = true
+		}
+
+		view.Name = def.Name
+		view.Strategy = def.Strategy
+		views = append(views, view)
+	}
+
+	complete := snapshot.complete && !missing
+	stale := snapshot.observedAt.IsZero() || snapshot.lastError != "" || !complete
+
+	if snapshot.maxAge > 0 && time.Since(snapshot.observedAt) > snapshot.maxAge {
+		stale = true
+	}
+
+	return InventoryState{
+		Services: views, ObservedAt: snapshot.observedAt, LastError: snapshot.lastError,
+		Complete: complete, Stale: stale,
+	}
+}
+
+func unknownServiceView(def model.Service) model.ServiceView {
+	return model.ServiceView{
+		ID: def.ID, Name: def.Name, Strategy: def.Strategy, Health: model.HealthUnknown,
+		Colors: []model.ColorView{}, Containers: []model.ContainerView{},
+	}
+}
+
+// Refresh updates the request snapshot. Failure keeps the last good state.
+func (in *Inventory) Refresh(ctx context.Context) error {
+	in.refreshMu.Lock()
+	defer in.refreshMu.Unlock()
+
+	in.probeIssue.Store(false)
+
+	started := time.Now()
+
+	views, err := in.Services(ctx)
+	if err != nil {
+		in.snapshotMu.Lock()
+		in.snapshot.lastError = err.Error()
+		in.snapshotMu.Unlock()
+		in.logger.Warn("service heartbeat failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
+
+		return err
+	}
+
+	observedAt := time.Now().UTC()
+
+	in.snapshotMu.Lock()
+	in.snapshot.views = views
+	in.snapshot.observedAt = observedAt
+	in.snapshot.lastError = ""
+	in.snapshot.complete = !in.probeIssue.Load()
+	in.snapshotMu.Unlock()
+	in.logger.Info("service heartbeat complete",
+		"duration_ms", time.Since(started).Milliseconds(), "services", len(views), "observed_at", observedAt)
+
+	return nil
 }
 
 // views joins service definitions with the running containers.
@@ -208,6 +338,7 @@ func (in *Inventory) recreateView(
 	result, err := in.prober.Check(ctx, cfg.HealthURL)
 	if err != nil {
 		in.logger.Warn("health probe failed", "service", def.ID, "url", cfg.HealthURL, "error", err)
+		in.probeIssue.Store(true)
 
 		health = model.HealthUnhealthy
 	} else if !result.Healthy {
@@ -231,6 +362,7 @@ func (in *Inventory) liveColor(def model.Service, cfg model.BlueGreenConfig) str
 	target, err := probe.LiveTarget(cfg.NginxConf, cfg.Marker)
 	if err != nil {
 		in.logger.Warn("live-color detection failed", "service", def.ID, "error", err)
+		in.probeIssue.Store(true)
 
 		return colorUnknown
 	}
@@ -263,6 +395,7 @@ func (in *Inventory) probeAll(ctx context.Context, urls []string) map[string]pro
 			result, err := in.prober.Check(ctx, target)
 			if err != nil {
 				in.logger.Warn("health probe failed", "url", target, "error", err)
+				in.probeIssue.Store(true)
 			}
 
 			mutex.Lock()

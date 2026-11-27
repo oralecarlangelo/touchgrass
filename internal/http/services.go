@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"time"
 
 	nethttp "net/http"
 
@@ -11,31 +12,57 @@ import (
 
 // servicesResponse is the /api/services payload.
 type servicesResponse struct {
-	Services []model.ServiceView `json:"services"`
+	Services  []model.ServiceView `json:"services"`
+	Freshness serviceFreshness    `json:"freshness"`
+}
+
+type serviceFreshness struct {
+	ObservedAt        *time.Time `json:"observed_at"`
+	Complete          bool       `json:"complete"`
+	Stale             bool       `json:"stale"`
+	LastErrorCategory string     `json:"last_error_category,omitempty"`
 }
 
 // handleServices lists the managed services in the caller's scope with
 // live state. The scope bounds the query itself, so a scoped caller's
 // list never held anything else.
 func (s *Server) handleServices(w nethttp.ResponseWriter, r *nethttp.Request) {
-	views, err := s.visibleServices(r)
+	state, err := s.visibleServices(r)
 	if err != nil {
 		writeError(w, s.logger, err, "failed to load services", "services_unavailable", nethttp.StatusInternalServerError)
 
 		return
 	}
 
-	writeJSON(w, s.logger, nethttp.StatusOK, servicesResponse{Services: views})
+	var observedAt *time.Time
+	if !state.ObservedAt.IsZero() {
+		observedAt = &state.ObservedAt
+	}
+
+	lastErrorCategory := ""
+	if state.LastError != "" {
+		lastErrorCategory = "collection_failed"
+	}
+
+	writeJSON(w, s.logger, nethttp.StatusOK, servicesResponse{
+		Services: state.Services,
+		Freshness: serviceFreshness{
+			ObservedAt:        observedAt,
+			Complete:          state.Complete,
+			Stale:             state.Stale,
+			LastErrorCategory: lastErrorCategory,
+		},
+	})
 }
 
 // visibleServices loads the service views the caller may see.
-func (s *Server) visibleServices(r *nethttp.Request) ([]model.ServiceView, error) {
+func (s *Server) visibleServices(r *nethttp.Request) (service.InventoryState, error) {
 	all, serviceIDs := subjectFrom(r).VisibleServices()
 	if all {
-		return s.inventory.Services(r.Context())
+		return s.inventory.CachedServices(r.Context())
 	}
 
-	return s.inventory.ServicesIn(r.Context(), serviceIDs)
+	return s.inventory.CachedServicesIn(r.Context(), serviceIDs)
 }
 
 // createServiceRequest is the service creation body. Config holds raw

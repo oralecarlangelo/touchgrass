@@ -44,14 +44,7 @@ func (s *Server) handlePruneImages(w nethttp.ResponseWriter, r *nethttp.Request)
 
 // handleSystem returns the host + daemon + self snapshot.
 func (s *Server) handleSystem(w nethttp.ResponseWriter, r *nethttp.Request) {
-	snapshot, err := s.system.Snapshot(r.Context())
-	if err != nil {
-		writeServiceError(w, s.logger, err, "failed to load system snapshot")
-
-		return
-	}
-
-	writeJSON(w, s.logger, nethttp.StatusOK, snapshot)
+	writeJSON(w, s.logger, nethttp.StatusOK, s.system.CachedSnapshot())
 }
 
 // fleetResponse is the latest-per-container fleet payload.

@@ -322,7 +322,7 @@ func TestHandleCreateServiceErrors(t *testing.T) {
 	}
 }
 
-func TestHandleServicesDockerError(t *testing.T) {
+func TestHandleServicesColdStateDoesNotFailWithDockerError(t *testing.T) {
 	t.Parallel()
 
 	server := servicesTestServer(t, stubLister{err: errors.New("daemon down")})
@@ -345,18 +345,18 @@ func TestHandleServicesDockerError(t *testing.T) {
 		t.Fatalf("closing body: %v", err)
 	}
 
-	if res.StatusCode != nethttp.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", res.StatusCode)
+	if res.StatusCode != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
 	}
 
-	var got errorResponse
+	var got servicesResponse
 
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decoding body: %v", err)
 	}
 
-	if got.Code != "services_unavailable" || got.Error == "" {
-		t.Errorf("envelope = %+v, want precise error with code", got)
+	if len(got.Services) != 3 || got.Freshness.Complete || !got.Freshness.Stale {
+		t.Errorf("response = %+v, want definitions with incomplete stale freshness", got)
 	}
 }
 

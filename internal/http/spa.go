@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +20,8 @@ const DefaultDevProxy = "http://127.0.0.1:5173"
 // indexFile is the SPA entrypoint, also the fallback for client routes.
 const indexFile = "index.html"
 
+var fingerprintedAsset = regexp.MustCompile(`^assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$`)
+
 // SPA serves the embedded UI with an index.html fallback for client-side
 // routes. Without a web build it answers 503 with a precise error.
 func SPA(logger *slog.Logger, dist fs.FS) nethttp.Handler {
@@ -27,9 +31,15 @@ func SPA(logger *slog.Logger, dist fs.FS) nethttp.Handler {
 			name = indexFile
 		}
 
+		if strings.HasPrefix(name, "assets/") {
+			serveAsset(w, r, dist, name)
+			return
+		}
+
 		data, err := readDist(dist, name)
 		if err != nil {
-			data, err = readDist(dist, indexFile)
+			name = indexFile
+			data, err = readDist(dist, name)
 		}
 
 		if err != nil {
@@ -45,8 +55,77 @@ func SPA(logger *slog.Logger, dist fs.FS) nethttp.Handler {
 			return
 		}
 
+		if name == indexFile {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+
 		nethttp.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
 	})
+}
+
+func serveAsset(w nethttp.ResponseWriter, r *nethttp.Request, dist fs.FS, name string) {
+	if strings.HasSuffix(name, ".gz") {
+		nethttp.NotFound(w, r)
+
+		return
+	}
+
+	// Only fingerprinted build output can be retained across deployments.
+	if fingerprintedAsset.MatchString(name) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
+
+	if strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".css") {
+		w.Header().Add("Vary", "Accept-Encoding")
+
+		if acceptsGzip(r.Header.Values("Accept-Encoding")) && r.Header.Get("Range") == "" {
+			if data, err := readDist(dist, name+".gz"); err == nil {
+				w.Header().Set("Content-Encoding", "gzip")
+				w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+				nethttp.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+
+				return
+			}
+		}
+	}
+
+	data, err := readDist(dist, name)
+	if err != nil {
+		w.Header().Del("Cache-Control")
+		nethttp.NotFound(w, r)
+
+		return
+	}
+
+	nethttp.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+}
+
+// An explicit gzip preference takes precedence over the wildcard.
+func acceptsGzip(values []string) bool {
+	var wildcard bool
+
+	for _, value := range values {
+		for member := range strings.SplitSeq(value, ",") {
+			coding, parameter, hasParameter := strings.Cut(member, ";")
+			coding = strings.ToLower(strings.TrimSpace(coding))
+			accepted := true
+
+			if hasParameter {
+				key, quality, ok := strings.Cut(parameter, "=")
+				q, err := strconv.ParseFloat(strings.TrimSpace(quality), 64)
+				accepted = ok && strings.TrimSpace(key) == "q" && err == nil && q > 0 && q <= 1
+			}
+
+			switch coding {
+			case "gzip":
+				return accepted
+			case "*":
+				wildcard = accepted
+			}
+		}
+	}
+
+	return wildcard
 }
 
 // readDist reads one embedded file, rejecting invalid paths.

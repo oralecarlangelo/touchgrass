@@ -1,19 +1,20 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import HistoryScreen from '../HistoryScreen.tsx';
-import LogSearch from '../logs/LogSearch.tsx';
 import ActivityTab from './ActivityTab.tsx';
 import AlertsTab from './AlertsTab.tsx';
-import DeploysTab from './DeploysTab.tsx';
-import EnvironmentTab from './EnvironmentTab.tsx';
 import IssuesTab from './IssuesTab.tsx';
-import OverviewTab from './OverviewTab.tsx';
-import PerformanceTab from './PerformanceTab.tsx';
 import { envAccessFor, recordsAsSelf, type Can } from '@/lib/access.ts';
 import type { ServiceView, SessionInfo } from '@/lib/api.ts';
+
+const DeploysTab = lazy(() => import('./DeploysTab.tsx'));
+const OverviewTab = lazy(() => import('./OverviewTab.tsx'));
+const HistoryScreen = lazy(() => import('../HistoryScreen.tsx'));
+const LogSearch = lazy(() => import('../logs/LogSearch.tsx'));
+const EnvironmentTab = lazy(() => import('./EnvironmentTab.tsx'));
+const PerformanceTab = lazy(() => import('./PerformanceTab.tsx'));
 
 export type ServiceTab =
   | 'overview'
@@ -94,68 +95,70 @@ export default function ServiceWorkspace({
           </TabsList>
         </div>
 
-        <TabsContent value="overview">
-          {tab === 'overview' && (
-            <OverviewTab service={service} onUnauthorized={onUnauthorized} />
-          )}
-        </TabsContent>
-        <TabsContent value="deploys">
-          {tab === 'deploys' && (
-            <DeploysTab
-              service={service}
-              onServiceChanged={onServiceChanged}
-              onUnauthorized={onUnauthorized}
-              canTrigger={can('deploy.trigger', service.id)}
-              canRecord={can('deploy.record', service.id)}
-              recordAs={recordsAsSelf(session) ? session.username : null}
-            />
-          )}
-        </TabsContent>
-        <TabsContent value="environment">
-          {tab === 'environment' && (
-            <EnvironmentTab
-              service={service}
-              access={envAccessFor(can, service.id, session.username)}
-              onUnauthorized={onUnauthorized}
-            />
-          )}
-        </TabsContent>
-        <TabsContent value="performance">
-          {tab === 'performance' && (
-            <PerformanceTab serviceId={service.id} onUnauthorized={onUnauthorized} />
-          )}
-        </TabsContent>
-        <TabsContent value="logs">
-          {tab === 'logs' && <LogSearch serviceId={service.id} onUnauthorized={onUnauthorized} />}
-        </TabsContent>
-        <TabsContent value="activity">
-          {tab === 'activity' && (
-            <ActivityTab serviceId={service.id} onUnauthorized={onUnauthorized} />
-          )}
-        </TabsContent>
-        <TabsContent value="issues">
-          {tab === 'issues' && (
-            <IssuesTab serviceId={service.id} onUnauthorized={onUnauthorized} />
-          )}
-        </TabsContent>
-        <TabsContent value="alerts">
-          {tab === 'alerts' && (
-            <AlertsTab
-              serviceId={service.id}
-              onUnauthorized={onUnauthorized}
-              isAdmin={can('alerts.manage', service.id)}
-            />
-          )}
-        </TabsContent>
-        <TabsContent value="audit">
-          {tab === 'audit' && (
-            <HistoryScreen
-              services={[service]}
-              fixedServiceId={service.id}
-              onUnauthorized={onUnauthorized}
-            />
-          )}
-        </TabsContent>
+        <Suspense fallback={<p className="text-muted-foreground py-6 text-sm" role="status">Loading tab…</p>}>
+          <TabsContent value="overview">
+            {tab === 'overview' && (
+              <OverviewTab service={service} onUnauthorized={onUnauthorized} />
+            )}
+          </TabsContent>
+          <TabsContent value="deploys">
+            {tab === 'deploys' && (
+              <DeploysTab
+                service={service}
+                onServiceChanged={onServiceChanged}
+                onUnauthorized={onUnauthorized}
+                canTrigger={can('deploy.trigger', service.id)}
+                canRecord={can('deploy.record', service.id)}
+                recordAs={recordsAsSelf(session) ? session.username : null}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="environment">
+            {tab === 'environment' && (
+              <EnvironmentTab
+                service={service}
+                access={envAccessFor(can, service.id, session.username)}
+                onUnauthorized={onUnauthorized}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="performance">
+            {tab === 'performance' && (
+              <PerformanceTab serviceId={service.id} onUnauthorized={onUnauthorized} />
+            )}
+          </TabsContent>
+          <TabsContent value="logs">
+            {tab === 'logs' && <LogSearch serviceId={service.id} onUnauthorized={onUnauthorized} />}
+          </TabsContent>
+          <TabsContent value="activity">
+            {tab === 'activity' && (
+              <ActivityTab serviceId={service.id} onUnauthorized={onUnauthorized} />
+            )}
+          </TabsContent>
+          <TabsContent value="issues">
+            {tab === 'issues' && (
+              <IssuesTab serviceId={service.id} onUnauthorized={onUnauthorized} />
+            )}
+          </TabsContent>
+          <TabsContent value="alerts">
+            {tab === 'alerts' && (
+              <AlertsTab
+                serviceId={service.id}
+                onUnauthorized={onUnauthorized}
+                isAdmin={can('alerts.manage', service.id)}
+              />
+            )}
+          </TabsContent>
+          <TabsContent value="audit">
+            {tab === 'audit' && (
+              <HistoryScreen
+                services={[service]}
+                fixedServiceId={service.id}
+                onUnauthorized={onUnauthorized}
+              />
+            )}
+          </TabsContent>
+        </Suspense>
       </Tabs>
     </div>
   );

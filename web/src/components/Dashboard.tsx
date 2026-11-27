@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bar, BarChart, CartesianGrid, XAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { Skeleton } from '@/components/ui/skeleton';
 import ErrorState from './ErrorState.tsx';
 import {
@@ -52,10 +50,6 @@ export function collectionFreshnessLabel(freshness: ServiceFreshness): string {
   return freshness.observed_at === null ? `${state} · never observed` : `${state} · observed ${timeAgo(freshness.observed_at)}`;
 }
 
-const activityConfig = {
-  count: { label: 'Notifications', color: 'var(--chart-1)' },
-} satisfies ChartConfig;
-
 export function containerPostureLabel(fleet: FleetContainersResponse): string {
   if (fleet.freshness.stale || !fleet.freshness.complete) return 'degraded collection';
   const critical = fleet.containers.filter((container) => container.risk_counts.critical > 0).length;
@@ -89,6 +83,30 @@ function bucketByHour(items: Notification[]): { hour: string; count: number }[] 
   }
 
   return [...buckets.entries()].map(([hour, count]) => ({ hour, count }));
+}
+
+function NotificationActivity({ activity }: { activity: ReturnType<typeof bucketByHour> }) {
+  const peak = Math.max(1, ...activity.map(({ count }) => count));
+
+  return (
+    <figure className="space-y-1">
+      <div className="border-border flex h-32 items-end gap-px border-b sm:gap-1" aria-hidden="true">
+        {activity.map(({ hour, count }) => (
+          <div key={hour} className="flex h-full min-w-0 flex-1 items-end" title={`${hour} · ${count} notifications`}>
+            <span className="w-full rounded-t bg-chart-1" style={{ height: `${count / peak * 100}%` }} />
+          </div>
+        ))}
+      </div>
+      <div className="text-muted-foreground flex text-xs" aria-hidden="true">
+        {activity.filter((_, index) => index % 6 === 0).map(({ hour }) => (
+          <span key={hour} className="flex-1">{hour}</span>
+        ))}
+      </div>
+      <figcaption className="sr-only">
+        Notifications by hour. {activity.map(({ hour, count }) => `${hour}, ${count}`).join('; ')}.
+      </figcaption>
+    </figure>
+  );
 }
 
 export default function Dashboard({
@@ -405,14 +423,7 @@ export default function Dashboard({
             {notes === null ? (
               <Skeleton className="h-40 w-full" />
             ) : (
-              <ChartContainer config={activityConfig} className="h-40 w-full">
-                <BarChart data={activity}>
-                  <CartesianGrid vertical={false} />
-                  <XAxis dataKey="hour" tickLine={false} axisLine={false} interval={5} />
-                  <ChartTooltip content={<ChartTooltipContent />} />
-                  <Bar dataKey="count" fill="var(--color-count)" radius={2} />
-                </BarChart>
-              </ChartContainer>
+              <NotificationActivity activity={activity} />
             )}
             <ul className="mt-2 space-y-1">
               {(notes ?? []).slice(0, 3).map((item) => (

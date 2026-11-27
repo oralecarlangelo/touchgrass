@@ -154,7 +154,7 @@ func writeTempFile(t *testing.T, content string, mode os.FileMode) string {
 }
 
 const nginxBlueConf = `upstream tn_api_active {
-    server 127.0.0.1:4101; # BLUEGREEN-ACTIVE
+    server 127.0.0.1:4101 max_fails=0; # BLUEGREEN-ACTIVE
 }
 `
 
@@ -164,7 +164,7 @@ const nginxLegacyConf = `upstream tn_api_active {
 `
 
 const nginxGreenConf = `upstream tn_api_active {
-    server 127.0.0.1:4102; # BLUEGREEN-ACTIVE
+    server 127.0.0.1:4102 max_fails=0; # BLUEGREEN-ACTIVE
 }
 `
 

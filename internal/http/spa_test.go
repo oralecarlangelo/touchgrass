@@ -90,6 +90,71 @@ func TestSPA(t *testing.T) {
 	}
 }
 
+func TestSPAAssetDelivery(t *testing.T) {
+	t.Parallel()
+
+	const entry = "assets/main-AbCd1234.js"
+
+	spa := SPA(slog.New(slog.DiscardHandler), fstest.MapFS{
+		indexFile:     {Data: []byte("<p>app</p>")},
+		entry:         {Data: []byte("console.log(1)")},
+		entry + ".gz": {Data: []byte("gzip representation")},
+	})
+	for _, tt := range []struct {
+		name, path, encoding, wantEncoding string
+		status                             int
+		immutable                          bool
+	}{
+		{
+			name: "gzip", path: "/" + entry, encoding: "br, gzip;q=0.8", wantEncoding: "gzip",
+			status: nethttp.StatusOK, immutable: true,
+		},
+		{
+			name: "identity", path: "/" + entry, encoding: "*;q=1, gzip;q=0",
+			status: nethttp.StatusOK, immutable: true,
+		},
+		{name: "stale chunk", path: "/assets/old-AbCd1234.js", status: nethttp.StatusNotFound},
+		{name: "sidecar is not a public route", path: "/" + entry + ".gz", status: nethttp.StatusNotFound},
+		{name: "deep link", path: "/services/example", status: nethttp.StatusOK},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, tt.path, nil)
+			req.Header.Set("Accept-Encoding", tt.encoding)
+
+			rec := httptest.NewRecorder()
+			spa.ServeHTTP(rec, req)
+
+			if rec.Code != tt.status || rec.Header().Get("Content-Encoding") != tt.wantEncoding {
+				t.Fatalf("response = (%d, %v), want status %d encoding %q", rec.Code, rec.Header(), tt.status, tt.wantEncoding)
+			}
+
+			cache := rec.Header().Get("Cache-Control")
+			switch {
+			case tt.immutable:
+				checkAssetHeaders(t, rec, cache)
+			case tt.status == nethttp.StatusOK && cache != "no-cache":
+				t.Errorf("entrypoint Cache-Control = %q, want no-cache", cache)
+			case tt.status != nethttp.StatusOK && cache != "":
+				t.Errorf("error Cache-Control = %q, want empty", cache)
+			}
+		})
+	}
+}
+
+func checkAssetHeaders(t *testing.T, rec *httptest.ResponseRecorder, cache string) {
+	t.Helper()
+
+	if !strings.Contains(cache, "immutable") || rec.Header().Get("Vary") != "Accept-Encoding" {
+		t.Errorf("asset headers = %v, want immutable cache and encoding variation", rec.Header())
+	}
+
+	if !strings.Contains(rec.Header().Get("Content-Type"), "javascript") {
+		t.Errorf("Content-Type = %q, want JavaScript", rec.Header().Get("Content-Type"))
+	}
+}
+
 func TestSPAUnbuilt(t *testing.T) {
 	t.Parallel()
 

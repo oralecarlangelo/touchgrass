@@ -2,6 +2,8 @@ package probe
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -33,10 +35,10 @@ func TestLiveTarget(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "first marker wins",
+			name:     "duplicate marker fails closed",
 			conf:     "testdata/nginx-duplicate.conf",
-			expected: "127.0.0.1:4101",
-			wantErr:  false,
+			expected: "",
+			wantErr:  true,
 		},
 		{
 			name:     "missing marker",
@@ -83,5 +85,21 @@ func TestLiveTargetMarkerError(t *testing.T) {
 	_, err := LiveTarget("testdata/nginx-nomarker.conf", "# BLUEGREEN-ACTIVE")
 	if !errors.Is(err, ErrMarkerNotFound) {
 		t.Errorf("LiveTarget() error = %v, want ErrMarkerNotFound", err)
+	}
+}
+
+func TestLiveTargetWithUpstreamOptions(t *testing.T) {
+	t.Parallel()
+
+	conf := filepath.Join(t.TempDir(), "nginx.conf")
+	line := "  server [::1]:4102\tmax_fails=0 weight=2; # BLUEGREEN-ACTIVE\n"
+
+	if err := os.WriteFile(conf, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := LiveTarget(conf, "# BLUEGREEN-ACTIVE")
+	if err != nil || target != "[::1]:4102" {
+		t.Fatalf("LiveTarget = (%q, %v), want [::1]:4102", target, err)
 	}
 }

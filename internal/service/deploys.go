@@ -66,11 +66,16 @@ func (d *Deploys) RecordManual(ctx context.Context, record model.DeployRecord, r
 
 // History returns entries for a service, newest first.
 func (d *Deploys) History(ctx context.Context, serviceID string, limit int) ([]model.Deploy, error) {
+	return d.HistoryBefore(ctx, serviceID, limit, 0)
+}
+
+// HistoryBefore returns entries older than the cursor, or the latest when it is zero.
+func (d *Deploys) HistoryBefore(ctx context.Context, serviceID string, limit int, beforeID int64) ([]model.Deploy, error) {
 	if _, err := d.services.Get(ctx, serviceID); err != nil {
 		return nil, err
 	}
 
-	return d.deploys.ListByService(ctx, serviceID, clampLimit(limit))
+	return d.deploys.ListBefore(ctx, serviceID, clampLimit(limit), beforeID)
 }
 
 // Record validates and stores one history entry.

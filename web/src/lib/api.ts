@@ -512,9 +512,16 @@ export async function deleteRule(id: number): Promise<void> {
   await request<undefined>(`/api/alerts/rules/${id}`, { method: 'DELETE' });
 }
 
-export async function fetchDeploys(serviceId: string, signal?: AbortSignal, limit = 50): Promise<Deploy[]> {
+export async function fetchDeploys(
+  serviceId: string,
+  signal?: AbortSignal,
+  limit = 50,
+  beforeId?: number,
+): Promise<Deploy[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (beforeId !== undefined) query.set('before_id', String(beforeId));
   const body = await request<DeploysResponse>(
-    `/api/services/${encodeURIComponent(serviceId)}/deploys?limit=${limit}`,
+    `/api/services/${encodeURIComponent(serviceId)}/deploys?${query}`,
     { signal },
   );
 

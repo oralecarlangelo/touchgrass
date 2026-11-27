@@ -51,10 +51,27 @@ func (s *DeployStore) ListByService(
 	serviceID string,
 	limit int,
 ) ([]model.Deploy, error) {
-	rows, err := s.db.read.QueryContext(ctx,
-		`SELECT id, service_id, sha, actor, type, outcome, started_at,
-		  finished_at, duration_secs, downtime_secs, notes, created_at
-		 FROM deploys WHERE service_id = ? ORDER BY id DESC LIMIT ?`, serviceID, limit)
+	return s.ListBefore(ctx, serviceID, limit, 0)
+}
+
+// ListBefore reads the latest rows below an optional exclusive id cursor.
+func (s *DeployStore) ListBefore(
+	ctx context.Context,
+	serviceID string,
+	limit int,
+	beforeID int64,
+) ([]model.Deploy, error) {
+	query := `SELECT id, service_id, sha, actor, type, outcome, started_at,
+		finished_at, duration_secs, downtime_secs, notes, created_at FROM deploys WHERE service_id = ?`
+	args := []any{serviceID}
+
+	if beforeID > 0 {
+		query += " AND id < ?"
+
+		args = append(args, beforeID)
+	}
+
+	rows, err := s.db.read.QueryContext(ctx, query+" ORDER BY id DESC LIMIT ?", append(args, limit)...)
 	if err != nil {
 		return nil, fmt.Errorf("querying deploys: %w", err)
 	}

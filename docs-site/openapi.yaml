@@ -1444,6 +1444,28 @@ paths:
           description: Storage result. See docs/storage-management.md for fields and limits.
         '403':
           description: Required fleet capability or bucket write permission is missing.
+  /storage/connection/discover:
+    post:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: discoverStorageBuckets
+      tags: [system]
+      summary: Verify an S3-compatible connection and list visible buckets
+      responses:
+        '200': { description: Visible bucket names; credentials are never returned }
+        '403': { description: Host management capability is required }
+        '503': { description: Object storage is unavailable }
+  /storage/connection:
+    post:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: saveStorageConnection
+      tags: [system]
+      summary: Save a verified private S3-compatible connection and bucket allowlist
+      responses:
+        '200': { description: Redacted connection status }
+        '403': { description: Host management capability is required }
+        '503': { description: Object storage is unavailable }
   /storage/action:
     post:
       x-touchgrass-capability: host.manage
@@ -1469,6 +1491,23 @@ paths:
           description: Storage result. See docs/storage-management.md for fields and limits.
         '403':
           description: Required fleet capability or bucket write permission is missing.
+  /storage/content:
+    get:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: downloadStorageObject
+      tags: [system]
+      summary: Stream one allowed object as an authenticated attachment
+      responses:
+        '200': { description: Object attachment stream }
+    put:
+      x-touchgrass-capability: host.manage
+      x-touchgrass-scope: fleet
+      operationId: uploadStorageObject
+      tags: [system]
+      summary: Stream one bounded upload to an allowed writable bucket
+      responses:
+        '201': { description: Unique stored object key }
   /docker/images:
     get:
       x-touchgrass-capability: host.read

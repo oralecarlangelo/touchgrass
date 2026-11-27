@@ -13,7 +13,8 @@ type StorageEntry struct {
 
 // StorageUsage reports Docker accounting without summing overlapping layers.
 type StorageUsage struct {
-	SampledAt        time.Time      `json:"sampled_at"`
-	ImageLayersBytes *int64         `json:"image_layers_bytes"`
-	Entries          []StorageEntry `json:"entries"`
+	SampledAt        time.Time           `json:"sampled_at"`
+	ImageLayersBytes *int64              `json:"image_layers_bytes"`
+	Entries          []StorageEntry      `json:"entries"`
+	Freshness        CollectionFreshness `json:"freshness"`
 }

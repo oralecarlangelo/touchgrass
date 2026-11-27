@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	nethttp "net/http"
@@ -26,65 +27,70 @@ const (
 
 // Config wires a Server.
 type Config struct {
-	Objects        *objectstore.Client
-	Addr           string
-	Version        string
-	Logger         *slog.Logger
-	Inventory      *service.Inventory
-	Sampler        *service.Sampler
-	Deploys        *service.Deploys
-	Cutover        *service.Cutover
-	Audit          *service.Audit
-	Auth           *Authenticator
-	Users          *service.Users
-	Events         *Hub
-	Ingestor       *service.Ingestor
-	Logs           *service.LogCollector
-	SDKLogs        *service.LogIngestor
-	System         *service.System
-	Database       *service.Database
-	Onboarding     *service.Onboarding
-	Performance    *service.Performance
-	FleetInventory *service.FleetInventory
-	Security       *service.Security
-	Env            *service.Env
-	Owners         *service.Owners
-	Maintenance    MaintenanceReporter
-	SelfUpdate     *service.SelfUpdate
-	Dist           fs.FS
-	Docs           fs.FS
-	DevProxy       string
+	Objects         *objectstore.Client
+	ObjectStorePath string
+	Addr            string
+	Version         string
+	Logger          *slog.Logger
+	Inventory       *service.Inventory
+	Sampler         *service.Sampler
+	Deploys         *service.Deploys
+	Cutover         *service.Cutover
+	Audit           *service.Audit
+	Auth            *Authenticator
+	Users           *service.Users
+	Events          *Hub
+	Ingestor        *service.Ingestor
+	Logs            *service.LogCollector
+	SDKLogs         *service.LogIngestor
+	System          *service.System
+	Database        *service.Database
+	Onboarding      *service.Onboarding
+	Performance     *service.Performance
+	FleetInventory  *service.FleetInventory
+	Security        *service.Security
+	Env             *service.Env
+	Owners          *service.Owners
+	Maintenance     MaintenanceReporter
+	SelfUpdate      *service.SelfUpdate
+	Dist            fs.FS
+	Docs            fs.FS
+	DevProxy        string
 }
 
 // Server is the touchgrass HTTP server.
 type Server struct {
-	objects        *objectstore.Client
-	addr           string
-	version        string
-	logger         *slog.Logger
-	inventory      *service.Inventory
-	sampler        *service.Sampler
-	deploys        *service.Deploys
-	cutover        *service.Cutover
-	audit          *service.Audit
-	auth           *Authenticator
-	users          *service.Users
-	events         *Hub
-	ingestor       *service.Ingestor
-	logs           *service.LogCollector
-	sdkLogs        *service.LogIngestor
-	system         *service.System
-	database       *service.Database
-	onboarding     *service.Onboarding
-	performance    *service.Performance
-	fleetInventory *service.FleetInventory
-	security       *service.Security
-	env            *service.Env
-	eventHeartbeat time.Duration
-	owners         *service.Owners
-	maintenance    MaintenanceReporter
-	selfUpdate     *service.SelfUpdate
-	handler        nethttp.Handler
+	objects         *objectstore.Client
+	objectsMu       sync.RWMutex
+	objectSetupMu   sync.Mutex
+	objectTransfers chan struct{}
+	objectStorePath string
+	addr            string
+	version         string
+	logger          *slog.Logger
+	inventory       *service.Inventory
+	sampler         *service.Sampler
+	deploys         *service.Deploys
+	cutover         *service.Cutover
+	audit           *service.Audit
+	auth            *Authenticator
+	users           *service.Users
+	events          *Hub
+	ingestor        *service.Ingestor
+	logs            *service.LogCollector
+	sdkLogs         *service.LogIngestor
+	system          *service.System
+	database        *service.Database
+	onboarding      *service.Onboarding
+	performance     *service.Performance
+	fleetInventory  *service.FleetInventory
+	security        *service.Security
+	env             *service.Env
+	eventHeartbeat  time.Duration
+	owners          *service.Owners
+	maintenance     MaintenanceReporter
+	selfUpdate      *service.SelfUpdate
+	handler         nethttp.Handler
 }
 
 // MaintenanceReporter is the SQLite maintenance pillar as /api/health reads it:
@@ -99,32 +105,34 @@ type MaintenanceReporter interface {
 func New(cfg Config) *Server {
 	mux := nethttp.NewServeMux()
 	server := &Server{
-		objects:        cfg.Objects,
-		addr:           cfg.Addr,
-		version:        cfg.Version,
-		logger:         cfg.Logger,
-		inventory:      cfg.Inventory,
-		sampler:        cfg.Sampler,
-		deploys:        cfg.Deploys,
-		cutover:        cfg.Cutover,
-		audit:          cfg.Audit,
-		auth:           cfg.Auth,
-		users:          cfg.Users,
-		events:         cfg.Events,
-		ingestor:       cfg.Ingestor,
-		logs:           cfg.Logs,
-		sdkLogs:        cfg.SDKLogs,
-		system:         cfg.System,
-		database:       cfg.Database,
-		onboarding:     cfg.Onboarding,
-		performance:    cfg.Performance,
-		fleetInventory: cfg.FleetInventory,
-		security:       cfg.Security,
-		env:            cfg.Env,
-		eventHeartbeat: eventHeartbeat,
-		owners:         cfg.Owners,
-		maintenance:    cfg.Maintenance,
-		selfUpdate:     cfg.SelfUpdate,
+		objects:         cfg.Objects,
+		objectStorePath: cfg.ObjectStorePath,
+		objectTransfers: make(chan struct{}, 2),
+		addr:            cfg.Addr,
+		version:         cfg.Version,
+		logger:          cfg.Logger,
+		inventory:       cfg.Inventory,
+		sampler:         cfg.Sampler,
+		deploys:         cfg.Deploys,
+		cutover:         cfg.Cutover,
+		audit:           cfg.Audit,
+		auth:            cfg.Auth,
+		users:           cfg.Users,
+		events:          cfg.Events,
+		ingestor:        cfg.Ingestor,
+		logs:            cfg.Logs,
+		sdkLogs:         cfg.SDKLogs,
+		system:          cfg.System,
+		database:        cfg.Database,
+		onboarding:      cfg.Onboarding,
+		performance:     cfg.Performance,
+		fleetInventory:  cfg.FleetInventory,
+		security:        cfg.Security,
+		env:             cfg.Env,
+		eventHeartbeat:  eventHeartbeat,
+		owners:          cfg.Owners,
+		maintenance:     cfg.Maintenance,
+		selfUpdate:      cfg.SelfUpdate,
 	}
 
 	// Every API route comes from the route table and is wrapped in its

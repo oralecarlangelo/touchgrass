@@ -168,3 +168,63 @@ func TestConnectionRequiresPrivateConfig(t *testing.T) {
 		t.Fatal("writes should require explicit opt-in")
 	}
 }
+
+func TestSaveConnectionIsPrivateAndReplaceable(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "storage.json")
+
+	first := Config{
+		Endpoint:  "http://127.0.0.1:9000",
+		Region:    "us-east-1",
+		AccessKey: "minio-admin",
+		SecretKey: "first-secret",
+		Buckets:   []string{"example-assets"},
+	}
+	if err := Save(path, first); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("connection mode = %04o, want 0600", info.Mode().Perm())
+	}
+
+	second := first
+	second.SecretKey = "second-secret"
+	second.Writable = true
+
+	if err := Save(path, second); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !client.Writable() || !client.Allowed("example-assets") {
+		t.Fatal("replacement connection was not loaded")
+	}
+
+	raw, err := os.ReadFile(path) //nolint:gosec // Test-owned path under t.TempDir.
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(raw), "first-secret") {
+		t.Fatal("replaced credentials remain in the connection file")
+	}
+}
+
+func TestSaveConnectionRequiresPath(t *testing.T) {
+	t.Parallel()
+
+	if err := Save("", Config{}); err == nil {
+		t.Fatal("empty connection path accepted")
+	}
+}

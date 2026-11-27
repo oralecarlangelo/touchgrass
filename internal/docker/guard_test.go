@@ -143,3 +143,32 @@ func TestRequestGuardHonorsCancellation(t *testing.T) {
 		t.Fatalf("cancelled acquire error = %v, want %v", err, context.Canceled)
 	}
 }
+
+func TestGuardedCallTimeoutIncludesQueue(t *testing.T) {
+	t.Parallel()
+
+	guard := newRequestGuard(requestGuardConfig{MaxConcurrent: 1})
+
+	release, err := guard.acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release(nil)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	started := time.Now()
+
+	_, err = guardedCall(ctx, guard, 20*time.Millisecond, func(context.Context) (int, error) {
+		t.Error("queued call should not execute after its budget expires")
+		return 0, nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v", err)
+	}
+
+	if time.Since(started) > 500*time.Millisecond {
+		t.Fatal("call budget did not include queue time")
+	}
+}

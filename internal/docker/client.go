@@ -46,8 +46,9 @@ type Lister interface {
 
 // Client queries the local Docker daemon.
 type Client struct {
-	cli   *client.Client
-	guard *requestGuard
+	cli          *client.Client
+	guard        *requestGuard
+	storageGuard *requestGuard
 }
 
 // New builds a Client from the standard Docker environment.
@@ -64,6 +65,7 @@ func New() (*Client, error) {
 			FailureLimit:  defaultDockerFailureLimit,
 			Cooldown:      defaultDockerCooldown,
 		}),
+		storageGuard: newRequestGuard(requestGuardConfig{MaxConcurrent: 1}),
 	}, nil
 }
 

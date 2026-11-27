@@ -31,7 +31,7 @@ func (s *stubRunner) Run(_ context.Context, name string, args ...string) ([]byte
 	s.calls = append(s.calls, runnerCall{name: name, args: append([]string{}, args...)})
 	key := args[len(args)-1]
 	for candidate := range s.answers {
-		if strings.Contains(key, "touchgrass:"+candidate) {
+		if strings.Contains(key, "/* touchgrass:"+candidate+" */") {
 			key = candidate
 			break
 		}

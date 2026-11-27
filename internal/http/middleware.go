@@ -61,7 +61,7 @@ var loggedAPIFamilies = map[string]bool{
 	"databases": true, "docker": true, "health": true, "images": true,
 	"ingest": true, "issues": true, "keys": true, "logs": true,
 	"notifications": true, "onboarding": true, "performance": true,
-	"services": true, "system": true, "users": true,
+	"services": true, "storage": true, "system": true, "users": true,
 }
 
 // safeRequestPath keeps request logging useful without copying attacker- or

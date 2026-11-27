@@ -62,6 +62,14 @@ type System struct {
 	snapshotMu sync.RWMutex
 	snapshot   model.SystemSnapshot
 	maxAge     time.Duration
+
+	storageMu        sync.RWMutex
+	storageRefreshMu sync.Mutex
+	images           []model.ImageView
+	imagesFreshness  model.CollectionFreshness
+	storage          model.StorageUsage
+	storageMaxAge    time.Duration
+	imageRefresh     chan struct{}
 }
 
 // NewSystem builds a System.
@@ -72,21 +80,49 @@ func NewSystem(cfg SystemConfig) *System {
 	}
 
 	system := &System{
-		docker:    cfg.Docker,
-		version:   cfg.Version,
-		dbPath:    cfg.DBPath,
-		hostRoot:  hostRoot,
-		startedAt: cfg.StartedAt,
-		logger:    cfg.Logger,
+		docker:       cfg.Docker,
+		version:      cfg.Version,
+		dbPath:       cfg.DBPath,
+		hostRoot:     hostRoot,
+		startedAt:    cfg.StartedAt,
+		logger:       cfg.Logger,
+		imageRefresh: make(chan struct{}, 1),
 	}
 	system.snapshot = system.hostSnapshot()
 	system.snapshot.Freshness.Stale = true
+	system.images = []model.ImageView{}
+	system.storage.Entries = []model.StorageEntry{}
+	system.imagesFreshness = model.CollectionFreshness{Stale: true, LastErrorCategory: "not_collected"}
+	system.storage.Freshness = model.CollectionFreshness{Stale: true, LastErrorCategory: "not_collected"}
 
 	return system
 }
 
 // Images returns local daemon images, newest first.
-func (s *System) Images(ctx context.Context) ([]model.ImageView, error) {
+func (s *System) Images(context.Context) ([]model.ImageView, error) {
+	s.storageMu.RLock()
+	images := append([]model.ImageView{}, s.images...)
+	s.storageMu.RUnlock()
+
+	return images, nil
+}
+
+// ImagesFreshness describes whether the cached image inventory is current.
+func (s *System) ImagesFreshness() model.CollectionFreshness {
+	s.storageMu.RLock()
+	freshness := s.imagesFreshness
+	maxAge := s.storageMaxAge
+	s.storageMu.RUnlock()
+
+	if freshness.ObservedAt != nil && maxAge > 0 && time.Since(*freshness.ObservedAt) > maxAge {
+		freshness.Stale = true
+		freshness.LastErrorCategory = "stale"
+	}
+
+	return freshness
+}
+
+func (s *System) collectImages(ctx context.Context) ([]model.ImageView, error) {
 	images, err := s.docker.Images(ctx)
 	if err != nil {
 		return nil, err
@@ -116,6 +152,15 @@ func (s *System) PruneImages(ctx context.Context) (model.ImagePruneView, error) 
 	}
 
 	s.logger.Info("pruned dangling images", "deleted", report.Deleted, "reclaimed", report.ReclaimedBytes)
+	s.storageMu.Lock()
+	s.imagesFreshness.Stale = true
+	s.imagesFreshness.LastErrorCategory = "refresh_pending"
+	s.storageMu.Unlock()
+
+	select {
+	case s.imageRefresh <- struct{}{}:
+	default:
+	}
 
 	return model.ImagePruneView{
 		Deleted:        report.Deleted,
@@ -167,6 +212,11 @@ func (s *System) Run(ctx context.Context, interval time.Duration) {
 	s.snapshotMu.Unlock()
 
 	_ = s.Refresh(ctx)
+
+	var storageLoop sync.WaitGroup
+
+	storageLoop.Go(func() { s.runStorageRefresh(ctx, interval) })
+	defer storageLoop.Wait()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -265,7 +315,6 @@ func daemonSnapshot(info docker.DaemonInfo) *model.DaemonSnapshot {
 		ContainersStop:  info.ContainersStop,
 		ImageCount:      info.ImageCount,
 	}
-
 }
 
 // databaseBytes sums the SQLite file plus WAL sidecars, if present.

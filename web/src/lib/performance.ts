@@ -1,9 +1,11 @@
 import type {
   CollectorStatusView,
   Deploy,
+  FleetContainer,
   PerformanceFilters,
   PerformanceTimelinePoint,
   RuntimeMarker,
+  ServiceView,
 } from './api.ts';
 
 export type CollectorState = 'healthy' | 'degraded' | 'stale' | 'not-configured';
@@ -120,6 +122,9 @@ export function formatPercentile(value: number | null | undefined): string {
 }
 
 export function collectorState(status: CollectorStatusView): CollectorState {
+  if (status.last_error === 'disabled') {
+    return 'not-configured';
+  }
   if (collectorLastSuccessAt(status) === null) {
     return 'not-configured';
   }
@@ -128,11 +133,83 @@ export function collectorState(status: CollectorStatusView): CollectorState {
     return 'stale';
   }
 
-  if (!status.coverage_complete || (status.last_error ?? '') !== '' || status.dropped_records > 0) {
+  if (!status.coverage_complete || (status.last_error ?? '') !== '') {
     return 'degraded';
   }
 
   return 'healthy';
+}
+
+export function collectorGuidance(status: CollectorStatusView): string | null {
+  switch (status.last_error) {
+    case 'postgres_statements_unavailable':
+      return 'Core metrics are available. Enable pg_stat_statements for query-level coverage.';
+    case 'postgres_statements_extension_missing':
+      return 'Core metrics are available. Loading query-level metrics requires PostgreSQL preload, restart, and CREATE EXTENSION pg_stat_statements.';
+    case 'postgres_statements_preload_required':
+      return 'Core metrics are available. Add pg_stat_statements to shared_preload_libraries and restart PostgreSQL.';
+    case 'postgres_statements_invalid':
+      return 'Core metrics are available, but pg_stat_statements returned an unsupported result.';
+    case 'evaluation_failed':
+      if (status.source === 'security_diff') {
+        return 'Enable TOUCHGRASS_SECURITY_DIFF_INTERVAL and verify Docker access for writable-layer scans.';
+      }
+      return 'The last evaluation failed. Verify Docker access and retry the collector.';
+    case 'docker_diff_unavailable':
+      return 'Writable-layer data is incomplete. Verify Docker access for every running container.';
+    default:
+      break;
+  }
+
+  if (collectorLastSuccessAt(status) !== null && status.last_error !== 'disabled') {
+    return null;
+  }
+
+  switch (status.source) {
+    case 'nginx':
+      return 'Set TOUCHGRASS_NGINX_TIMING_LOG and TOUCHGRASS_PERFORMANCE_SERVICE_ID to collect HTTP timings.';
+    case 'postgres':
+      return 'Set TOUCHGRASS_POSTGRES_CONTAINER, user, database, and TOUCHGRASS_PERFORMANCE_SERVICE_ID.';
+    case 'redis':
+      return 'Set TOUCHGRASS_REDIS_CONTAINER and TOUCHGRASS_PERFORMANCE_SERVICE_ID.';
+    case 'security_diff':
+      return 'Set TOUCHGRASS_SECURITY_DIFF_INTERVAL to enable writable-layer scans.';
+    default:
+      return null;
+  }
+}
+
+export function collectorSetupSnippet(
+  collectors: CollectorStatusView[],
+  services: ServiceView[],
+  serviceId: string,
+  fleetContainers: FleetContainer[] = [],
+): string {
+  const missing = new Set(
+    collectors
+      .filter((collector) => collectorState(collector) === 'not-configured')
+      .map((collector) => collector.source),
+  );
+  const service = services.find((candidate) => candidate.id === serviceId) ?? services[0];
+  if (service === undefined) {
+    return '';
+  }
+  const lines = [`TOUCHGRASS_PERFORMANCE_SERVICE_ID=${JSON.stringify(service.id)}`];
+  const findContainer = (pattern: RegExp) => {
+    const managed = service.containers.find(
+      (container) => pattern.test(container.name) || pattern.test(container.image),
+    )?.name;
+    return managed ?? fleetContainers.find((container) => pattern.test(container.name))?.name;
+  };
+  const postgres = missing.has('postgres') ? findContainer(/postgres/i) : undefined;
+  const redis = missing.has('redis') ? findContainer(/redis|valkey/i) : undefined;
+  if (postgres !== undefined) {
+    lines.push(`TOUCHGRASS_POSTGRES_CONTAINER=${JSON.stringify(postgres)}`);
+  }
+  if (redis !== undefined) {
+    lines.push(`TOUCHGRASS_REDIS_CONTAINER=${JSON.stringify(redis)}`);
+  }
+  return lines.length === 1 && !missing.has('nginx') ? '' : lines.join('\n');
 }
 
 export function collectorLastSuccessAt(status: CollectorStatusView): string | null {

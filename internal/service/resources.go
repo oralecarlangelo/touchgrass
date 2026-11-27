@@ -221,20 +221,39 @@ func (s *Sampler) collectContainerStats(ctx context.Context, containers []docker
 	result := make(map[string]docker.Stats, len(containers))
 	var mutex sync.Mutex
 	var group sync.WaitGroup
-	for _, container := range containers {
+	// Bound producers as well as daemon calls: a large fleet must not fill
+	// Docker's shared permit queue ahead of inventory and interactive work.
+	jobs := make(chan docker.Container)
+
+	for range min(2, len(containers)) {
 		group.Go(func() {
-			stats, err := s.docker.Stats(ctx, container.ID)
-			if err != nil {
-				if !errors.Is(err, docker.ErrDaemonBackoff) {
-					s.logger.Warn("container stats failed", "container", container.Name, "error", err)
+			for item := range jobs {
+				stats, err := s.docker.Stats(ctx, item.ID)
+				if err != nil {
+					if ctx.Err() == nil && !errors.Is(err, docker.ErrDaemonBackoff) {
+						s.logger.Warn("container stats failed", "container", item.Name, "error", err)
+					}
+
+					continue
 				}
-				return
+
+				mutex.Lock()
+				result[item.ID] = stats
+				mutex.Unlock()
 			}
-			mutex.Lock()
-			result[container.ID] = stats
-			mutex.Unlock()
 		})
 	}
+
+dispatch:
+	for _, item := range containers {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- item:
+		}
+	}
+
+	close(jobs)
 	group.Wait()
 	return result
 }

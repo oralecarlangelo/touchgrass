@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/oralecarlangelo/touchgrass/internal/dbstats"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
+	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
 const (
@@ -49,6 +51,31 @@ type PerformanceWriter interface {
 	UpsertLogVolume(context.Context, model.LogVolumeBucket) error
 	Get(context.Context, string) (model.CollectorCursor, error)
 	Upsert(context.Context, model.CollectorCursor) error
+}
+
+type collectorStatusWriter interface {
+	Get(context.Context, string) (model.CollectorCursor, error)
+	Upsert(context.Context, model.CollectorCursor) error
+}
+
+// MarkCollectorDisabled records current setup state without erasing prior
+// success or drop history.
+func MarkCollectorDisabled(ctx context.Context, writer collectorStatusWriter, source string) error {
+	cursor, err := writer.Get(ctx, source)
+	if err != nil && !errors.Is(err, store.ErrCollectorCursorNotFound) {
+		return fmt.Errorf("loading disabled collector %q: %w", source, err)
+	}
+
+	cursor.Source = source
+	cursor.LastError = "disabled"
+	cursor.CoverageComplete = false
+	cursor.EffectiveIntervalSecs = 0
+
+	if err := writer.Upsert(ctx, cursor); err != nil {
+		return fmt.Errorf("recording disabled collector %q: %w", source, err)
+	}
+
+	return nil
 }
 
 // PerformanceClock makes collector scheduling deterministic in tests.
@@ -275,8 +302,18 @@ func (c *PerformanceCollector) collectHTTP(ctx context.Context, minute time.Time
 		}
 	}
 
-	cursor = c.mergePersistedDrops(ctx, boundedCursor(cursor))
-	cursor.CoverageComplete = true
+	cursor, hasNewDrops, cursorErr := c.mergePersistedDrops(ctx, boundedCursor(cursor))
+	cursor.CoverageComplete = !hasNewDrops
+
+	switch {
+	case cursorErr != nil:
+		cursor.CoverageComplete = false
+		cursor.LastError = "nginx_cursor_unavailable"
+	case hasNewDrops:
+		cursor.LastError = "nginx_records_dropped"
+	default:
+		cursor.LastError = ""
+	}
 	if err := c.writer.Upsert(ctx, cursor); err != nil {
 		c.logger.Warn("persisting nginx collector cursor", "error_category", "cursor_write_failed")
 		return
@@ -287,13 +324,25 @@ func (c *PerformanceCollector) collectHTTP(ctx context.Context, minute time.Time
 	}
 }
 
-func (c *PerformanceCollector) mergePersistedDrops(ctx context.Context, cursor model.CollectorCursor) model.CollectorCursor {
+func (c *PerformanceCollector) mergePersistedDrops(
+	ctx context.Context,
+	cursor model.CollectorCursor,
+) (model.CollectorCursor, bool, error) {
 	persisted, err := c.writer.Get(ctx, cursor.Source)
-	if err == nil && persisted.DroppedRecords > cursor.DroppedRecords {
+	if errors.Is(err, store.ErrCollectorCursorNotFound) {
+		return cursor, cursor.DroppedRecords > 0, nil
+	}
+
+	if err != nil {
+		return cursor, false, err
+	}
+
+	hasNewDrops := cursor.DroppedRecords > persisted.DroppedRecords
+	if persisted.DroppedRecords > cursor.DroppedRecords {
 		cursor.DroppedRecords = persisted.DroppedRecords
 	}
 
-	return cursor
+	return cursor, hasNewDrops, nil
 }
 
 func aggregateHTTP(observations []model.HTTPObservation, minute time.Time, serviceID, environment string, cursor model.CollectorCursor) []model.HTTPMetricBucket {

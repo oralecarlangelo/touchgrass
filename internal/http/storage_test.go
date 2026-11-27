@@ -18,6 +18,8 @@ func (s stubStatsLister) StorageUsage(_ context.Context) (model.StorageUsage, er
 	return model.StorageUsage{Entries: []model.StorageEntry{{ID: "sample-volume", Name: "sample-volume", Kind: "volume"}}}, nil
 }
 
+const testStorageBucket = "assets"
+
 func TestStorageUsageEndpoint(t *testing.T) {
 	t.Parallel()
 	server, _ := fullTestServer(t)
@@ -32,8 +34,8 @@ func TestStorageUsageEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(result.Entries) != 1 || result.Entries[0].SizeBytes != nil {
-		t.Fatalf("unknown sizes must stay null: %+v", result)
+	if result.Entries == nil || result.ImageLayersBytes != nil {
+		t.Fatalf("uncached storage must return an available empty shape: %+v", result)
 	}
 }
 
@@ -57,6 +59,49 @@ func TestBucketsDisabledByDefault(t *testing.T) {
 
 	if result.Configured || result.Writable || len(result.Buckets) != 0 {
 		t.Fatalf("unsafe default: %+v", result)
+	}
+}
+
+func TestStorageConnectionValidationDoesNotLeakCredentials(t *testing.T) {
+	t.Parallel()
+	server, _ := fullTestServer(t)
+	server.objectStorePath = filepath.Join(t.TempDir(), "storage.json")
+
+	const credential = "private-storage-secret"
+
+	status, body := doRequest(t, server, nethttp.MethodPost, "/api/storage/connection/discover",
+		`{"endpoint":"file:///tmp/storage","access_key":"admin","secret_key":"`+credential+`"}`)
+	if status != nethttp.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", status, body)
+	}
+
+	if strings.Contains(string(body), credential) {
+		t.Fatal("validation response leaked the submitted credential")
+	}
+}
+
+func TestBucketSubset(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		selected   []string
+		discovered []string
+		want       bool
+	}{
+		{name: "allowed", selected: []string{testStorageBucket}, discovered: []string{testStorageBucket, "backups"}, want: true},
+		{name: "unknown", selected: []string{"private"}, discovered: []string{testStorageBucket}},
+		{name: "duplicate", selected: []string{testStorageBucket, testStorageBucket}, discovered: []string{testStorageBucket}},
+		{name: "empty", selected: []string{""}, discovered: []string{testStorageBucket}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := bucketSubset(tt.selected, tt.discovered); got != tt.want {
+				t.Fatalf("bucketSubset() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -87,6 +132,36 @@ func TestStorageActionsRejectUnsafeRequests(t *testing.T) {
 				t.Fatalf("status = %d, want %d: %s", status, tt.want, body)
 			}
 		})
+	}
+}
+
+func TestStorageTransferAdmissionAndValidation(t *testing.T) {
+	t.Parallel()
+	server, _ := fullTestServer(t)
+	server.objects = storageTestConnection(t, false)
+
+	status, _ := doRequest(t, server, nethttp.MethodGet, "/api/storage/content?bucket=example-assets", "")
+	if status != nethttp.StatusBadRequest {
+		t.Fatalf("missing key status = %d, want 400", status)
+	}
+
+	status, _ = doRequest(t, server, nethttp.MethodPut,
+		"/api/storage/content?bucket=example-assets&filename=a.txt", "x")
+	if status != nethttp.StatusForbidden {
+		t.Fatalf("read-only upload status = %d, want 403", status)
+	}
+
+	server.objectTransfers <- struct{}{}
+
+	server.objectTransfers <- struct{}{}
+
+	status, _ = doRequest(t, server, nethttp.MethodGet,
+		"/api/storage/content?bucket=example-assets&key=a.txt", "")
+	<-server.objectTransfers
+	<-server.objectTransfers
+
+	if status != nethttp.StatusServiceUnavailable {
+		t.Fatalf("busy transfer status = %d, want 503", status)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/url"
 	"path"
@@ -43,12 +44,10 @@ func (c *Client) PrepareUpload(ctx context.Context, bucket, prefix, filename str
 		return Upload{}, errors.New("object writes disabled")
 	}
 
-	filename = path.Base(strings.ReplaceAll(filename, "\\", "/"))
-	if filename == "." || filename == "/" || filename == "" {
-		return Upload{}, errors.New("invalid filename")
+	key, err := objectKey(prefix, filename)
+	if err != nil {
+		return Upload{}, err
 	}
-
-	key := prefix + uuid.NewString() + "-" + filename
 
 	policy := minio.NewPostPolicy()
 	for _, err := range []error{policy.SetBucket(bucket), policy.SetKey(key), policy.SetExpires(time.Now().Add(5 * time.Minute)), policy.SetContentLengthRange(1, 100*1024*1024)} {
@@ -63,6 +62,60 @@ func (c *Client) PrepareUpload(ctx context.Context, bucket, prefix, filename str
 	}
 
 	return Upload{URL: endpoint.String(), Fields: fields, Key: key}, nil
+}
+
+// Read opens one allowed object for authenticated streaming through Touch Grass.
+func (c *Client) Read(ctx context.Context, bucket, key string) (io.ReadCloser, int64, error) {
+	if !c.Allowed(bucket) || key == "" {
+		return nil, 0, errors.New("object not allowed")
+	}
+
+	object, err := c.api.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, 0, errors.New("object unavailable")
+	}
+
+	info, err := object.Stat()
+	if err != nil {
+		_ = object.Close()
+		return nil, 0, errors.New("object unavailable")
+	}
+
+	return object, info.Size, nil
+}
+
+// Write stores one bounded object under a unique key.
+func (c *Client) Write(ctx context.Context, bucket, prefix, filename string, body io.Reader, size int64) (string, error) {
+	if !c.writable || !c.Allowed(bucket) || size < 1 || size > 100*1024*1024 {
+		return "", errors.New("object upload not allowed")
+	}
+
+	key, err := objectKey(prefix, filename)
+	if err != nil {
+		return "", err
+	}
+
+	contentType := mime.TypeByExtension(path.Ext(filename))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	options := minio.PutObjectOptions{ContentType: contentType, NumThreads: 1, PartSize: 5 * 1024 * 1024}
+
+	if _, err := c.api.PutObject(ctx, bucket, key, body, size, options); err != nil {
+		return "", errors.New("object upload unavailable")
+	}
+
+	return key, nil
+}
+
+func objectKey(prefix, filename string) (string, error) {
+	filename = path.Base(strings.ReplaceAll(filename, "\\", "/"))
+	if filename == "." || filename == "/" || filename == "" {
+		return "", errors.New("invalid filename")
+	}
+
+	return prefix + uuid.NewString() + "-" + filename, nil
 }
 
 // CreateFolder creates a zero-byte prefix marker, refusing to overwrite a key.

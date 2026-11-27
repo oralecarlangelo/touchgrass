@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -174,6 +175,41 @@ func TestPerformanceTimelineAlignsAvailableSignals(t *testing.T) {
 	}
 	if len(timeline.Events) != 1 || len(timeline.Deployments) != 1 {
 		t.Fatalf("markers = events:%+v deploys:%+v", timeline.Events, timeline.Deployments)
+	}
+}
+
+func TestPerformanceTimelineBoundsChangeMarkersToRequestedLimit(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	performance, db := testPerformance(t, now)
+
+	performanceStore := store.NewPerformanceStore(db)
+	for index := range 3 {
+		if err := performanceStore.UpsertContainerEvent(context.Background(), model.ContainerEvent{
+			SourceEventID: fmt.Sprintf("event-%d", index),
+			OccurredAt:    now.Add(time.Duration(index-3) * time.Minute),
+			ServiceID:     testServiceAPI,
+			Environment:   "prod",
+			EventType:     "restart",
+			ContainerName: fmt.Sprintf("api-%d", index),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	timeline, err := performance.Timeline(context.Background(), model.PerformanceQuery{
+		ServiceID: testServiceAPI,
+		Start:     now.Add(-time.Hour),
+		End:       now,
+		Limit:     2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(timeline.Events) != 2 {
+		t.Fatalf("event markers = %d, want requested limit 2", len(timeline.Events))
 	}
 }
 

@@ -1240,8 +1240,9 @@ export interface ImageView {
   dangling: boolean;
 }
 
-interface ImagesResponse {
+export interface ImagesResponse {
   images: ImageView[];
+  freshness: ServiceFreshness;
 }
 
 export interface ImagePruneResult {
@@ -1249,10 +1250,9 @@ export interface ImagePruneResult {
   reclaimed_bytes: number;
 }
 
-export async function fetchImages(): Promise<ImageView[]> {
-  const body = await request<ImagesResponse>('/api/docker/images');
-
-  return body.images ?? [];
+export async function fetchImages(signal?: AbortSignal): Promise<ImagesResponse> {
+  const body = await request<ImagesResponse>('/api/docker/images', { signal });
+  return { images: body.images ?? [], freshness: body.freshness };
 }
 
 export async function pruneImages(): Promise<ImagePruneResult> {
@@ -1392,9 +1392,10 @@ interface SystemHistoryResponse {
 export async function fetchSystemHistory(
   metric: SystemHistoryMetric,
   hours: number,
+  signal?: AbortSignal,
 ): Promise<HistoryPoint[]> {
   const params = new URLSearchParams({ metric, hours: String(hours) });
-  const body = await request<SystemHistoryResponse>(`/api/system/history?${params.toString()}`);
+  const body = await request<SystemHistoryResponse>(`/api/system/history?${params.toString()}`, { signal });
 
   return body.points ?? [];
 }
@@ -1512,9 +1513,9 @@ export interface OnboardingSuggest {
   warnings: string[];
 }
 
-export async function suggestService(container: string): Promise<OnboardingSuggest> {
+export async function suggestService(container: string, signal?: AbortSignal): Promise<OnboardingSuggest> {
   const params = new URLSearchParams({ container });
-  const body = await request<OnboardingSuggest>(`/api/onboarding/suggest?${params.toString()}`);
+  const body = await request<OnboardingSuggest>(`/api/onboarding/suggest?${params.toString()}`, { signal });
 
   return {
     ...body,
@@ -1743,15 +1744,23 @@ export interface StorageUsage {
  sampled_at: string;
  image_layers_bytes: number | null;
  entries: { id: string; name: string; kind: string; size_bytes: number | null; status: string }[];
+ freshness: ServiceFreshness;
 }
-export function fetchStorageUsage(): Promise<StorageUsage> {
- return request<StorageUsage>('/api/storage/usage');
+export function fetchStorageUsage(signal?: AbortSignal): Promise<StorageUsage> {
+ return request<StorageUsage>('/api/storage/usage', { signal });
 }
 
 export interface BucketConnection { configured: boolean; writable: boolean; buckets: string[] }
+export interface StorageConnectionInput { endpoint: string; region: string; access_key: string; secret_key: string; buckets?: string[]; writable?: boolean }
 export interface BucketObject { key: string; size: number; modified: string; folder: boolean }
 export interface ObjectPage { objects: BucketObject[]; next: string }
 export function fetchBuckets(): Promise<BucketConnection> { return request('/api/storage/buckets'); }
+export function discoverBuckets(connection: StorageConnectionInput): Promise<{ buckets: string[] }> {
+  return request('/api/storage/connection/discover', jsonBody(connection));
+}
+export function saveStorageConnection(connection: StorageConnectionInput): Promise<BucketConnection> {
+  return request('/api/storage/connection', jsonBody(connection));
+}
 export function fetchObjects(bucket: string, prefix: string, after: string): Promise<ObjectPage> {
   return request(`/api/storage/objects?${new URLSearchParams({ bucket, prefix, after })}`);
 }

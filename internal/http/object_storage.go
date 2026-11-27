@@ -5,6 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
+	"net/url"
+	"path"
+	"slices"
+	"strconv"
 	"time"
 
 	nethttp "net/http"
@@ -14,51 +20,358 @@ import (
 )
 
 const (
-	objectDownload = "download"
-	objectUpload   = "upload"
-	objectFolder   = "folder"
-	objectDelete   = "delete"
+	storageBucketsKey = "buckets"
+	objectDownload    = "download"
+	objectUpload      = "upload"
+	objectFolder      = "folder"
+	objectDelete      = "delete"
 )
 
-func (s *Server) handleBuckets(w nethttp.ResponseWriter, _ *nethttp.Request) {
-	buckets := []string{}
-	writable := false
-
-	if s.objects != nil {
-		buckets = s.objects.Buckets()
-		writable = s.objects.Writable()
-	}
-
-	writeJSON(w, s.logger, nethttp.StatusOK, map[string]any{"configured": s.objects != nil, "buckets": buckets, "writable": writable})
+type objectConnectionRequest struct {
+	Endpoint  string   `json:"endpoint"`
+	Region    string   `json:"region"`
+	AccessKey string   `json:"access_key"`
+	SecretKey string   `json:"secret_key"`
+	Buckets   []string `json:"buckets"`
+	Writable  bool     `json:"writable"`
 }
 
-func (s *Server) objectConnection(w nethttp.ResponseWriter, bucket string) bool {
-	if s.objects == nil {
-		nethttp.Error(w, "object storage is not configured", nethttp.StatusServiceUnavailable)
-		return false
+func (request objectConnectionRequest) config() objectstore.Config {
+	return objectstore.Config{
+		Endpoint: request.Endpoint, Region: request.Region, AccessKey: request.AccessKey,
+		SecretKey: request.SecretKey, Buckets: request.Buckets, Writable: request.Writable,
+	}
+}
+
+func decodeObjectConnection(w nethttp.ResponseWriter, r *nethttp.Request) (objectConnectionRequest, bool) {
+	var request objectConnectionRequest
+
+	r.Body = nethttp.MaxBytesReader(w, r.Body, 16*1024)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	if err := decoder.Decode(&request); err != nil {
+		nethttp.Error(w, "invalid request", nethttp.StatusBadRequest)
+		return request, false
 	}
 
-	if !s.objects.Allowed(bucket) {
-		nethttp.Error(w, "bucket is not allowed", nethttp.StatusForbidden)
-		return false
+	return request, true
+}
+
+func (s *Server) handleDiscoverBuckets(w nethttp.ResponseWriter, r *nethttp.Request) {
+	request, ok := decodeObjectConnection(w, r)
+	if !ok {
+		return
+	}
+
+	if err := objectstore.ValidateConfig(request.config(), false); err != nil {
+		nethttp.Error(w, "invalid object storage connection", nethttp.StatusBadRequest)
+		return
+	}
+
+	buckets, err := objectstore.DiscoverBuckets(r.Context(), request.config())
+	if err != nil {
+		nethttp.Error(w, "object storage is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, s.logger, nethttp.StatusOK, map[string]any{storageBucketsKey: buckets})
+}
+
+func (s *Server) handleSaveObjectConnection(w nethttp.ResponseWriter, r *nethttp.Request) {
+	request, ok := decodeObjectConnection(w, r)
+	if !ok {
+		return
+	}
+
+	if s.objectStorePath == "" {
+		nethttp.Error(w, "object storage setup is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+
+	if err := objectstore.ValidateConfig(request.config(), true); err != nil {
+		nethttp.Error(w, "invalid object storage connection", nethttp.StatusBadRequest)
+		return
+	}
+
+	setupCtx, cancelSetup := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancelSetup()
+
+	discovered, err := objectstore.DiscoverBuckets(setupCtx, request.config())
+	if err != nil {
+		if checkErr := objectstore.CheckBuckets(setupCtx, request.config()); checkErr != nil {
+			nethttp.Error(w, "object storage is unavailable", nethttp.StatusServiceUnavailable)
+			return
+		}
+
+		discovered = request.Buckets
+	}
+
+	if len(request.Buckets) == 0 || !bucketSubset(request.Buckets, discovered) {
+		nethttp.Error(w, "select buckets returned by discovery", nethttp.StatusBadRequest)
+		return
+	}
+
+	if err := r.Context().Err(); err != nil {
+		nethttp.Error(w, "request cancelled", nethttp.StatusRequestTimeout)
+		return
+	}
+
+	s.objectSetupMu.Lock()
+	if err := r.Context().Err(); err != nil {
+		s.objectSetupMu.Unlock()
+		nethttp.Error(w, "request cancelled", nethttp.StatusRequestTimeout)
+
+		return
+	}
+
+	if err := objectstore.Save(s.objectStorePath, request.config()); err != nil {
+		s.objectSetupMu.Unlock()
+		writeServiceError(w, s.logger, err, "could not save object storage connection")
+
+		return
+	}
+
+	objects, err := objectstore.Open(s.objectStorePath)
+	if err != nil {
+		s.objectSetupMu.Unlock()
+		writeServiceError(w, s.logger, err, "could not load object storage connection")
+
+		return
+	}
+
+	s.objectsMu.Lock()
+	s.objects = objects
+	s.objectsMu.Unlock()
+	s.objectSetupMu.Unlock()
+
+	s.auditObjectConnection(r, objects)
+
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, s.logger, nethttp.StatusOK, map[string]any{
+		"configured": true, storageBucketsKey: objects.Buckets(), "writable": objects.Writable(),
+	})
+}
+
+func (s *Server) auditObjectConnection(r *nethttp.Request, objects *objectstore.Client) {
+	identity, identityOK := identityFrom(r)
+	if identityOK {
+		detail, marshalErr := json.Marshal(map[string]any{
+			"action": "configure", storageBucketsKey: objects.Buckets(), "writable": objects.Writable(),
+		})
+		if marshalErr == nil {
+			_, auditErr := s.audit.Record(r.Context(), model.AuditRecord{
+				Actor: identity.Username, Action: model.AuditStorageAction,
+				Result: model.AuditSuccess, Detail: string(detail),
+			})
+			if auditErr != nil {
+				s.logger.Error("storage connection audit failed", "error", auditErr)
+			}
+		}
+	}
+}
+
+func bucketSubset(selected, discovered []string) bool {
+	seen := make(map[string]struct{}, len(selected))
+	for _, bucket := range selected {
+		if bucket == "" {
+			return false
+		}
+
+		if _, duplicate := seen[bucket]; duplicate {
+			return false
+		}
+
+		seen[bucket] = struct{}{}
+		if !slices.Contains(discovered, bucket) {
+			return false
+		}
 	}
 
 	return true
 }
 
+func (s *Server) handleBuckets(w nethttp.ResponseWriter, _ *nethttp.Request) {
+	buckets := []string{}
+	writable := false
+	objects := s.objectClient()
+
+	if objects != nil {
+		buckets = objects.Buckets()
+		writable = objects.Writable()
+	}
+
+	writeJSON(w, s.logger, nethttp.StatusOK, map[string]any{"configured": objects != nil, storageBucketsKey: buckets, "writable": writable})
+}
+
+func (s *Server) objectClient() *objectstore.Client {
+	s.objectsMu.RLock()
+	defer s.objectsMu.RUnlock()
+
+	return s.objects
+}
+
+func (s *Server) objectConnection(w nethttp.ResponseWriter, bucket string) *objectstore.Client {
+	objects := s.objectClient()
+	if objects == nil {
+		nethttp.Error(w, "object storage is not configured", nethttp.StatusServiceUnavailable)
+		return nil
+	}
+
+	if !objects.Allowed(bucket) {
+		nethttp.Error(w, "bucket is not allowed", nethttp.StatusForbidden)
+		return nil
+	}
+
+	return objects
+}
+
 func (s *Server) handleObjects(w nethttp.ResponseWriter, r *nethttp.Request) {
 	q := r.URL.Query()
-	if !s.objectConnection(w, q.Get("bucket")) {
+
+	objects := s.objectConnection(w, q.Get("bucket"))
+	if objects == nil {
 		return
 	}
 
-	page, err := s.objects.List(r.Context(), q.Get("bucket"), q.Get("prefix"), q.Get("after"))
+	page, err := objects.List(r.Context(), q.Get("bucket"), q.Get("prefix"), q.Get("after"))
 	if err != nil {
 		writeServiceError(w, s.logger, err, "could not list bucket objects")
 		return
 	}
 
 	writeJSON(w, s.logger, nethttp.StatusOK, page)
+}
+
+func (s *Server) handleObjectContent(w nethttp.ResponseWriter, r *nethttp.Request) {
+	bucket, key := r.URL.Query().Get("bucket"), r.URL.Query().Get("key")
+	if key == "" {
+		nethttp.Error(w, "object key is required", nethttp.StatusBadRequest)
+		return
+	}
+
+	objects := s.objectConnection(w, bucket)
+	if objects == nil || !s.acquireObjectTransfer(w) {
+		return
+	}
+
+	defer func() { <-s.objectTransfers }()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	if err := s.recordObjectAction(ctx, r, objectAction{Action: objectDownload, Bucket: bucket, Key: key}, "requested", model.AuditSuccess); err != nil {
+		writeServiceError(w, s.logger, err, "could not audit storage action")
+		return
+	}
+
+	controller := nethttp.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Now().Add(2 * time.Minute)); err != nil {
+		s.logger.Debug("object download deadline unavailable", "error", err)
+	}
+
+	stream, size, err := objects.Read(ctx, bucket, key)
+	if err != nil {
+		if auditErr := s.recordObjectAction(ctx, r, objectAction{Action: objectDownload, Bucket: bucket, Key: key}, "failed", model.AuditFailure); auditErr != nil {
+			s.logger.Error("storage result audit failed", "error", auditErr)
+		}
+
+		nethttp.Error(w, "object unavailable", nethttp.StatusServiceUnavailable)
+
+		return
+	}
+
+	defer func() { _ = stream.Close() }()
+
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(key)}))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	w.Header().Set("Cache-Control", "no-store")
+
+	if _, err := io.Copy(w, stream); err != nil {
+		s.logger.Warn("object download interrupted", "error", err)
+
+		if auditErr := s.recordObjectAction(ctx, r, objectAction{Action: objectDownload, Bucket: bucket, Key: key}, "failed", model.AuditFailure); auditErr != nil {
+			s.logger.Error("storage result audit failed", "error", auditErr)
+		}
+
+		return
+	}
+
+	if err := s.recordObjectAction(ctx, r, objectAction{Action: objectDownload, Bucket: bucket, Key: key}, "completed", model.AuditSuccess); err != nil {
+		s.logger.Error("storage result audit failed", "error", err)
+	}
+}
+
+func (s *Server) handleObjectUpload(w nethttp.ResponseWriter, r *nethttp.Request) {
+	query := r.URL.Query()
+	bucket := query.Get("bucket")
+
+	objects := s.objectConnection(w, bucket)
+	if objects == nil || !s.acquireObjectTransfer(w) {
+		return
+	}
+
+	defer func() { <-s.objectTransfers }()
+
+	if !objects.Writable() {
+		nethttp.Error(w, "object writes disabled", nethttp.StatusForbidden)
+		return
+	}
+
+	if r.ContentLength < 1 || r.ContentLength > 100*1024*1024 {
+		nethttp.Error(w, "invalid upload", nethttp.StatusBadRequest)
+		return
+	}
+
+	controller := nethttp.NewResponseController(w)
+	if err := controller.SetReadDeadline(time.Now().Add(2 * time.Minute)); err != nil {
+		s.logger.Debug("object upload deadline unavailable", "error", err)
+	}
+
+	if err := controller.SetWriteDeadline(time.Now().Add(2 * time.Minute)); err != nil {
+		s.logger.Debug("object upload response deadline unavailable", "error", err)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	intent := objectAction{Action: objectUpload, Bucket: bucket, Key: query.Get("prefix"), Filename: query.Get("filename")}
+	if err := s.recordObjectAction(ctx, r, intent, "requested", model.AuditSuccess); err != nil {
+		writeServiceError(w, s.logger, err, "could not audit storage action")
+		return
+	}
+
+	r.Body = nethttp.MaxBytesReader(w, r.Body, 100*1024*1024)
+
+	key, err := objects.Write(ctx, bucket, query.Get("prefix"), query.Get("filename"), r.Body, r.ContentLength)
+	if err != nil {
+		if auditErr := s.recordObjectAction(ctx, r, intent, "failed", model.AuditFailure); auditErr != nil {
+			s.logger.Error("storage result audit failed", "error", auditErr)
+		}
+
+		nethttp.Error(w, "upload unavailable", nethttp.StatusServiceUnavailable)
+
+		return
+	}
+
+	intent.Key = key
+	if err := s.recordObjectAction(ctx, r, intent, "completed", model.AuditSuccess); err != nil {
+		s.logger.Error("storage result audit failed", "error", err)
+	}
+
+	writeJSON(w, s.logger, nethttp.StatusCreated, map[string]string{"key": key})
+}
+
+func (s *Server) acquireObjectTransfer(w nethttp.ResponseWriter) bool {
+	select {
+	case s.objectTransfers <- struct{}{}:
+		return true
+	default:
+		nethttp.Error(w, "storage transfers are busy", nethttp.StatusServiceUnavailable)
+		return false
+	}
 }
 
 type objectAction struct {
@@ -78,11 +391,12 @@ func (s *Server) handleObjectAction(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 
-	if !s.objectConnection(w, body.Bucket) {
+	objects := s.objectConnection(w, body.Bucket)
+	if objects == nil {
 		return
 	}
 
-	if !s.validObjectAction(w, body) {
+	if !s.validObjectAction(w, objects, body) {
 		return
 	}
 
@@ -94,7 +408,7 @@ func (s *Server) handleObjectAction(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 
-	result, err := s.executeObjectAction(ctx, body)
+	result, err := s.executeObjectAction(ctx, objects, body)
 	phase := "completed"
 
 	if grant, ok := result.(objectstore.Upload); ok {
@@ -124,14 +438,14 @@ func (s *Server) handleObjectAction(w nethttp.ResponseWriter, r *nethttp.Request
 	writeJSON(w, s.logger, nethttp.StatusOK, result)
 }
 
-func (s *Server) validObjectAction(w nethttp.ResponseWriter, body objectAction) bool {
+func (s *Server) validObjectAction(w nethttp.ResponseWriter, objects *objectstore.Client, body objectAction) bool {
 	valid := body.Action == objectDownload || body.Action == objectUpload || body.Action == objectFolder || body.Action == objectDelete
 	if !valid {
 		nethttp.Error(w, "unknown action", nethttp.StatusBadRequest)
 		return false
 	}
 
-	if body.Action != objectDownload && !s.objects.Writable() {
+	if body.Action != objectDownload && !objects.Writable() {
 		nethttp.Error(w, "object writes disabled", nethttp.StatusForbidden)
 		return false
 	}
@@ -144,17 +458,17 @@ func (s *Server) validObjectAction(w nethttp.ResponseWriter, body objectAction) 
 	return true
 }
 
-func (s *Server) executeObjectAction(ctx context.Context, body objectAction) (any, error) {
+func (s *Server) executeObjectAction(ctx context.Context, objects *objectstore.Client, body objectAction) (any, error) {
 	switch body.Action {
 	case objectDownload:
-		link, err := s.objects.Download(ctx, body.Bucket, body.Key)
-		return map[string]string{"url": link}, err
+		query := url.Values{"bucket": {body.Bucket}, "key": {body.Key}}
+		return map[string]string{"url": "/api/storage/content?" + query.Encode()}, nil
 	case objectUpload:
-		return s.objects.PrepareUpload(ctx, body.Bucket, body.Key, body.Filename)
+		return objects.PrepareUpload(ctx, body.Bucket, body.Key, body.Filename)
 	case objectFolder:
-		return map[string]bool{"ok": true}, s.objects.CreateFolder(ctx, body.Bucket, body.Key)
+		return map[string]bool{"ok": true}, objects.CreateFolder(ctx, body.Bucket, body.Key)
 	case objectDelete:
-		return map[string]bool{"ok": true}, s.objects.Delete(ctx, body.Bucket, body.Key)
+		return map[string]bool{"ok": true}, objects.Delete(ctx, body.Bucket, body.Key)
 	default:
 		return nil, errors.New("unknown storage action")
 	}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -66,6 +67,56 @@ func Open(path string) (*Client, error) {
 	return newClient(cfg)
 }
 
+// Save writes connection configuration atomically with credentials readable
+// only by the Touch Grass process owner. The caller remains responsible for
+// validating connectivity before replacing a working connection.
+func Save(path string, cfg Config) error {
+	if path == "" {
+		return errors.New("storage connection path is required")
+	}
+
+	data, err := json.Marshal(cfg) //nolint:gosec // This is the private mode-0600 credential file itself.
+	if err != nil {
+		return fmt.Errorf("encoding storage connection: %w", err)
+	}
+	defer clear(data)
+
+	directory := filepath.Dir(path)
+
+	temporary, err := os.CreateTemp(directory, ".touchgrass-storage-*")
+	if err != nil {
+		return fmt.Errorf("creating storage connection: %w", err)
+	}
+
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("securing storage connection: %w", err)
+	}
+
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("writing storage connection: %w", err)
+	}
+
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("syncing storage connection: %w", err)
+	}
+
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("closing storage connection: %w", err)
+	}
+
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replacing storage connection: %w", err)
+	}
+
+	return nil
+}
+
 func newClient(cfg Config) (*Client, error) {
 	endpoint, err := url.Parse(cfg.Endpoint)
 	if err != nil {
@@ -89,6 +140,24 @@ func newClient(cfg Config) (*Client, error) {
 	return &Client{api: api, buckets: cfg.Buckets, writable: cfg.Writable, httpClient: &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
+// ValidateConfig checks the connection shape without making a network call.
+func ValidateConfig(cfg Config, requireBuckets bool) error {
+	endpoint, err := url.Parse(cfg.Endpoint)
+	if err != nil {
+		return errors.New("invalid storage endpoint")
+	}
+
+	if err := validateEndpoint(endpoint); err != nil {
+		return err
+	}
+
+	if cfg.AccessKey == "" || cfg.SecretKey == "" || (requireBuckets && len(cfg.Buckets) == 0) {
+		return errors.New("storage credentials and bucket allowlist are required")
+	}
+
+	return nil
+}
+
 // Buckets lists configured buckets, without requiring account-wide list permission.
 func (c *Client) Buckets() []string { return append([]string{}, c.buckets...) }
 
@@ -97,6 +166,52 @@ func (c *Client) Writable() bool { return c.writable }
 
 // Allowed checks every operation against the configured bucket allowlist.
 func (c *Client) Allowed(bucket string) bool { return slices.Contains(c.buckets, bucket) }
+
+// DiscoverBuckets verifies the supplied credentials and returns the buckets
+// visible to them. It is intended for the admin setup flow; credentials are
+// never retained by this function or returned with the result.
+func DiscoverBuckets(ctx context.Context, cfg Config) ([]string, error) {
+	cfg.Buckets = []string{"discovery-placeholder"}
+
+	client, err := newClient(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	buckets, err := client.api.ListBuckets(ctx)
+	if err != nil {
+		return nil, errors.New("bucket discovery unavailable")
+	}
+
+	names := make([]string, 0, len(buckets))
+	for _, bucket := range buckets {
+		names = append(names, bucket.Name)
+	}
+
+	slices.Sort(names)
+
+	return names, nil
+}
+
+// CheckBuckets verifies a manually supplied allowlist without requiring the
+// account-wide ListAllMyBuckets permission.
+func CheckBuckets(ctx context.Context, cfg Config) error {
+	client, err := newClient(cfg)
+	if err != nil {
+		return err
+	}
+
+	for _, bucket := range cfg.Buckets {
+		if _, err := client.List(ctx, bucket, "", ""); err != nil {
+			return errors.New("bucket access unavailable")
+		}
+	}
+
+	return nil
+}
 
 func validateEndpoint(endpoint *url.URL) error {
 	validScheme := endpoint.Scheme == "https" || endpoint.Scheme == "http"

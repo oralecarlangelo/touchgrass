@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
@@ -212,74 +212,117 @@ export default function FleetScreen({
   const [system, setSystem] = useState<SystemSnapshot | null>(null);
   const [containers, setContainers] = useState<FleetContainer[] | null>(null);
   const [freshness, setFreshness] = useState<ContainerFreshness | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [systemError, setSystemError] = useState<string | null>(null);
+  const [containersError, setContainersError] = useState<string | null>(null);
   const [range, setRange] = useState(24);
   const [cpu, setCpu] = useState<HistoryPoint[] | null>(null);
   const [mem, setMem] = useState<HistoryPoint[] | null>(null);
   const [loadAvg, setLoadAvg] = useState<HistoryPoint[] | null>(null);
+  const [loadedRange, setLoadedRange] = useState<number | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ContainerFilter>('all');
+  const [systemAttempt, setSystemAttempt] = useState(0);
+  const [containersAttempt, setContainersAttempt] = useState(0);
+  const [historyAttempt, setHistoryAttempt] = useState(0);
 
-  const load = useCallback(async () => {
-    setError(null);
-
-    try {
-      const [snapshot, fleet] = await Promise.all([fetchSystem(), fetchFleetContainers()]);
-      setSystem(snapshot);
-      setContainers(fleet.containers);
-      setFreshness(fleet.freshness);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [onUnauthorized]);
-
-  const loadHistory = useCallback(
-    async (hours: number) => {
-      setHistoryError(null);
-
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
       try {
-        const [cpuPoints, memPoints, loadPoints] = await Promise.all([
-          fetchSystemHistory('cpu', hours),
-          fetchSystemHistory('mem', hours),
-          fetchSystemHistory('load', hours),
-        ]);
-        setCpu(cpuPoints);
-        setMem(memPoints);
-        setLoadAvg(loadPoints);
+        const snapshot = await fetchSystem(controller.signal);
+        if (!controller.signal.aborted) {
+          setSystem(snapshot);
+          setSystemError(null);
+        }
       } catch (err) {
+        if (controller.signal.aborted) return;
         if (isUnauthorized(err)) {
           onUnauthorized();
           return;
         }
-
-        setHistoryError(err instanceof Error ? err.message : String(err));
+        setSystemError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
       }
-    },
-    [onUnauthorized],
-  );
+    };
+    void load();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [onUnauthorized, systemAttempt]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      try {
+        const fleet = await fetchFleetContainers(controller.signal);
+        if (!controller.signal.aborted) {
+          setContainers(fleet.containers);
+          setFreshness(fleet.freshness);
+          setContainersError(null);
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        if (isUnauthorized(err)) {
+          onUnauthorized();
+          return;
+        }
+        setContainersError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
+      }
+    };
     void load();
-    void loadHistory(range);
-    const timer = setInterval(() => {
-      void load();
-      void loadHistory(range);
-    }, refreshIntervalMs);
+    return () => {
+      controller.abort();
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [containersAttempt, onUnauthorized]);
 
-    return () => clearInterval(timer);
-  }, [load, loadHistory, range]);
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      try {
+        const [cpuPoints, memPoints, loadPoints] = await Promise.all([
+          fetchSystemHistory('cpu', range, controller.signal),
+          fetchSystemHistory('mem', range, controller.signal),
+          fetchSystemHistory('load', range, controller.signal),
+        ]);
+        if (!controller.signal.aborted) {
+          setCpu(cpuPoints);
+          setMem(memPoints);
+          setLoadAvg(loadPoints);
+          setLoadedRange(range);
+          setHistoryError(null);
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        if (isUnauthorized(err)) {
+          onUnauthorized();
+          return;
+        }
+        setHistoryError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [historyAttempt, onUnauthorized, range]);
 
   const cpuSeries = useMemo(() => toSeries(cpu ?? [], range), [cpu, range]);
   const memSeries = useMemo(() => toSeries(mem ?? [], range), [mem, range]);
   const loadSeries = useMemo(() => toSeries(loadAvg ?? [], range), [loadAvg, range]);
-  const historyLoading = cpu === null || mem === null || loadAvg === null;
+  const historyLoading = loadedRange !== range || cpu === null || mem === null || loadAvg === null;
 
   const managedCount = useMemo(
     () => (containers ?? []).filter((container) => container.managed).length,
@@ -291,10 +334,6 @@ export default function FleetScreen({
     return filterFleetContainers(containers ?? [], filter, query);
   }, [containers, filter, query]);
 
-  if (error !== null && system === null) {
-    return <ErrorState title="Couldn't load fleet info" message={error} onRetry={() => void load()} />;
-  }
-
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold tracking-tight">Fleet</h1>
@@ -305,7 +344,13 @@ export default function FleetScreen({
         </div>
       )}
 
-      {system === null ? (
+      {systemError !== null && system === null ? (
+        <ErrorState
+          title="Couldn't load host info"
+          message={systemError}
+          onRetry={() => setSystemAttempt((attempt) => attempt + 1)}
+        />
+      ) : system === null ? (
         <div className="grid gap-4 lg:grid-cols-3">
           <Skeleton className="h-48 w-full" />
           <Skeleton className="h-48 w-full" />
@@ -320,6 +365,20 @@ export default function FleetScreen({
               </CardTitle>
             </CardHeader>
             <CardContent className="divide-y divide-border">
+              {systemError !== null && (
+                <div className="mb-2 flex items-center justify-between gap-2 pb-2 text-sm">
+                  <span className="text-muted-foreground">
+                    Refresh failed: {systemError} — showing last good data.
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSystemAttempt((attempt) => attempt + 1)}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
               <Row
                 label="CPU"
                 value={system.cpu_percent === null ? 'n/a' : `${system.cpu_percent.toFixed(1)}%`}
@@ -336,8 +395,10 @@ export default function FleetScreen({
               />
             </CardContent>
           </Card>
+        </>
+      )}
 
-          <Card>
+      <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-sm font-medium">Host history</CardTitle>
               <Select value={String(range)} onValueChange={(value) => setRange(Number(value))}>
@@ -358,7 +419,7 @@ export default function FleetScreen({
                 <ErrorState
                   title="Couldn't load host history"
                   message={historyError}
-                  onRetry={() => void loadHistory(range)}
+                  onRetry={() => setHistoryAttempt((attempt) => attempt + 1)}
                 />
               ) : historyLoading ? (
                 <div className="grid gap-4 lg:grid-cols-3">
@@ -376,7 +437,7 @@ export default function FleetScreen({
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => void loadHistory(range)}
+                        onClick={() => setHistoryAttempt((attempt) => attempt + 1)}
                       >
                         Retry
                       </Button>
@@ -472,6 +533,27 @@ export default function FleetScreen({
               />
             </CardHeader>
             <CardContent>
+              {containersError !== null && containers === null && (
+                <ErrorState
+                  title="Couldn't load containers"
+                  message={containersError}
+                  onRetry={() => setContainersAttempt((attempt) => attempt + 1)}
+                />
+              )}
+              {containersError !== null && containers !== null && (
+                <div className="mb-4 flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">
+                    Refresh failed: {containersError} — showing last good inventory.
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setContainersAttempt((attempt) => attempt + 1)}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
               <div className="mb-4 flex flex-wrap gap-2" aria-label="Container filters">
                 {(['all', 'running', 'stopped', 'unknown', 'risky'] as ContainerFilter[]).map((value) => (
                   <Button
@@ -484,12 +566,12 @@ export default function FleetScreen({
                   </Button>
                 ))}
               </div>
-              {containers === null ? (
+              {containers === null && containersError === null ? (
                 <div className="space-y-2" aria-label="Loading containers">
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
                 </div>
-              ) : containers.length === 0 ? (
+              ) : containers === null ? null : containers.length === 0 ? (
                 <p className="text-muted-foreground py-6 text-center text-sm">
                   No containers reported by the daemon.
                 </p>
@@ -499,8 +581,8 @@ export default function FleetScreen({
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Project</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>State</TableHead>
+                      <TableHead>Management</TableHead>
+                      <TableHead>Runtime</TableHead>
                       <TableHead className="text-right">CPU</TableHead>
                       <TableHead className="text-right">Memory</TableHead>
                       <TableHead className="text-right">Restarts</TableHead>
@@ -531,11 +613,18 @@ export default function FleetScreen({
                             <ManagedBadge container={container} onSelectService={onSelectService} />
                           </TableCell>
                           <TableCell>
-                            {container.state === 'running' ? (
-                              <Badge variant="default">{container.state}</Badge>
-                            ) : (
-                              <Badge variant="secondary">{container.state}</Badge>
-                            )}
+                            <div className="space-y-1">
+                              {container.state === 'running' ? (
+                                <Badge variant="default">{container.state}</Badge>
+                              ) : (
+                                <Badge variant="secondary">{container.state}</Badge>
+                              )}
+                              {container.status !== undefined && container.status !== '' && (
+                                <p className="text-muted-foreground max-w-56 text-xs">
+                                  {container.status}
+                                </p>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right font-mono">
                             {container.cpu_percent === null ? 'n/a' : `${container.cpu_percent.toFixed(1)}%`}
@@ -554,7 +643,9 @@ export default function FleetScreen({
                             )}
                           </TableCell>
                           <TableCell className="text-muted-foreground text-right text-xs">
-                            {container.last_seen_at === undefined ? 'n/a' : timeAgo(container.last_seen_at)}
+                            {container.sampled_at === undefined && container.last_seen_at === undefined
+                              ? 'n/a'
+                              : timeAgo(container.sampled_at ?? container.last_seen_at ?? '')}
                           </TableCell>
                           <TableCell className="text-right">
                             {!container.managed ? (
@@ -589,9 +680,10 @@ export default function FleetScreen({
                 </Table>
               )}
             </CardContent>
-          </Card>
+      </Card>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+      {system !== null && (
+        <div className="grid gap-4 lg:grid-cols-3">
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm font-medium">Host</CardTitle>
@@ -644,8 +736,7 @@ export default function FleetScreen({
                 <Row label="Database" value={formatBytes(system.self.database_bytes)} />
               </CardContent>
             </Card>
-          </div>
-        </>
+        </div>
       )}
 
       <PromoteDialog
@@ -654,7 +745,7 @@ export default function FleetScreen({
         onCreated={(id) => {
           setPromoteTarget(null);
           onSelectService(id);
-          void load();
+          setContainersAttempt((attempt) => attempt + 1);
         }}
         onUnauthorized={onUnauthorized}
       />

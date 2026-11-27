@@ -15,7 +15,8 @@ const maxHistoryHours = 168
 
 // imagesResponse is the daemon image list payload.
 type imagesResponse struct {
-	Images []model.ImageView `json:"images"`
+	Images    []model.ImageView         `json:"images"`
+	Freshness model.CollectionFreshness `json:"freshness"`
 }
 
 // handleDockerImages lists local daemon images, newest first.
@@ -27,7 +28,7 @@ func (s *Server) handleDockerImages(w nethttp.ResponseWriter, r *nethttp.Request
 		return
 	}
 
-	writeJSON(w, s.logger, nethttp.StatusOK, imagesResponse{Images: images})
+	writeJSON(w, s.logger, nethttp.StatusOK, imagesResponse{Images: images, Freshness: s.system.ImagesFreshness()})
 }
 
 // handlePruneImages removes dangling images only.

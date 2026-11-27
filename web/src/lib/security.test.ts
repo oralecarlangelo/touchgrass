@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { countUrgentFindings, filterSecurityFindings, recommendedResponse, severityRank } from './security.ts';
+import { countUrgentFindings, findingCollector, recommendedResponse, severityRank } from './security.ts';
 import type { SecurityFinding } from './api.ts';
 
 function finding(id: number, severity: SecurityFinding['severity'], status: SecurityFinding['status'] = 'open'): SecurityFinding {
@@ -18,10 +18,10 @@ describe('security presentation helpers', () => {
     ]);
   });
 
-  it('filters stably without mutating source order', () => {
-    const source = [finding(1, 'high'), finding(2, 'critical'), finding(3, 'high', 'resolved')];
-    expect(filterSecurityFindings(source, { severity: 'high', status: 'all', query: '' }).map((item) => item.id)).toEqual([1, 3]);
-    expect(source.map((item) => item.id)).toEqual([1, 2, 3]);
+  it('labels collector episodes and gives a recovery action', () => {
+    const item = { ...finding(1, 'high'), container_id: 'collector:security_process' };
+    expect(findingCollector(item)).toBe('Runtime process scan');
+    expect(recommendedResponse(item)).toContain('last successful sample');
   });
 
   it('counts active critical and high findings', () => {

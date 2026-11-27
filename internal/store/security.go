@@ -462,6 +462,19 @@ func (s *SecurityStore) Findings(ctx context.Context, query model.SecurityFindin
 		statement += " AND container_id = ?"
 		args = append(args, query.ContainerID)
 	}
+
+	if query.Search != "" {
+		statement += " AND (instr(lower(rule_id), lower(?)) > 0 OR instr(lower(container_id), lower(?)) > 0)"
+
+		args = append(args, query.Search, query.Search)
+	}
+
+	switch query.Source {
+	case "workload":
+		statement += " AND container_id NOT GLOB 'collector:*'"
+	case "collector":
+		statement += " AND container_id GLOB 'collector:*'"
+	}
 	switch query.Sort {
 	case "opened":
 		statement += " ORDER BY opened_at DESC, id DESC"
@@ -503,44 +516,83 @@ func (s *SecurityStore) Summary(ctx context.Context) (model.SecuritySummary, err
 		return model.SecuritySummary{}, fmt.Errorf("summarizing security findings: %w", err)
 	}
 
-	rows, err := s.db.read.QueryContext(ctx, `SELECT coverage_complete, last_recorded_at, effective_interval_secs
-		FROM collector_cursors WHERE source IN ('security_posture','security_process','security_diff')`)
+	summary.Collectors, err = s.securityCollectors(ctx)
 	if err != nil {
-		return model.SecuritySummary{}, fmt.Errorf("reading security coverage: %w", err)
+		return model.SecuritySummary{}, err
 	}
-	defer func() { _ = rows.Close() }()
-	collectorCount := 0
-	coverageComplete := true
+
+	summary.CoverageComplete = len(summary.Collectors) == 3
 	var latest time.Time
-	now := time.Now().UTC()
-	for rows.Next() {
-		var complete bool
-		var recorded sql.NullString
-		var intervalSeconds int64
-		if err := rows.Scan(&complete, &recorded, &intervalSeconds); err != nil {
-			return model.SecuritySummary{}, fmt.Errorf("scanning security coverage: %w", err)
+
+	for _, status := range summary.Collectors {
+		if status.LastError != "disabled" && (status.Stale || !status.CoverageComplete) {
+			summary.CoverageComplete = false
 		}
-		collectorCount++
-		recordedAt, err := parseNullTime(recorded, "last_recorded_at")
-		if err != nil {
-			return model.SecuritySummary{}, err
-		}
-		if recordedAt == nil || intervalSeconds <= 0 || now.Sub(*recordedAt) > 2*time.Duration(intervalSeconds)*time.Second {
-			complete = false
-		}
-		coverageComplete = coverageComplete && complete
-		if recordedAt != nil && recordedAt.After(latest) {
-			latest = *recordedAt
+
+		if status.LastRecordedAt.After(latest) {
+			latest = status.LastRecordedAt
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return model.SecuritySummary{}, fmt.Errorf("iterating security coverage: %w", err)
-	}
-	summary.CoverageComplete = collectorCount == 3 && coverageComplete
+
 	if !latest.IsZero() {
 		summary.LastObservedAt = &latest
 	}
+
 	return summary, nil
+}
+
+func (s *SecurityStore) securityCollectors(ctx context.Context) ([]model.CollectorStatus, error) {
+	rows, err := s.db.read.QueryContext(ctx, `SELECT source, coverage_complete, last_recorded_at, last_success_at,
+		last_error, effective_interval_secs, dropped_records FROM collector_cursors
+		WHERE source IN ('security_posture','security_process','security_diff') ORDER BY source`)
+	if err != nil {
+		return nil, fmt.Errorf("reading security coverage: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	collectors := []model.CollectorStatus{}
+	now := time.Now().UTC()
+
+	for rows.Next() {
+		var (
+			status            model.CollectorStatus
+			recorded, success sql.NullString
+		)
+
+		if err := rows.Scan(
+			&status.Source, &status.CoverageComplete, &recorded, &success,
+			&status.LastError, &status.EffectiveIntervalSecs, &status.DroppedRecords,
+		); err != nil {
+			return nil, fmt.Errorf("scanning security coverage: %w", err)
+		}
+
+		recordedAt, err := parseNullTime(recorded, "last_recorded_at")
+		if err != nil {
+			return nil, err
+		}
+
+		lastSuccess, err := parseNullTime(success, "last_success_at")
+		if err != nil {
+			return nil, err
+		}
+
+		if recordedAt != nil {
+			status.LastRecordedAt = *recordedAt
+		}
+
+		if lastSuccess != nil {
+			status.LastSuccessAt = *lastSuccess
+		}
+
+		interval := time.Duration(status.EffectiveIntervalSecs) * time.Second
+		status.Stale = status.LastRecordedAt.IsZero() || interval <= 0 || now.Sub(status.LastRecordedAt) > 2*interval
+		collectors = append(collectors, status)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating security coverage: %w", err)
+	}
+
+	return collectors, nil
 }
 
 // ActiveRiskCounts returns active finding counts grouped by container and severity.

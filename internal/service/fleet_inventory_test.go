@@ -199,11 +199,21 @@ func TestFleetInventoryDatabaseDiscoveryReusesInspection(t *testing.T) {
 		})
 	}
 
-	var observed []docker.Container
+	var (
+		observed     []docker.Container
+		observations int
+	)
 
 	inventory := NewFleetInventory(FleetInventoryConfig{
 		Services: store.NewServiceStore(db), Containers: store.NewContainerStore(db), Docker: dockerClient,
-		Observe: func(items []docker.Container, _ time.Time, _ time.Duration) { observed = items },
+		Observe: func(items []docker.Container, _ time.Time, _ time.Duration) {
+			observations++
+			if observations == 1 && dockerClient.peakConcurrency() != 0 {
+				t.Error("first database observation waited for container inspection")
+			}
+
+			observed = items
+		},
 	})
 
 	for _, attempt := range []string{"initial discovery", "inspection temporarily unavailable"} {

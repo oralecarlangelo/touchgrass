@@ -612,6 +612,7 @@ export interface SecuritySummary {
   suppressed: number;
   coverage_complete: boolean;
   last_observed_at?: string | null;
+  collectors?: CollectorStatusView[];
 }
 
 export interface SecurityFinding {
@@ -642,6 +643,8 @@ export interface SecurityFindingFilters {
   status?: SecurityFindingStatus;
   severity?: SecuritySeverity;
   containerId?: string;
+  source?: 'workload' | 'collector';
+  q?: string;
   sort?: 'last_seen' | 'opened' | 'severity';
   limit?: number;
   offset?: number;
@@ -677,6 +680,8 @@ export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}
   if (filters.status !== undefined) params.set('status', filters.status);
   if (filters.severity !== undefined) params.set('severity', filters.severity);
   if (filters.containerId !== undefined && filters.containerId !== '') params.set('container_id', filters.containerId);
+  if (filters.source !== undefined) params.set('source', filters.source);
+  if (filters.q) params.set('q', filters.q);
   if (filters.sort !== undefined) params.set('sort', filters.sort);
   if (filters.limit !== undefined) params.set('limit', String(filters.limit));
   if (filters.offset !== undefined) params.set('offset', String(filters.offset));

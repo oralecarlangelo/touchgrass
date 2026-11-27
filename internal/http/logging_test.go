@@ -59,6 +59,37 @@ func TestWithLoggingRedactsUntrustedPaths(t *testing.T) {
 	}
 }
 
+func TestWithLoggingIncludesOnlyRegisteredRouteTemplate(t *testing.T) {
+	t.Parallel()
+
+	records := []capturedRecord{}
+	logger := slog.New(captureHandler{records: &records})
+	mux := nethttp.NewServeMux()
+
+	const pattern = "/api/services/{id}/metrics"
+
+	mux.Handle("GET "+pattern, withLogRoute(pattern, func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+		w.WriteHeader(nethttp.StatusNoContent)
+	}))
+	next := nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		// Authentication passes a cloned request to the mux.
+		mux.ServeHTTP(w, r.WithContext(r.Context()))
+	})
+
+	req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodGet, "/api/services/private-name/metrics?q=private-value", nil)
+	WithLogging(logger, next).ServeHTTP(httptest.NewRecorder(), req)
+
+	if len(records) != 1 || records[0].attrs["route"] != pattern || records[0].attrs["path"] != "/api/services" {
+		t.Fatalf("records = %v, want route template and coarse API family", records)
+	}
+
+	for _, value := range records[0].attrs {
+		if raw, ok := value.(string); ok && strings.Contains(raw, "private-") {
+			t.Fatalf("log includes private path or query data")
+		}
+	}
+}
+
 // capturedRecord is one log record with its attributes.
 type capturedRecord struct {
 	message string

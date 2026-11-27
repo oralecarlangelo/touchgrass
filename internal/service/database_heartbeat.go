@@ -106,8 +106,11 @@ func (d *Database) ObserveContainers(containers []docker.Container, observedAt t
 	}
 
 	discovered := []model.Database{}
+	knownImages := d.discoveredDatabaseImages()
 
 	for _, container := range containers {
+		container.Image = inventoryImage(container, knownImages[container.ID])
+
 		matched := false
 
 		for i := range targets {
@@ -142,6 +145,21 @@ func (d *Database) ObserveContainers(containers []docker.Container, observedAt t
 	d.snapshot.dockerObserved = observedAt
 	d.snapshot.dockerExpires = observedAt.Add(validFor)
 	d.snapshot.discoveryFailed = false
+}
+
+func (d *Database) discoveredDatabaseImages() map[string]string {
+	d.snapshot.mu.RLock()
+	defer d.snapshot.mu.RUnlock()
+
+	known := map[string]string{}
+
+	for _, database := range d.snapshot.external {
+		if id, ok := strings.CutPrefix(database.ID, "docker:"); ok {
+			known[id] = database.Image
+		}
+	}
+
+	return known
 }
 
 func matchesDatabaseTarget(target string, container docker.Container) bool {

@@ -20,7 +20,7 @@ describe('SecurityScreenView', () => {
     expect(renderToStaticMarkup(<SecurityScreenView summary={{ ...summary, coverage_complete: false }} findings={[finding]} error={null} isAdmin={false} onRetry={() => undefined} onSelect={() => undefined} onCreatePolicy={() => undefined} />)).toContain('Partial collector coverage');
   });
 
-  it('shows collector coverage before findings and defaults to open findings', () => {
+  it('keeps collector coverage visible during reads and labels recurring incidents', () => {
     const shared = {
       summary: { ...summary, coverage_complete: false },
       error: null,
@@ -33,14 +33,16 @@ describe('SecurityScreenView', () => {
     expect(loading).toContain('Partial collector coverage');
     expect(loading).toContain('Loading security findings');
 
-    const withHistory = renderToStaticMarkup(
+    const collector = renderToStaticMarkup(
       <SecurityScreenView
         {...shared}
-        findings={[finding, { ...finding, id: 2, status: 'resolved', rule_id: 'historical-incident' }]}
+        source="collector"
+        findings={[{ ...finding, container_id: 'collector:security_process', occurrence_count: 12 }]}
       />,
     );
-    expect(withHistory).toContain(finding.rule_id);
-    expect(withHistory).not.toContain('historical-incident');
+    expect(collector).toContain('Collector incidents');
+    expect(collector).toContain('Runtime process scan');
+    expect(collector).toContain('12 occurrences');
   });
 
   it('renders a narrow-screen-safe table and admin-only policy action', () => {

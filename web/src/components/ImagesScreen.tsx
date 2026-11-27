@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -40,17 +40,23 @@ export default function ImagesScreen({
   isAdmin: boolean;
 }) {
   const [images, setImages] = useState<ImageView[] | null>(null);
+  const [imagesStale, setImagesStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pruning, setPruning] = useState(false);
  const [revision, setRevision] = useState(0);
+  const loadSequence = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const sequence = ++loadSequence.current;
     setError(null);
 
     try {
-      setImages(await fetchImages());
+      const result = await fetchImages(signal);
+      if (signal?.aborted || sequence !== loadSequence.current) return;
+      setImages(result.images); setImagesStale(result.freshness.stale);
     } catch (err) {
+      if (signal?.aborted || sequence !== loadSequence.current) return;
       if (isUnauthorized(err)) {
         onUnauthorized();
         return;
@@ -61,7 +67,16 @@ export default function ImagesScreen({
   }, [onUnauthorized]);
 
   useEffect(() => {
-    void load();
+    const controller = new AbortController();
+    let running = false;
+    const refresh = async () => {
+      if (running) return;
+      running = true;
+      try { await load(controller.signal); } finally { running = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
   }, [load]);
 
   async function handlePrune(): Promise<void> {
@@ -111,6 +126,7 @@ export default function ImagesScreen({
       <StoragePanel revision={revision} onUnauthorized={onUnauthorized} />
       {isAdmin && <BucketManager onUnauthorized={onUnauthorized} />}
       <h2 className="text-lg font-semibold">Docker images</h2>
+      {imagesStale && <p role="status" className="text-muted-foreground text-sm">Image inventory is refreshing in the background; showing the last available snapshot.</p>}
       {error !== null && <ErrorState title="Couldn't load images" message={error} onRetry={() => void load()} />}
       <p className="text-muted-foreground text-sm">Image sizes include shared layers. Totals below are logical estimates, not physical disk usage or guaranteed reclaimable space.</p>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

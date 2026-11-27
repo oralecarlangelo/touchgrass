@@ -21,9 +21,12 @@ import (
 const (
 	touchGrassReleaseURL = "https://api.github.com/repos/oralecarlangelo/touchgrass/releases/latest"
 	updateStateRunning   = "running"
+	updateStateFailed    = "failed"
 )
 
 var updateTagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+
+var installedUpdatePattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$`)
 
 var (
 	// ErrUpdateUnavailable means the updater or release cannot be used.
@@ -36,6 +39,7 @@ var (
 
 // UpdateJob is the durable status written by the external host job.
 type UpdateJob struct {
+	Unit       string `json:"unit,omitempty"`
 	Tag        string `json:"tag"`
 	State      string `json:"state"`
 	StartedAt  string `json:"started_at,omitempty"`
@@ -71,13 +75,22 @@ type SelfUpdate struct {
 	mu         sync.Mutex
 	cached     *UpdateRelease
 	cachedAt   time.Time
+	jobActive  func(context.Context, string) (bool, error)
 }
 
 // NewSelfUpdate configures the optional console updater.
 func NewSelfUpdate(helper, statusPath, origin, version string) *SelfUpdate {
+	if helper == "" {
+		helper = "/usr/local/libexec/touchgrass-updater/request"
+	}
+
+	if statusPath == "" {
+		statusPath = "/var/lib/touchgrass-updater/status.json"
+	}
 	return &SelfUpdate{
 		helper: helper, statusPath: statusPath, origin: origin, version: version,
 		platform:   runtime.GOOS,
+		jobActive:  updateUnitActive,
 		releaseURL: touchGrassReleaseURL,
 		client:     &http.Client{Timeout: 5 * time.Second},
 	}
@@ -88,27 +101,39 @@ func (u *SelfUpdate) Origin() string { return u.origin }
 
 // Check returns job status even when upstream release discovery fails.
 func (u *SelfUpdate) Check(ctx context.Context) UpdateStatus {
+	return u.check(ctx, false)
+}
+
+// CheckNow bypasses the release cache for an explicit administrator refresh.
+func (u *SelfUpdate) CheckNow(ctx context.Context) UpdateStatus {
+	return u.check(ctx, true)
+}
+
+func (u *SelfUpdate) check(ctx context.Context, force bool) UpdateStatus {
 	status := UpdateStatus{Installed: u.version, Configured: u.configured()}
-	if !status.Configured {
-		return status
+
+	var job *UpdateJob
+
+	if status.Configured {
+		var err error
+
+		job, err = u.readJob(ctx)
+		if err != nil {
+			status.CheckError = "Update status is unavailable."
+			return status
+		}
+
+		status.Job = job
 	}
 
-	job, err := u.readJob()
-	if err != nil {
-		status.CheckError = "Update status is unavailable."
-		return status
-	}
-
-	status.Job = job
-
-	release, err := u.latest(ctx, false)
+	release, err := u.latest(ctx, force)
 	if err != nil {
 		status.CheckError = "Could not check GitHub releases. Retry shortly."
 		return status
 	}
 
 	status.Release = release
-	status.CanInstall = newer(release.Tag, u.version) && (job == nil || job.State == "succeeded" || job.State == "failed")
+	status.CanInstall = status.Configured && newer(release.Tag, u.version) && (job == nil || job.State == "succeeded" || job.State == updateStateFailed)
 
 	return status
 }
@@ -123,7 +148,7 @@ func (u *SelfUpdate) Start(ctx context.Context, tag string) error {
 		return ErrUpdateInvalid
 	}
 
-	job, err := u.readJob()
+	job, err := u.readJob(ctx)
 	if err != nil {
 		return fmt.Errorf("reading update status: %w", err)
 	}
@@ -150,7 +175,7 @@ func (u *SelfUpdate) Start(ctx context.Context, tag string) error {
 }
 
 func (u *SelfUpdate) configured() bool {
-	if u.platform != "linux" || !filepath.IsAbs(u.helper) || !filepath.IsAbs(u.statusPath) || u.origin == "" {
+	if u.platform != "linux" || !filepath.IsAbs(u.helper) || !filepath.IsAbs(u.statusPath) {
 		return false
 	}
 
@@ -159,7 +184,7 @@ func (u *SelfUpdate) configured() bool {
 	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }
 
-func (u *SelfUpdate) readJob() (*UpdateJob, error) {
+func (u *SelfUpdate) readJob(ctx context.Context) (*UpdateJob, error) {
 	contents, err := os.ReadFile(u.statusPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -179,7 +204,23 @@ func (u *SelfUpdate) readJob() (*UpdateJob, error) {
 	}
 
 	switch job.State {
-	case "pending", updateStateRunning, "succeeded", "failed":
+	case "pending", updateStateRunning:
+		started, parseErr := time.Parse(time.RFC3339Nano, job.StartedAt)
+
+		dispatching := job.State == "pending" && parseErr == nil && time.Since(started) < 10*time.Second
+		if job.Unit != "" && !dispatching {
+			active, err := u.jobActive(ctx, job.Unit)
+			if err != nil {
+				return nil, err
+			}
+
+			if !active {
+				job.State = updateStateFailed
+			}
+		}
+
+		return &job, nil
+	case "succeeded", updateStateFailed:
 		return &job, nil
 	default:
 		return nil, errors.New("unknown update state")
@@ -263,6 +304,14 @@ func decodeLatestRelease(bodyReader io.Reader) (*UpdateRelease, error) {
 }
 
 func newer(tag, installed string) bool {
+	if !installedUpdatePattern.MatchString(installed) {
+		return false
+	}
+	// Custom builds may contain unreleased fixes. Only offer a newer base
+	// release, never replace them with the same or an older stable version.
+	installed, _, _ = strings.Cut(installed, "+")
+
+	installed, _, _ = strings.Cut(installed, "-")
 	if !strings.HasPrefix(installed, "v") {
 		installed = "v" + installed
 	}
@@ -288,4 +337,29 @@ func newer(tag, installed string) bool {
 	}
 
 	return false
+}
+
+var updateUnitPattern = regexp.MustCompile(`^touchgrass-update-[0-9]+\.service$`)
+
+func updateUnitActive(ctx context.Context, unit string) (bool, error) {
+	if !updateUnitPattern.MatchString(unit) {
+		return false, ErrUpdateInvalid
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	//nolint:gosec // Unit is restricted to our generated systemd job names above.
+	output, err := exec.CommandContext(ctx, "systemctl", "show", "--property=ActiveState", "--value", unit).Output()
+	if err != nil {
+		return false, fmt.Errorf("checking update job: %w", err)
+	}
+
+	switch strings.TrimSpace(string(output)) {
+	case "active", "activating", "deactivating", "reloading":
+		return true, nil
+	case "inactive", updateStateFailed:
+		return false, nil
+	default:
+		return false, errors.New("unknown update unit state")
+	}
 }

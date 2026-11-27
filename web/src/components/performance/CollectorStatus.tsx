@@ -1,11 +1,14 @@
-import { CircleCheck, CircleDashed, CircleX, RadioTower } from 'lucide-react';
+import { CircleCheck, CircleDashed, CircleX, Copy, RadioTower } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { CollectorStatusView } from '@/lib/api.ts';
+import type { CollectorStatusView, FleetContainer, ServiceView } from '@/lib/api.ts';
 import { timeAgo } from '@/lib/format.ts';
 import {
+  collectorGuidance,
   collectorLastSuccessAt,
+  collectorSetupSnippet,
   collectorState,
   type CollectorState as State,
 } from '@/lib/performance.ts';
@@ -27,7 +30,19 @@ function StateIcon({ state }: { state: State }) {
   return <CircleX className="text-destructive h-4 w-4" aria-hidden />;
 }
 
-export default function CollectorStatus({ collectors }: { collectors: CollectorStatusView[] }) {
+export default function CollectorStatus({
+  collectors,
+  services,
+  serviceId,
+  fleetContainers,
+}: {
+  collectors: CollectorStatusView[];
+  services: ServiceView[];
+  serviceId: string;
+  fleetContainers: FleetContainer[];
+}) {
+  const setupSnippet = collectorSetupSnippet(collectors, services, serviceId, fleetContainers);
+
   return (
     <Card>
       <CardHeader>
@@ -38,6 +53,28 @@ export default function CollectorStatus({ collectors }: { collectors: CollectorS
         <CardDescription>Freshness and data-loss visibility for each read-only source.</CardDescription>
       </CardHeader>
       <CardContent>
+        {setupSnippet !== '' && (
+          <div className="bg-muted/40 mb-3 rounded-md border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Connect discovered sources</p>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Review this inferred configuration, add it to the server environment, then restart Touch Grass.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void navigator.clipboard.writeText(setupSnippet)}
+              >
+                <Copy aria-hidden />
+                Copy config
+              </Button>
+            </div>
+            <pre className="mt-3 overflow-x-auto text-xs"><code>{setupSnippet}</code></pre>
+          </div>
+        )}
         {collectors.length === 0 ? (
           <p className="text-muted-foreground text-sm">Collector status is not available.</p>
         ) : (
@@ -45,6 +82,7 @@ export default function CollectorStatus({ collectors }: { collectors: CollectorS
             {collectors.map((collector) => {
               const state = collectorState(collector);
               const lastSuccessAt = collectorLastSuccessAt(collector);
+              const guidance = collectorGuidance(collector);
 
               return (
                 <div key={collector.source} className="rounded-md border p-3">
@@ -63,18 +101,19 @@ export default function CollectorStatus({ collectors }: { collectors: CollectorS
                       : `Last success ${timeAgo(lastSuccessAt)}`}
                   </p>
                   {collector.dropped_records > 0 && (
-                    <p className="text-destructive mt-1 text-xs">
-                      {collector.dropped_records.toLocaleString()} records dropped
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      {collector.dropped_records.toLocaleString()} records dropped in collector history
                     </p>
                   )}
-                  {collector.last_error !== undefined && collector.last_error !== '' && (
+                  {state !== 'not-configured' && collector.last_error !== undefined && collector.last_error !== '' && (
                     <p className="text-destructive mt-1 truncate text-xs" title={collector.last_error}>
                       {collector.last_error}
                     </p>
                   )}
-                  {!collector.coverage_complete && (
+                  {state !== 'not-configured' && !collector.coverage_complete && (
                     <p className="text-destructive mt-1 text-xs">Partial coverage; prior findings remain active.</p>
                   )}
+                  {guidance !== null && <p className="text-muted-foreground mt-1 text-xs">{guidance}</p>}
                   {collector.effective_interval_secs !== undefined && collector.effective_interval_secs > 0 && (
                     <p className="text-muted-foreground mt-1 text-xs">Effective interval {collector.effective_interval_secs}s</p>
                   )}

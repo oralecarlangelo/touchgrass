@@ -13,7 +13,7 @@ import (
 
 // StorageUsage queries the daemon on demand with a bounded deadline.
 func (c *Client) StorageUsage(ctx context.Context) (model.StorageUsage, error) {
-	usage, err := guardedCall(ctx, c.guard, 5*time.Second,
+	usage, err := guardedCall(ctx, c.storageGuard, 45*time.Second,
 		func(callCtx context.Context) (types.DiskUsage, error) {
 			return c.cli.DiskUsage(callCtx, types.DiskUsageOptions{})
 		})

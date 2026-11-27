@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -104,7 +105,11 @@ func TestSampleCollects(t *testing.T) {
 	sampler, db := testSampler(t, lister)
 	ctx := context.Background()
 
+	startedAt := lister.stats[containers[0].ID].StartedAt
+	minUptime := int64(time.Since(startedAt).Seconds())
 	sampler.sample(ctx)
+
+	maxUptime := int64(time.Since(startedAt).Seconds())
 
 	metrics, err := store.NewMetricStore(db).ListByService(ctx, testServiceAPI, time.Time{}, 100)
 	if err != nil {
@@ -120,8 +125,8 @@ func TestSampleCollects(t *testing.T) {
 		t.Errorf("sample = %+v, want mapped stats", got)
 	}
 
-	if got.UptimeSecs < 3590 || got.UptimeSecs > 3610 {
-		t.Errorf("uptime = %d, want ~3600", got.UptimeSecs)
+	if got.UptimeSecs < minUptime || got.UptimeSecs > maxUptime {
+		t.Errorf("uptime = %d, want between %d and %d", got.UptimeSecs, minUptime, maxUptime)
 	}
 
 	fe, err := store.NewMetricStore(db).ListByService(ctx, testServiceFE, time.Time{}, 100)
@@ -434,5 +439,62 @@ func TestCreateRuleValidation(t *testing.T) {
 
 	if err := sampler.DeleteRule(ctx, created.ID, testAdminActor); err != nil {
 		t.Errorf("DeleteRule() error = %v, want nil", err)
+	}
+}
+
+type boundedStatsLister struct {
+	stubStatsLister
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *boundedStatsLister) Stats(ctx context.Context, _ string) (docker.Stats, error) {
+	s.entered <- struct{}{}
+
+	select {
+	case <-s.release:
+		return docker.Stats{}, nil
+	case <-ctx.Done():
+		return docker.Stats{}, ctx.Err()
+	}
+}
+
+func TestFleetStatsBoundsProducers(t *testing.T) {
+	t.Parallel()
+
+	lister := &boundedStatsLister{entered: make(chan struct{}, 100), release: make(chan struct{})}
+	sampler := &Sampler{docker: lister, logger: slog.New(slog.DiscardHandler)}
+
+	containers := make([]docker.Container, 100)
+	for index := range containers {
+		containers[index].ID = strconv.Itoa(index)
+	}
+
+	finished := make(chan map[string]docker.Stats, 1)
+	go func() { finished <- sampler.collectContainerStats(t.Context(), containers) }()
+
+	for range 2 {
+		select {
+		case <-lister.entered:
+		case <-time.After(time.Second):
+			t.Fatal("workers did not start")
+		}
+	}
+
+	select {
+	case <-lister.entered:
+		t.Error("more than two stats producers entered the daemon queue")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(lister.release)
+
+	select {
+	case results := <-finished:
+		if len(results) != len(containers) {
+			t.Fatalf("sampled %d of %d", len(results), len(containers))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("workers did not complete")
 	}
 }

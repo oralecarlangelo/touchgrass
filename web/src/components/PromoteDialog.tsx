@@ -105,6 +105,7 @@ export default function PromoteDialog({
   const [draft, setDraft] = useState<OnboardingSuggest | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const [serviceId, setServiceId] = useState('');
   const [strategy, setStrategy] = useState<OnboardingStrategy>('recreate');
@@ -137,15 +138,15 @@ export default function PromoteDialog({
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
     setDraft(null);
     setLoading(true);
     setLoadError(null);
     setSubmitError(null);
 
-    void suggestService(container)
+    void suggestService(container, controller.signal)
       .then((suggestion) => {
-        if (cancelled) {
+        if (controller.signal.aborted) {
           return;
         }
 
@@ -174,7 +175,7 @@ export default function PromoteDialog({
         });
       })
       .catch((err: unknown) => {
-        if (cancelled) {
+        if (controller.signal.aborted) {
           return;
         }
 
@@ -186,15 +187,15 @@ export default function PromoteDialog({
         setLoadError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!controller.signal.aborted) {
           setLoading(false);
         }
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [container, onUnauthorized]);
+  }, [container, loadAttempt, onUnauthorized]);
 
   function setRecreateField(field: keyof RecreateFields, value: string): void {
     setRecreate((current) => ({ ...current, [field]: value }));
@@ -331,6 +332,9 @@ export default function PromoteDialog({
             <DialogFooter>
               <Button variant="outline" onClick={onClose}>
                 Close
+              </Button>
+              <Button onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+                Retry
               </Button>
             </DialogFooter>
           </div>

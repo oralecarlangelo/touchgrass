@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bar, BarChart, CartesianGrid, XAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
@@ -15,12 +15,42 @@ import {
   type Notification,
   type FleetContainersResponse,
   type ServiceView,
+  type ServiceFreshness,
   type SystemSnapshot,
 } from '@/lib/api.ts';
 import { formatBytes, formatDuration, timeAgo } from '@/lib/format.ts';
 import { healthDotClass, type ViewId } from '@/lib/views.ts';
 
 const refreshIntervalMs = 30_000;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function settleRegion<T>(
+  request: Promise<T>,
+  isCurrent: () => boolean,
+  onSuccess: (value: T) => void,
+  onError: (message: string) => void,
+  onUnauthorized: () => void,
+): Promise<void> {
+  try {
+    const value = await request;
+    if (isCurrent()) onSuccess(value);
+  } catch (error) {
+    if (!isCurrent()) return;
+    if (isUnauthorized(error)) {
+      onUnauthorized();
+      return;
+    }
+    onError(errorMessage(error));
+  }
+}
+
+export function collectionFreshnessLabel(freshness: ServiceFreshness): string {
+  const state = freshness.stale || !freshness.complete ? 'Degraded' : 'Current';
+  return freshness.observed_at === null ? `${state} · never observed` : `${state} · observed ${timeAgo(freshness.observed_at)}`;
+}
 
 const activityConfig = {
   count: { label: 'Notifications', color: 'var(--chart-1)' },
@@ -63,12 +93,22 @@ function bucketByHour(items: Notification[]): { hour: string; count: number }[] 
 
 export default function Dashboard({
   services,
+  servicesError,
+  servicesRefreshing,
+  servicesUpdatedAt,
+  servicesFreshness,
+  onRetryServices,
   onSelectService,
   onView,
   onUnauthorized,
   canHost,
 }: {
   services: ServiceView[] | null;
+  servicesError: string | null;
+  servicesRefreshing: boolean;
+  servicesUpdatedAt: string | null;
+  servicesFreshness: ServiceFreshness | null;
+  onRetryServices: () => void;
   onSelectService: (id: string) => void;
   onView: (view: ViewId) => void;
   onUnauthorized: () => void;
@@ -81,44 +121,47 @@ export default function Dashboard({
   const [notes, setNotes] = useState<Notification[] | null>(null);
   const [unread, setUnread] = useState(0);
   const [fleet, setFleet] = useState<FleetContainersResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [systemError, setSystemError] = useState<string | null>(null);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [fleetError, setFleetError] = useState<string | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
-    setError(null);
+  const load = useCallback(() => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const isCurrent = () => requestRef.current === controller && !controller.signal.aborted;
 
-    try {
-      const [snapshot, fetched, containerFleet] = await Promise.all([
-        canHost ? fetchSystem() : Promise.resolve(null),
-        fetchNotifications('', 100),
-        canHost ? fetchFleetContainers() : Promise.resolve(null),
-      ]);
-      setSystem(snapshot);
+    if (canHost) {
+      void settleRegion(fetchSystem(controller.signal), isCurrent, (snapshot) => {
+        setSystem(snapshot);
+        setSystemError(null);
+      }, setSystemError, onUnauthorized);
+      void settleRegion(fetchFleetContainers(controller.signal), isCurrent, (snapshot) => {
+        setFleet(snapshot);
+        setFleetError(null);
+      }, setFleetError, onUnauthorized);
+    }
+
+    void settleRegion(fetchNotifications('', 100, controller.signal), isCurrent, (fetched) => {
       setNotes(fetched.notifications);
       setUnread(fetched.unread);
-      setFleet(containerFleet);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
+      setNotesError(null);
+    }, setNotesError, onUnauthorized);
   }, [onUnauthorized, canHost]);
 
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), refreshIntervalMs);
 
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      requestRef.current?.abort();
+    };
   }, [load]);
 
   const activity = useMemo(() => bucketByHour(notes ?? []), [notes]);
   const healthy = (services ?? []).filter((service) => service.health === 'healthy').length;
-
-  if (error !== null && system === null && notes === null) {
-    return <ErrorState title="Couldn't load the dashboard" message={error} onRetry={() => void load()} />;
-  }
 
   return (
     <div className="space-y-4">
@@ -128,15 +171,25 @@ export default function Dashboard({
             <CardTitle className="text-sm font-medium">Managed services</CardTitle>
           </CardHeader>
           <CardContent>
-            {services === null ? (
-              <Skeleton className="h-8 w-20" />
+            {services === null && servicesError !== null ? (
+              <button className="text-destructive text-left text-sm" onClick={onRetryServices}>Services unavailable · Retry</button>
+            ) : services === null ? (
+              <Skeleton className="h-8 w-20" aria-label="Loading managed services" />
             ) : (
-              <p className="text-2xl font-semibold">
-                {healthy}
-                <span className="text-muted-foreground text-base font-normal">
-                  /{services.length} healthy
-                </span>
-              </p>
+              <div>
+                <p className="text-2xl font-semibold">
+                  {healthy}<span className="text-muted-foreground text-base font-normal">/{services.length} healthy</span>
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  {servicesError !== null
+                    ? 'Refresh failed · showing last known state'
+                    : servicesFreshness?.stale || servicesFreshness?.complete === false
+                      ? `Degraded · ${servicesUpdatedAt === null ? 'never observed' : `observed ${timeAgo(servicesUpdatedAt)}`}`
+                      : servicesRefreshing
+                        ? 'Refreshing…'
+                        : servicesUpdatedAt === null ? 'Freshness unknown' : `Updated ${timeAgo(servicesUpdatedAt)}`}
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -146,7 +199,7 @@ export default function Dashboard({
               <CardTitle className="text-sm font-medium">Containers</CardTitle>
             </CardHeader>
             <CardContent>
-              {fleet === null ? <Skeleton className="h-8 w-24" /> : (
+              {fleet === null && fleetError !== null ? <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button> : fleet === null ? <Skeleton className="h-8 w-24" /> : (
                 <div>
                   <p className="text-2xl font-semibold">{fleet.containers.length}</p>
                   <p className="text-muted-foreground text-xs">{containerPostureLabel(fleet)}</p>
@@ -161,7 +214,7 @@ export default function Dashboard({
               <CardTitle className="text-sm font-medium">Collector freshness</CardTitle>
             </CardHeader>
             <CardContent>
-              {fleet === null ? <Skeleton className="h-8 w-24" /> : (
+              {fleet === null && fleetError !== null ? <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button> : fleet === null ? <Skeleton className="h-8 w-24" /> : (
                 <div>
                   <p className="text-2xl font-semibold">
                     {fleet.freshness.stale || !fleet.freshness.complete ? 'Degraded' : 'Current'}
@@ -179,7 +232,9 @@ export default function Dashboard({
             <CardTitle className="text-sm font-medium">Unread notifications</CardTitle>
           </CardHeader>
           <CardContent>
-            {notes === null ? (
+            {notes === null && notesError !== null ? (
+              <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button>
+            ) : notes === null ? (
               <Skeleton className="h-8 w-16" />
             ) : (
               <p className="text-2xl font-semibold">{unread}</p>
@@ -192,7 +247,9 @@ export default function Dashboard({
               <CardTitle className="text-sm font-medium">Host uptime</CardTitle>
             </CardHeader>
             <CardContent>
-              {system === null ? (
+              {system === null && systemError !== null ? (
+                <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button>
+              ) : system === null ? (
                 <Skeleton className="h-8 w-24" />
               ) : (
                 <p className="text-2xl font-semibold">
@@ -208,7 +265,9 @@ export default function Dashboard({
               <CardTitle className="text-sm font-medium">Database</CardTitle>
             </CardHeader>
             <CardContent>
-              {system === null ? (
+              {system === null && systemError !== null ? (
+                <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button>
+              ) : system === null ? (
                 <Skeleton className="h-8 w-24" />
               ) : (
                 <p className="text-2xl font-semibold">{formatBytes(system.self.database_bytes)}</p>
@@ -221,13 +280,20 @@ export default function Dashboard({
       {canHost && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Host resources (live)</CardTitle>
+            <div>
+            <CardTitle className="text-sm font-medium">Host resources</CardTitle>
+              {system !== null && (
+                <p className="text-muted-foreground text-xs">{collectionFreshnessLabel(system.freshness)}</p>
+              )}
+            </div>
             <Button variant="ghost" size="sm" onClick={() => onView('fleet')}>
               Fleet
             </Button>
           </CardHeader>
           <CardContent>
-            {system === null ? (
+            {system === null && systemError !== null ? (
+              <ErrorState title="Host resources unavailable" message={systemError} onRetry={() => void load()} />
+            ) : system === null ? (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <Skeleton className="h-8 w-full" />
                 <Skeleton className="h-8 w-full" />
@@ -279,7 +345,10 @@ export default function Dashboard({
             </Button>
           </CardHeader>
           <CardContent className="space-y-1">
-            {services === null && (
+            {services === null && servicesError !== null && (
+              <ErrorState title="Services unavailable" message={servicesError} onRetry={onRetryServices} />
+            )}
+            {services === null && servicesError === null && (
               <>
                 <Skeleton className="h-10 w-full" />
                 <Skeleton className="h-10 w-full" />
@@ -316,6 +385,12 @@ export default function Dashboard({
                 </Badge>
               </button>
             ))}
+            {services !== null && servicesError !== null && (
+              <div role="alert" className="border-destructive/40 mt-2 flex items-center justify-between rounded-md border p-2 text-xs">
+                <span>Refresh failed. Showing last known services.</span>
+                <Button variant="ghost" size="sm" onClick={onRetryServices}>Retry</Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 

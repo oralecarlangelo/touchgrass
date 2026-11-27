@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,27 @@ type stubDaemonQuerier struct {
 	pruneErr  error
 	info      docker.DaemonInfo
 	infoErr   error
+}
+
+type countingDaemonQuerier struct {
+	stubDaemonQuerier
+	mu        sync.Mutex
+	infoCalls int
+}
+
+func (c *countingDaemonQuerier) DaemonInfo(ctx context.Context) (docker.DaemonInfo, error) {
+	c.mu.Lock()
+	c.infoCalls++
+	c.mu.Unlock()
+
+	return c.stubDaemonQuerier.DaemonInfo(ctx)
+}
+
+func (c *countingDaemonQuerier) calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.infoCalls
 }
 
 func (s stubDaemonQuerier) Images(_ context.Context) ([]docker.Image, error) {
@@ -51,7 +73,9 @@ func TestSystemImages(t *testing.T) {
 		{ID: "sha256:abc", RepoTags: []string{"app:v2"}, Size: 120, Created: 1700000000, Dangling: false},
 	}}
 
-	got, err := testSystem(t, querier).Images(context.Background())
+	system := testSystem(t, querier)
+
+	got, err := system.collectImages(context.Background())
 	if err != nil {
 		t.Fatalf("Images() error = %v, want nil", err)
 	}
@@ -66,8 +90,13 @@ func TestSystemImages(t *testing.T) {
 
 	querier.imagesErr = errors.New("daemon down")
 
-	if _, err := testSystem(t, querier).Images(context.Background()); err == nil {
+	if _, err := testSystem(t, querier).collectImages(context.Background()); err == nil {
 		t.Error("Images() error = nil, want daemon error")
+	}
+
+	cached, err := system.Images(context.Background())
+	if err != nil || len(cached) != 0 || !system.ImagesFreshness().Stale {
+		t.Fatalf("cold cache = (%+v, %v, %+v), want empty stale cache", cached, err, system.ImagesFreshness())
 	}
 }
 
@@ -116,6 +145,37 @@ func TestSystemSnapshot(t *testing.T) {
 
 	if got.OS == "" || got.Arch == "" {
 		t.Errorf("OS/Arch = %q/%q, want runtime values", got.OS, got.Arch)
+	}
+}
+
+func TestSystemCachedSnapshotNeverQueriesDocker(t *testing.T) {
+	t.Parallel()
+
+	querier := &countingDaemonQuerier{stubDaemonQuerier: stubDaemonQuerier{info: docker.DaemonInfo{
+		ServerVersion: "28.0",
+	}}}
+	system := testSystem(t, querier)
+
+	cold := system.CachedSnapshot()
+	if cold.Docker != nil || !cold.Freshness.Stale || cold.Freshness.Complete {
+		t.Fatalf("CachedSnapshot(cold) = %+v, want explicit incomplete startup state", cold)
+	}
+
+	if querier.calls() != 0 {
+		t.Fatalf("CachedSnapshot(cold) Docker calls = %d, want 0", querier.calls())
+	}
+
+	if err := system.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh() error = %v, want nil", err)
+	}
+
+	warm := system.CachedSnapshot()
+	if warm.Docker == nil || warm.Docker.ServerVersion != "28.0" || !warm.Freshness.Complete {
+		t.Fatalf("CachedSnapshot(warm) = %+v, want collected daemon snapshot", warm)
+	}
+
+	if querier.calls() != 1 {
+		t.Fatalf("CachedSnapshot(warm) Docker calls = %d, want heartbeat's one call", querier.calls())
 	}
 }
 

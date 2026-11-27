@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	nethttp "net/http"
+	"net/url"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
@@ -22,11 +23,16 @@ func (s *Server) handleSelfUpdate(w nethttp.ResponseWriter, r *nethttp.Request) 
 		return
 	}
 
-	writeJSON(w, s.logger, nethttp.StatusOK, s.selfUpdate.Check(r.Context()))
+	status := s.selfUpdate.Check
+	if r.URL.Query().Get("refresh") == "true" {
+		status = s.selfUpdate.CheckNow
+	}
+
+	writeJSON(w, s.logger, nethttp.StatusOK, status(r.Context()))
 }
 
 func (s *Server) handleStartSelfUpdate(w nethttp.ResponseWriter, r *nethttp.Request) {
-	if s.selfUpdate == nil || s.selfUpdate.Origin() == "" {
+	if s.selfUpdate == nil {
 		writeJSON(w, s.logger, nethttp.StatusServiceUnavailable, errorResponse{
 			Error: "Updates are not configured.", Code: "updates_unavailable",
 		})
@@ -34,7 +40,7 @@ func (s *Server) handleStartSelfUpdate(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 
-	if r.Header.Get("Origin") != s.selfUpdate.Origin() {
+	if !validSelfUpdateOrigin(r, s.selfUpdate.Origin()) {
 		writeJSON(w, s.logger, nethttp.StatusForbidden, errorResponse{
 			Error: "This request must come from the configured console origin.", Code: "forbidden",
 		})
@@ -89,4 +95,28 @@ func (s *Server) handleStartSelfUpdate(w nethttp.ResponseWriter, r *nethttp.Requ
 	}
 
 	writeJSON(w, s.logger, nethttp.StatusAccepted, s.selfUpdate.Check(r.Context()))
+}
+
+// Explicit origins remain authoritative. Standard installs use the browser's
+// same-origin headers and the request Host, never forwarded host headers.
+func validSelfUpdateOrigin(r *nethttp.Request, configured string) bool {
+	origin := r.Header.Get("Origin")
+	if configured != "" {
+		return origin == configured
+	}
+
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.Host != r.Host {
+		return false
+	}
+
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return false
+	}
+
+	if parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+
+	return nethttp.NewCrossOriginProtection().Check(r) == nil
 }

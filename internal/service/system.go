@@ -20,6 +20,8 @@ import (
 // goosLinux gates /proc readers: they only exist on Linux hosts.
 const goosLinux = "linux"
 
+const systemHeartbeatTimeout = 8 * time.Second
+
 // DaemonQuerier is the docker subset the System service needs.
 type DaemonQuerier interface {
 	Images(ctx context.Context) ([]docker.Image, error)
@@ -56,6 +58,18 @@ type System struct {
 
 	cpuMu   sync.Mutex
 	cpuLast *cpuSample
+
+	snapshotMu sync.RWMutex
+	snapshot   model.SystemSnapshot
+	maxAge     time.Duration
+
+	storageMu        sync.RWMutex
+	storageRefreshMu sync.Mutex
+	images           []model.ImageView
+	imagesFreshness  model.CollectionFreshness
+	storage          model.StorageUsage
+	storageMaxAge    time.Duration
+	imageRefresh     chan struct{}
 }
 
 // NewSystem builds a System.
@@ -64,18 +78,51 @@ func NewSystem(cfg SystemConfig) *System {
 	if hostRoot == "" {
 		hostRoot = "/"
 	}
-	return &System{
-		docker:    cfg.Docker,
-		version:   cfg.Version,
-		dbPath:    cfg.DBPath,
-		hostRoot:  hostRoot,
-		startedAt: cfg.StartedAt,
-		logger:    cfg.Logger,
+
+	system := &System{
+		docker:       cfg.Docker,
+		version:      cfg.Version,
+		dbPath:       cfg.DBPath,
+		hostRoot:     hostRoot,
+		startedAt:    cfg.StartedAt,
+		logger:       cfg.Logger,
+		imageRefresh: make(chan struct{}, 1),
 	}
+	system.snapshot = system.hostSnapshot()
+	system.snapshot.Freshness.Stale = true
+	system.images = []model.ImageView{}
+	system.storage.Entries = []model.StorageEntry{}
+	system.imagesFreshness = model.CollectionFreshness{Stale: true, LastErrorCategory: "not_collected"}
+	system.storage.Freshness = model.CollectionFreshness{Stale: true, LastErrorCategory: "not_collected"}
+
+	return system
 }
 
 // Images returns local daemon images, newest first.
-func (s *System) Images(ctx context.Context) ([]model.ImageView, error) {
+func (s *System) Images(context.Context) ([]model.ImageView, error) {
+	s.storageMu.RLock()
+	images := append([]model.ImageView{}, s.images...)
+	s.storageMu.RUnlock()
+
+	return images, nil
+}
+
+// ImagesFreshness describes whether the cached image inventory is current.
+func (s *System) ImagesFreshness() model.CollectionFreshness {
+	s.storageMu.RLock()
+	freshness := s.imagesFreshness
+	maxAge := s.storageMaxAge
+	s.storageMu.RUnlock()
+
+	if freshness.ObservedAt != nil && maxAge > 0 && time.Since(*freshness.ObservedAt) > maxAge {
+		freshness.Stale = true
+		freshness.LastErrorCategory = "stale"
+	}
+
+	return freshness
+}
+
+func (s *System) collectImages(ctx context.Context) ([]model.ImageView, error) {
 	images, err := s.docker.Images(ctx)
 	if err != nil {
 		return nil, err
@@ -105,6 +152,15 @@ func (s *System) PruneImages(ctx context.Context) (model.ImagePruneView, error) 
 	}
 
 	s.logger.Info("pruned dangling images", "deleted", report.Deleted, "reclaimed", report.ReclaimedBytes)
+	s.storageMu.Lock()
+	s.imagesFreshness.Stale = true
+	s.imagesFreshness.LastErrorCategory = "refresh_pending"
+	s.storageMu.Unlock()
+
+	select {
+	case s.imageRefresh <- struct{}{}:
+	default:
+	}
 
 	return model.ImagePruneView{
 		Deleted:        report.Deleted,
@@ -116,6 +172,106 @@ func (s *System) PruneImages(ctx context.Context) (model.ImagePruneView, error) 
 // the platform cannot provide stay null; a daemon failure degrades to
 // a null docker section instead of failing the whole snapshot.
 func (s *System) Snapshot(ctx context.Context) (model.SystemSnapshot, error) {
+	snapshot := s.hostSnapshot()
+
+	info, err := s.docker.DaemonInfo(ctx)
+	if err != nil {
+		s.logger.Warn("daemon info failed; snapshot degrades", "error", err)
+
+		return snapshot, nil
+	}
+
+	snapshot.Docker = daemonSnapshot(info)
+
+	return snapshot, nil
+}
+
+// CachedSnapshot returns the last background snapshot without Docker I/O.
+func (s *System) CachedSnapshot() model.SystemSnapshot {
+	s.snapshotMu.RLock()
+	snapshot := s.snapshot
+	maxAge := s.maxAge
+	s.snapshotMu.RUnlock()
+
+	if snapshot.Freshness.ObservedAt != nil && maxAge > 0 && time.Since(*snapshot.Freshness.ObservedAt) > maxAge {
+		snapshot.Freshness.Stale = true
+	}
+
+	return snapshot
+}
+
+// Run refreshes the system snapshot until ctx is cancelled. Docker failures
+// preserve the last known daemon section while host and self data advance.
+func (s *System) Run(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+
+	s.snapshotMu.Lock()
+	s.maxAge = 2 * interval
+	s.snapshotMu.Unlock()
+
+	_ = s.Refresh(ctx)
+
+	var storageLoop sync.WaitGroup
+
+	storageLoop.Go(func() { s.runStorageRefresh(ctx, interval) })
+	defer storageLoop.Wait()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = s.Refresh(ctx)
+		}
+	}
+}
+
+// Refresh collects one background system heartbeat.
+func (s *System) Refresh(ctx context.Context) error {
+	started := time.Now()
+	snapshot := s.hostSnapshot()
+
+	callCtx, cancel := context.WithTimeout(ctx, systemHeartbeatTimeout)
+	defer cancel()
+
+	info, err := s.docker.DaemonInfo(callCtx)
+	observedAt := time.Now().UTC()
+
+	snapshot.Freshness = model.CollectionFreshness{
+		ObservedAt: &observedAt, Complete: err == nil, Stale: err != nil,
+	}
+	if err != nil {
+		snapshot.Freshness.LastErrorCategory = "collection_failed"
+	}
+
+	s.snapshotMu.Lock()
+	if err == nil {
+		snapshot.Docker = daemonSnapshot(info)
+	} else {
+		snapshot.Docker = s.snapshot.Docker
+	}
+
+	s.snapshot = snapshot
+	s.snapshotMu.Unlock()
+
+	if err != nil {
+		s.logger.Warn("system heartbeat degraded",
+			"duration_ms", time.Since(started).Milliseconds(), "error", err)
+
+		return err
+	}
+
+	s.logger.Info("system heartbeat complete", "duration_ms", time.Since(started).Milliseconds())
+
+	return nil
+}
+
+func (s *System) hostSnapshot() model.SystemSnapshot {
 	hostname, err := os.Hostname()
 	if err != nil {
 		s.logger.Debug("hostname lookup failed; leaving blank", "error", err)
@@ -144,14 +300,11 @@ func (s *System) Snapshot(ctx context.Context) (model.SystemSnapshot, error) {
 		},
 	}
 
-	info, err := s.docker.DaemonInfo(ctx)
-	if err != nil {
-		s.logger.Warn("daemon info failed; snapshot degrades", "error", err)
+	return snapshot
+}
 
-		return snapshot, nil
-	}
-
-	snapshot.Docker = &model.DaemonSnapshot{
+func daemonSnapshot(info docker.DaemonInfo) *model.DaemonSnapshot {
+	return &model.DaemonSnapshot{
 		ServerVersion:   info.ServerVersion,
 		Architecture:    info.Architecture,
 		OperatingSystem: info.OperatingSystem,
@@ -162,8 +315,6 @@ func (s *System) Snapshot(ctx context.Context) (model.SystemSnapshot, error) {
 		ContainersStop:  info.ContainersStop,
 		ImageCount:      info.ImageCount,
 	}
-
-	return snapshot, nil
 }
 
 // databaseBytes sums the SQLite file plus WAL sidecars, if present.

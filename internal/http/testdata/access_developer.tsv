@@ -109,3 +109,7 @@ GET /api/storage/usage	reach	403	403
 GET /api/storage/buckets	403	403	403
 GET /api/storage/objects	403	403	403
 POST /api/storage/action	403	403	403
+POST /api/storage/connection/discover	403	403	403
+POST /api/storage/connection	403	403	403
+GET /api/storage/content	403	403	403
+PUT /api/storage/content	403	403	403

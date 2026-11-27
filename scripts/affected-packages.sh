@@ -62,8 +62,8 @@ changed_packages="$(printf '%s' "$changed_packages" | sort -u)"
 # meets a changed package.
 # shellcheck disable=SC2086 # one import path per line, split on purpose
 go list -e -test -deps -f '{{.ImportPath}} {{range .Deps}}{{.}} {{end}}' $all_packages 2>/dev/null \
-  | awk -v changed="$changed_packages" -v module="$module" '
-      BEGIN { n = split(changed, list, "\n"); for (i = 1; i <= n; i++) if (list[i] != "") want[list[i]] = 1 }
+  | TOUCHGRASS_CHANGED_PACKAGES="$changed_packages" awk -v module="$module" '
+      BEGIN { n = split(ENVIRON["TOUCHGRASS_CHANGED_PACKAGES"], list, "\n"); for (i = 1; i <= n; i++) if (list[i] != "") want[list[i]] = 1 }
       {
         pkg = $1
         sub(/ \[.*$/, "", pkg); sub(/\.test$/, "", pkg); sub(/_test$/, "", pkg)

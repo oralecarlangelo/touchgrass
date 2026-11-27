@@ -28,8 +28,8 @@ func TestHandleDockerImages(t *testing.T) {
 		t.Fatalf("decoding images: %v", err)
 	}
 
-	if len(got.Images) != 1 || got.Images[0].ID != "sha256:harness" {
-		t.Errorf("images = %+v, want the stubbed image", got.Images)
+	if len(got.Images) != 0 || !got.Freshness.Stale || got.Freshness.LastErrorCategory != "not_collected" {
+		t.Errorf("cold images response = %+v, want explicit stale empty cache", got)
 	}
 }
 

@@ -22,6 +22,7 @@ import PerformanceSummary, {
 import RouteTable from './performance/RouteTable.tsx';
 import {
   fetchCollectorStatuses,
+  fetchFleetContainers,
   fetchPerformancePostgres,
   fetchPerformanceRedis,
   fetchPerformanceRoutes,
@@ -29,6 +30,7 @@ import {
   fetchPerformanceTimeline,
   isUnauthorized,
   type CollectorStatusView,
+  type FleetContainer,
   type PerformanceFilters,
   type PerformanceRouteRow,
   type PerformanceSummaryView,
@@ -53,6 +55,7 @@ interface PerformanceData {
   postgres: PostgresPerformanceRow[] | null;
   redis: RedisPerformanceRow[] | null;
   collectors: CollectorStatusView[] | null;
+  fleetContainers: FleetContainer[] | null;
 }
 
 const emptyData: PerformanceData = {
@@ -62,6 +65,7 @@ const emptyData: PerformanceData = {
   postgres: null,
   redis: null,
   collectors: null,
+  fleetContainers: null,
 };
 
 function filtersFor(hours: number, serviceId: string): PerformanceFilters {
@@ -129,6 +133,7 @@ export default function PerformanceScreen({
         fetchPerformancePostgres(filters),
         fetchPerformanceRedis(filters),
         canFleet ? fetchCollectorStatuses() : Promise.resolve(null),
+        canFleet ? fetchFleetContainers() : Promise.resolve(null),
       ]);
 
       const unauthorized = results.some(
@@ -151,6 +156,8 @@ export default function PerformanceScreen({
         postgres: results[3].status === 'fulfilled' ? results[3].value : null,
         redis: results[4].status === 'fulfilled' ? results[4].value : null,
         collectors: results[5].status === 'fulfilled' ? results[5].value : null,
+        fleetContainers:
+          results[6].status === 'fulfilled' ? (results[6].value?.containers ?? null) : null,
       });
       setLoading(false);
       setRefreshing(false);
@@ -162,10 +169,21 @@ export default function PerformanceScreen({
     void load();
   }, [load]);
 
-  const failedCompletely = !loading && Object.values(data).every((value) => value === null);
+  const failedCompletely =
+    !loading &&
+    data.summary === null &&
+    data.timeline === null &&
+    data.routes === null &&
+    data.postgres === null &&
+    data.redis === null &&
+    data.collectors === null;
   const collectorWarnings = useMemo(
     () =>
-      (data.collectors ?? []).filter((collector) => collectorState(collector) !== 'healthy'),
+      (data.collectors ?? []).filter((collector) => {
+        const state = collectorState(collector);
+
+        return state === 'degraded' || state === 'stale';
+      }),
     [data.collectors],
   );
   const noSignals =
@@ -331,7 +349,14 @@ export default function PerformanceScreen({
         </Card>
       )}
 
-      {data.collectors !== null && <CollectorStatus collectors={data.collectors} />}
+      {data.collectors !== null && (
+        <CollectorStatus
+          collectors={data.collectors}
+          services={services}
+          serviceId={serviceId}
+          fleetContainers={data.fleetContainers ?? []}
+        />
+      )}
     </div>
   );
 }

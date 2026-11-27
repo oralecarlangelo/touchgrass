@@ -101,6 +101,7 @@ type backgroundLoops struct {
 	processSecurity     *service.ProcessScanner
 	diffSecurity        *service.DiffScanner
 	securityEvents      *service.SecurityEventCollector
+	system              *service.System
 }
 
 // startBackground runs sampler, watch, log, and backup loops until ctx
@@ -111,7 +112,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(11)
+	group.Add(13)
 
 	go func() {
 		defer group.Done()
@@ -123,6 +124,18 @@ func startBackground(
 		defer group.Done()
 
 		loops.inventory.Watch(ctx, loops.interval, loops.hub.Broadcast)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.inventory.RunHeartbeat(ctx, loops.metrics)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.system.Run(ctx, loops.metrics)
 	}()
 
 	go func() {
@@ -234,14 +247,20 @@ func newServeServer(
 		devProxy = http.DefaultDevProxy
 	}
 
-	objects, err := objectstore.Open(os.Getenv("TOUCHGRASS_OBJECT_STORAGE_FILE"))
+	objectStorePath := os.Getenv("TOUCHGRASS_OBJECT_STORAGE_FILE")
+	if objectStorePath == "" && cfg.DB != ":memory:" {
+		objectStorePath = cfg.DB + ".object-storage.json"
+	}
+
+	objects, err := openObjectStore(objectStorePath, os.Getenv("TOUCHGRASS_OBJECT_STORAGE_FILE") != "")
 	if err != nil {
 		return nil, fmt.Errorf("configuring object storage: %w", err)
 	}
 	return http.New(http.Config{
-		Objects: objects,
-		Addr:    cfg.Addr,
-		Version: version,
+		Objects:         objects,
+		ObjectStorePath: objectStorePath,
+		Addr:            cfg.Addr,
+		Version:         version,
 		SelfUpdate: service.NewSelfUpdate(
 			os.Getenv("TOUCHGRASS_UPDATE_HELPER"),
 			os.Getenv("TOUCHGRASS_UPDATE_STATUS_FILE"),
@@ -273,6 +292,15 @@ func newServeServer(
 		Docs:           docs,
 		DevProxy:       devProxy,
 	}), nil
+}
+
+func openObjectStore(path string, required bool) (*objectstore.Client, error) {
+	objects, err := objectstore.Open(path)
+	if err == nil || required || !errors.Is(err, os.ErrNotExist) {
+		return objects, err
+	}
+
+	return nil, nil
 }
 
 // runServe starts the HTTP server until it is signalled to stop.
@@ -407,6 +435,9 @@ func runServe(args []string) error {
 			Workers: cfg.SecurityWorkers, Logger: logger,
 		})
 	} else {
+		if err := service.MarkCollectorDisabled(ctx, store.NewCursorStore(db), "security_diff"); err != nil {
+			logger.Warn("recording disabled security diff collector", "error_category", "cursor_write_failed")
+		}
 		logger.Info("writable-layer security scan disabled", "config", "TOUCHGRASS_SECURITY_DIFF_INTERVAL")
 	}
 	runtimeEvents := service.NewContainerEventCollector(service.ContainerEventCollectorConfig{
@@ -435,6 +466,7 @@ func runServe(args []string) error {
 		processSecurity:     processSecurity,
 		diffSecurity:        diffSecurity,
 		securityEvents:      securityEvents,
+		system:              sys,
 	}, &group, logger)
 	group.Go(func() { securityService.RunSuppressionExpiry(ctx, time.Minute) })
 
@@ -590,6 +622,26 @@ func newPerformanceCollector(ctx context.Context, wiring serveWiring) (*service.
 	config := service.PerformanceCollectorConfig{
 		ServiceID: wiring.cfg.PerformanceServiceID, Environment: wiring.cfg.Env,
 		Interval: wiring.cfg.PerformanceInterval, Writer: performance, Logger: wiring.logger,
+	}
+
+	disabledSources := []string{}
+	if wiring.cfg.PerformanceServiceID == "" || wiring.cfg.NginxTimingLog == "" {
+		disabledSources = append(disabledSources, "nginx")
+	}
+
+	if wiring.cfg.PerformanceServiceID == "" || wiring.cfg.PostgresContainer == "" {
+		disabledSources = append(disabledSources, "postgres")
+	}
+
+	if wiring.cfg.PerformanceServiceID == "" || wiring.cfg.RedisContainer == "" {
+		disabledSources = append(disabledSources, "redis")
+	}
+
+	for _, source := range disabledSources {
+		if err := service.MarkCollectorDisabled(ctx, performance, source); err != nil {
+			wiring.logger.Warn("recording disabled performance collector",
+				"source", source, "error_category", "cursor_write_failed")
+		}
 	}
 	if wiring.cfg.PerformanceServiceID == "" {
 		return service.NewPerformanceCollector(config), nil

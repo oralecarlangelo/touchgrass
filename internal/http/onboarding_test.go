@@ -240,3 +240,22 @@ func TestHandleOnboardingSuggestErrors(t *testing.T) {
 		})
 	}
 }
+
+type unavailableDiscovery struct{ err error }
+
+func (s unavailableDiscovery) List(context.Context) ([]docker.Container, error) {
+	return nil, s.err
+}
+
+func TestOnboardingDiscoveryBusyIsRetryable(t *testing.T) {
+	t.Parallel()
+
+	for _, err := range []error{context.DeadlineExceeded, docker.ErrDaemonBackoff} {
+		server := onboardingTestServer(t, unavailableDiscovery{err: err}, stubProber{})
+
+		status, body := suggestResponse(t, server, "shop-web-1")
+		if status != nethttp.StatusServiceUnavailable || !strings.Contains(string(body), "discovery_unavailable") {
+			t.Fatalf("status = %d, body = %s", status, body)
+		}
+	}
+}

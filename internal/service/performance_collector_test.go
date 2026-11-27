@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
+	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
 type fakePostgresSource struct {
@@ -55,6 +56,7 @@ type fakePerformanceWriter struct {
 	failStatement    int
 	failRedisCommand int
 	failCursor       int
+	getCursorErr     error
 }
 
 func newFakePerformanceWriter() *fakePerformanceWriter {
@@ -125,9 +127,13 @@ func (f *fakePerformanceWriter) Get(_ context.Context, source string) (model.Col
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if f.getCursorErr != nil {
+		return model.CollectorCursor{}, f.getCursorErr
+	}
+
 	cursor, ok := f.cursors[source]
 	if !ok {
-		return model.CollectorCursor{}, errors.New("not found")
+		return model.CollectorCursor{}, store.ErrCollectorCursorNotFound
 	}
 
 	return cursor, nil
@@ -268,6 +274,63 @@ func TestPerformanceCollectorAcknowledgesHTTPOnlyAfterDurableWrites(t *testing.T
 
 	if len(source.acknowledgements) != 1 || source.acknowledgements[0].Offset != 42 {
 		t.Fatalf("acknowledgements after success = %+v", source.acknowledgements)
+	}
+}
+
+func TestPerformanceCollectorReportsOnlyNewHTTPDropsAsPartialCoverage(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 16, 3, 4, 0, 0, time.UTC)
+	source := &fakeHTTPSource{
+		cursor: model.CollectorCursor{
+			Source:         "nginx",
+			Identity:       "fixture",
+			Offset:         42,
+			LastRecordedAt: now,
+			DroppedRecords: 8,
+		},
+	}
+	writer := newFakePerformanceWriter()
+	writer.cursors["nginx"] = model.CollectorCursor{Source: "nginx", DroppedRecords: 7}
+	collector := NewPerformanceCollector(PerformanceCollectorConfig{
+		ServiceID: "generic-api", Environment: "prod", HTTP: source, Writer: writer,
+		Clock: &fakePerformanceClock{now: now, after: make(chan time.Time)}, Logger: slog.New(slog.DiscardHandler),
+	})
+
+	collector.collect(context.Background())
+
+	first := writer.cursors["nginx"]
+	if first.CoverageComplete || first.LastError != "nginx_records_dropped" {
+		t.Fatalf("status after a new drop = %+v, want partial coverage", first)
+	}
+
+	collector.collect(context.Background())
+
+	second := writer.cursors["nginx"]
+	if !second.CoverageComplete || second.LastError != "" || second.DroppedRecords != 8 {
+		t.Fatalf("status after a clean pass = %+v, want recovered coverage with drop history", second)
+	}
+}
+
+func TestPerformanceCollectorReportsCursorReadFailureAsPartialCoverage(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 16, 3, 4, 0, 0, time.UTC)
+	source := &fakeHTTPSource{cursor: model.CollectorCursor{
+		Source: "nginx", Identity: "fixture", Offset: 42, LastRecordedAt: now,
+	}}
+	writer := newFakePerformanceWriter()
+	writer.getCursorErr = errors.New("database unavailable")
+	collector := NewPerformanceCollector(PerformanceCollectorConfig{
+		ServiceID: "generic-api", Environment: "prod", HTTP: source, Writer: writer,
+		Clock: &fakePerformanceClock{now: now, after: make(chan time.Time)}, Logger: slog.New(slog.DiscardHandler),
+	})
+
+	collector.collect(context.Background())
+
+	got := writer.cursors["nginx"]
+	if got.CoverageComplete || got.LastError != "nginx_cursor_unavailable" {
+		t.Fatalf("status after cursor read failure = %+v, want partial coverage", got)
 	}
 }
 
@@ -426,6 +489,34 @@ func TestPerformanceCollectorBoundsDroppedRecords(t *testing.T) {
 	collector.collect(context.Background())
 	if got := writer.cursors["postgres"].DroppedRecords; got != maximumDroppedRecords {
 		t.Fatalf("dropped records = %d", got)
+	}
+}
+
+func TestMarkCollectorDisabledPreservesHistory(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 16, 3, 4, 0, 0, time.UTC)
+	writer := newFakePerformanceWriter()
+	writer.cursors["security_diff"] = model.CollectorCursor{
+		Source:                "security_diff",
+		LastSuccessAt:         now.Add(-time.Hour),
+		LastError:             "evaluation_failed",
+		DroppedRecords:        3,
+		CoverageComplete:      false,
+		EffectiveIntervalSecs: 1800,
+	}
+
+	if err := MarkCollectorDisabled(context.Background(), writer, "security_diff"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := writer.cursors["security_diff"]
+	if got.LastError != "disabled" || got.EffectiveIntervalSecs != 0 || got.CoverageComplete {
+		t.Fatalf("disabled status = %+v", got)
+	}
+
+	if !got.LastSuccessAt.Equal(now.Add(-time.Hour)) || got.DroppedRecords != 3 {
+		t.Fatalf("disabled status lost history = %+v", got)
 	}
 }
 

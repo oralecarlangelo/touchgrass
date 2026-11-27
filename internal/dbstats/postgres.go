@@ -46,6 +46,11 @@ var postgresMetricQueries = []postgresQuery{
 
 const postgresStatementsQuery = `/* touchgrass:statements */ SELECT queryid, calls, total_exec_time, rows, shared_blks_hit, shared_blks_read, temp_blks_read, temp_blks_written FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 50`
 
+const postgresStatementsSetupQuery = `/* touchgrass:statements_setup */ SELECT CASE
+	WHEN NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements') THEN 'extension_missing'
+	WHEN position('pg_stat_statements' in current_setting('shared_preload_libraries', true)) = 0 THEN 'preload_required'
+	ELSE 'unavailable' END`
+
 var postgresCumulative = map[string]bool{
 	"xact_commit": true, "xact_rollback": true, "blks_read": true, "blks_hit": true,
 	"temp_files": true, "temp_bytes": true, "deadlocks": true, "table_seq_scan": true,
@@ -99,7 +104,7 @@ func (p *Postgres) Collect(ctx context.Context) (model.PostgresSnapshot, error) 
 
 	output, err := p.query(ctx, postgresStatementsQuery)
 	if err != nil {
-		snapshot.Errors = append(snapshot.Errors, "postgres_statements_unavailable")
+		snapshot.Errors = append(snapshot.Errors, p.statementsErrorCategory(ctx))
 	} else {
 		statements, parseErr := parsePostgresStatements(string(output))
 		if parseErr != nil {
@@ -110,6 +115,22 @@ func (p *Postgres) Collect(ctx context.Context) (model.PostgresSnapshot, error) 
 	}
 
 	return snapshot, nil
+}
+
+func (p *Postgres) statementsErrorCategory(ctx context.Context) string {
+	output, err := p.query(ctx, postgresStatementsSetupQuery)
+	if err != nil {
+		return "postgres_statements_unavailable"
+	}
+
+	switch strings.TrimSpace(string(output)) {
+	case "extension_missing":
+		return "postgres_statements_extension_missing"
+	case "preload_required":
+		return "postgres_statements_preload_required"
+	default:
+		return "postgres_statements_unavailable"
+	}
 }
 
 func (p *Postgres) query(ctx context.Context, query string) ([]byte, error) {

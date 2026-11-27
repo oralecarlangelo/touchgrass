@@ -63,6 +63,7 @@ func TestPostgresOptionalViewsDegradeIndependently(t *testing.T) {
 		"statements": {err: errors.New(
 			"relation pg_stat_statements does not exist; SELECT password FROM users",
 		)},
+		"statements_setup": {output: "extension_missing\n"},
 	}}
 	snapshot, err := NewPostgres(PostgresConfig{
 		Runner: runner, Container: "postgres-prod", User: "postgres", Database: "ticketnation",
@@ -70,7 +71,8 @@ func TestPostgresOptionalViewsDegradeIndependently(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(snapshot.Errors, []string{"postgres_wal_unavailable", "postgres_statements_unavailable"}) {
+
+	if !reflect.DeepEqual(snapshot.Errors, []string{"postgres_wal_unavailable", "postgres_statements_extension_missing"}) {
 		t.Fatalf("errors = %v", snapshot.Errors)
 	}
 	for _, category := range snapshot.Errors {

@@ -50,3 +50,31 @@ func TestSelfUpdateRequiresAdminAndConfiguredOrigin(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfUpdateOriginWithoutManualConfiguration(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name, origin, site string
+		want               bool
+	}{
+		{name: "same host", origin: "https://console.example.com", want: true},
+		{name: "cross host", origin: "https://attacker.example.com"},
+		{name: "missing"},
+		{name: "opaque", origin: "null"},
+		{name: "userinfo", origin: "https://attacker@console.example.com"},
+		{name: "path", origin: "https://console.example.com/path"},
+		{name: "cross site", origin: "https://console.example.com", site: "cross-site"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			r := httptest.NewRequestWithContext(t.Context(), nethttp.MethodPost, "https://console.example.com/api/self-update", nil)
+			r.Header.Set("Origin", tt.origin)
+			r.Header.Set("Sec-Fetch-Site", tt.site)
+
+			if got := validSelfUpdateOrigin(r, ""); got != tt.want {
+				t.Fatalf("validSelfUpdateOrigin = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}

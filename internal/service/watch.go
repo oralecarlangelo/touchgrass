@@ -29,6 +29,39 @@ func (in *Inventory) Watch(ctx context.Context, interval time.Duration, emit fun
 	}
 }
 
+// RunHeartbeat refreshes request-facing service state independently from the
+// fast nginx flip watcher.
+func (in *Inventory) RunHeartbeat(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+
+	in.snapshotMu.Lock()
+	in.snapshot.maxAge = 2 * interval
+	in.snapshotMu.Unlock()
+
+	in.refreshWithin(ctx, interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			in.refreshWithin(ctx, interval)
+		}
+	}
+}
+
+func (in *Inventory) refreshWithin(ctx context.Context, timeout time.Duration) {
+	refreshCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	_ = in.Refresh(refreshCtx)
+}
+
 // pollTargets reads live targets and emits changes (nil emit sets baseline).
 func (in *Inventory) pollTargets(
 	ctx context.Context,

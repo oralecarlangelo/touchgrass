@@ -239,6 +239,17 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 
 	envService := newTestEnvService(t, db, services, audit, hub, opts)
 
+	system := service.NewSystem(service.SystemConfig{
+		Docker:    stubStatsLister{},
+		Version:   "stub-version",
+		DBPath:    t.TempDir() + "/missing.db",
+		StartedAt: time.Now(),
+		Logger:    logger,
+	})
+	if err := system.Refresh(t.Context()); err != nil {
+		t.Fatalf("refreshing system snapshot: %v", err)
+	}
+
 	server := New(Config{
 		Addr:      testDatabaseAddr,
 		Version:   testVersion,
@@ -289,13 +300,7 @@ func fullTestServerWith(t *testing.T, opts testServerOptions) (*Server, *store.D
 			Keys:     store.NewKeyStore(db),
 			SDKLogs:  store.NewSDKLogStore(db),
 		}),
-		System: service.NewSystem(service.SystemConfig{
-			Docker:    stubStatsLister{},
-			Version:   "stub-version",
-			DBPath:    t.TempDir() + "/missing.db",
-			StartedAt: time.Now(),
-			Logger:    logger,
-		}),
+		System:         system,
 		Performance:    performance,
 		FleetInventory: fleetInventory,
 		Env:            envService,

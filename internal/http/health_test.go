@@ -171,3 +171,26 @@ func TestHealthReportsReadiness(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthReportsClassBudget(t *testing.T) {
+	t.Parallel()
+
+	reporter := stubMaintenance{status: model.MaintenanceStatus{
+		LastSuccessAt: time.Now().UTC(),
+		LastResult: model.MaintenanceResult{
+			DatabaseBytes:     2_058_502_144,
+			MaxBytes:          4_294_967_296,
+			OverBudget:        true,
+			OverBudgetClasses: []string{"logs"},
+		},
+	}}
+	_, payload := getHealth(t, healthServer(reporter))
+
+	if len(payload.Checks) != 1 {
+		t.Fatalf("checks = %v, want exactly one", payload.Checks)
+	}
+
+	if detail := payload.Checks[0].Detail; detail != "storage classes over budget: logs" {
+		t.Errorf("check detail = %q, want storage class detail", detail)
+	}
+}

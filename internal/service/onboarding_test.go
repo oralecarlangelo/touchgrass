@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
+	"github.com/oralecarlangelo/touchgrass/internal/probe"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
@@ -1013,4 +1015,105 @@ func TestOnboardingDelete(t *testing.T) {
 			t.Errorf("Delete() error = %v, want ErrInvalidInput", err)
 		}
 	})
+}
+
+// Deadline-aware fixtures ensure discovery cannot outlive the HTTP response budget.
+type deadlineOnboardingLister struct {
+	t          *testing.T
+	containers []docker.Container
+}
+
+func (s deadlineOnboardingLister) List(ctx context.Context) ([]docker.Container, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > 2*time.Second {
+		s.t.Error("mandatory discovery must have a two-second total budget")
+	}
+
+	return s.containers, nil
+}
+
+type deadlineOnboardingProber struct {
+	t        *testing.T
+	deadline time.Time
+	calls    int
+}
+
+func (p *deadlineOnboardingProber) Check(ctx context.Context, _ string) (probe.Result, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > 3*time.Second {
+		p.t.Error("health discovery must have a three-second budget")
+	}
+
+	if !p.deadline.IsZero() && !deadline.Equal(p.deadline) {
+		p.t.Error("each probe renewed the shared discovery budget")
+	}
+
+	p.deadline = deadline
+	p.calls++
+
+	return probe.Result{StatusCode: 200}, nil
+}
+
+func TestSuggestionSharesProbeBudgetAndReusesColorResult(t *testing.T) {
+	t.Parallel()
+	db := openInventoryDB(t)
+	containers := []docker.Container{
+		suggestContainer("docs-blue-1", composeLabels("docs", "web-blue", "/srv/docs"), docker.PublishedPort{HostPort: 8081}),
+		suggestContainer("docs-green-1", composeLabels("docs", "web-green", "/srv/docs"), docker.PublishedPort{HostPort: 8082}),
+	}
+	prober := &deadlineOnboardingProber{t: t}
+	readDir, readFile := stubNginx(nil, nil)
+	onboarding := NewOnboarding(OnboardingConfig{
+		Services: store.NewServiceStore(db),
+		Docker:   deadlineOnboardingLister{t: t, containers: containers},
+		Prober:   prober, ReadDir: readDir, ReadFile: readFile,
+	})
+
+	draft, err := onboarding.Suggest(t.Context(), "docs-blue-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if prober.calls != 2 {
+		t.Fatalf("probes = %d, want one per color", prober.calls)
+	}
+
+	if draft.HealthURL != draft.BlueURL || draft.HealthURL == "" {
+		t.Fatalf("selected health URL = %q", draft.HealthURL)
+	}
+}
+
+type waitingOnboardingProber struct{}
+
+func (waitingOnboardingProber) Check(ctx context.Context, _ string) (probe.Result, error) {
+	<-ctx.Done()
+	return probe.Result{}, ctx.Err()
+}
+
+func TestSlowHealthDiscoveryReturnsPartialDraft(t *testing.T) {
+	t.Parallel()
+	db := openInventoryDB(t)
+	containers := []docker.Container{
+		suggestContainer("docs-blue-1", composeLabels("docs", "web-blue", "/srv/docs"), docker.PublishedPort{HostPort: 8081}),
+		suggestContainer("docs-green-1", composeLabels("docs", "web-green", "/srv/docs"), docker.PublishedPort{HostPort: 8082}),
+	}
+	readDir, readFile := stubNginx(nil, nil)
+	onboarding := NewOnboarding(OnboardingConfig{
+		Services: store.NewServiceStore(db), Docker: stubLister{containers: containers},
+		Prober: waitingOnboardingProber{}, ReadDir: readDir, ReadFile: readFile,
+	})
+	started := time.Now()
+
+	draft, err := onboarding.Suggest(t.Context(), "docs-blue-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if time.Since(started) > 5*time.Second {
+		t.Fatal("optional health probes exceeded the aggregate budget")
+	}
+
+	if draft.ServiceID != "docs" || draft.HealthURL != "" || !strings.Contains(strings.Join(draft.Warnings, " "), "timed out") {
+		t.Fatalf("expected useful partial draft with timeout warning: %+v", draft)
+	}
 }

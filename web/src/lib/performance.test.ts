@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  collectorGuidance,
   collectorLastSuccessAt,
+  collectorSetupSnippet,
   collectorState,
   formatPercentile,
   mergeTimelineSeries,
@@ -175,6 +177,16 @@ describe('collectorState', () => {
     ).toBe('degraded');
     expect(
       collectorState({
+        source: 'security_diff',
+        last_success_at: '2026-10-16T02:00:00Z',
+        last_error: 'disabled',
+        dropped_records: 0,
+        coverage_complete: false,
+        stale: true,
+      }),
+    ).toBe('not-configured');
+    expect(
+      collectorState({
         source: 'docker_events',
         last_success_at: '2026-10-16T02:00:00Z',
         dropped_records: 0,
@@ -208,6 +220,83 @@ describe('collectorState', () => {
       coverage_complete: true,
       stale: false,
     })).toBe('2026-10-16T02:00:00.000Z');
+  });
+
+  it('treats cumulative drops as history after complete recovery', () => {
+    expect(
+      collectorState({
+        source: 'nginx',
+        last_success_at: '2026-10-16T02:00:00Z',
+        dropped_records: 6770,
+        coverage_complete: true,
+        stale: false,
+      }),
+    ).toBe('healthy');
+  });
+
+  it('explains optional postgres and disabled diff coverage', () => {
+    expect(
+      collectorGuidance({
+        source: 'postgres',
+        last_success_at: '2026-10-16T02:00:00Z',
+        last_error: 'postgres_statements_unavailable',
+        dropped_records: 0,
+        coverage_complete: false,
+        stale: false,
+      }),
+    ).toContain('pg_stat_statements');
+    expect(
+      collectorGuidance({
+        source: 'security_diff',
+        last_success_at: '2026-10-15T02:00:00Z',
+        last_error: 'evaluation_failed',
+        dropped_records: 0,
+        coverage_complete: false,
+        stale: true,
+      }),
+    ).toContain('TOUCHGRASS_SECURITY_DIFF_INTERVAL');
+    expect(
+      collectorGuidance({
+        source: 'redis',
+        dropped_records: 0,
+        coverage_complete: false,
+        stale: true,
+      }),
+    ).toContain('TOUCHGRASS_REDIS_CONTAINER');
+  });
+
+  it('builds one setup snippet from discovered generic containers', () => {
+    expect(
+      collectorSetupSnippet(
+        [
+          { source: 'postgres', last_error: 'disabled', dropped_records: 0, coverage_complete: false, stale: true },
+          { source: 'redis', last_error: 'disabled', dropped_records: 0, coverage_complete: false, stale: true },
+        ],
+        [
+          {
+            id: 'api', name: 'Generic API', strategy: 'compose', live_color: '', health: 'healthy', colors: [],
+            containers: [],
+          },
+        ],
+        'api',
+        [
+          {
+            id: '1', name: 'postgres-db-1', project: 'infra', managed: false, state: 'running',
+            classification: 'unknown', current: true, present: true, health: 'healthy', cpu_percent: null,
+            mem_bytes: null, mem_limit: null, restarts: null, risk_counts: { critical: 0, high: 0, medium: 0, low: 0 },
+          },
+          {
+            id: '2', name: 'redis-cache-1', project: 'infra', managed: false, state: 'running',
+            classification: 'unknown', current: true, present: true, health: 'healthy', cpu_percent: null,
+            mem_bytes: null, mem_limit: null, restarts: null, risk_counts: { critical: 0, high: 0, medium: 0, low: 0 },
+          },
+        ],
+      ),
+    ).toBe(
+      'TOUCHGRASS_PERFORMANCE_SERVICE_ID="api"\n' +
+        'TOUCHGRASS_POSTGRES_CONTAINER="postgres-db-1"\n' +
+        'TOUCHGRASS_REDIS_CONTAINER="redis-cache-1"',
+    );
   });
 });
 

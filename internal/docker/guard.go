@@ -150,11 +150,6 @@ func guardedCall[T any](
 ) (T, error) {
 	var zero T
 
-	done, err := guard.acquire(ctx)
-	if err != nil {
-		return zero, err
-	}
-
 	callCtx := ctx
 
 	cancel := func() {}
@@ -162,6 +157,12 @@ func guardedCall[T any](
 		callCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
+
+	// Queueing is part of the operation budget, not extra unbounded time.
+	done, err := guard.acquire(callCtx)
+	if err != nil {
+		return zero, err
+	}
 
 	value, callErr := call(callCtx)
 	done(callErr)

@@ -27,8 +27,9 @@ const (
 	defaultNginxSitesDir = "/etc/nginx/sites-enabled"
 	// blueGreenMarker is the default active-target marker line.
 	blueGreenMarker = "# BLUEGREEN-ACTIVE"
-	// suggestProbeTimeout bounds one onboarding health probe.
-	suggestProbeTimeout = 3 * time.Second
+	// suggestProbeTimeout bounds all optional health checks in one suggestion.
+	suggestProbeTimeout     = 3 * time.Second
+	suggestDiscoveryTimeout = 2 * time.Second
 	// recreateDeployScript is the default recreate deploy script name.
 	recreateDeployScript = "recreate-deploy.sh"
 	// recreateRollbackScript is the default recreate rollback script name.
@@ -113,7 +114,10 @@ func (o *Onboarding) Suggest(ctx context.Context, name string) (model.ServiceSug
 		return model.ServiceSuggestion{}, fmt.Errorf("%w: container query is required", ErrInvalidInput)
 	}
 
-	containers, err := o.docker.List(ctx)
+	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, suggestDiscoveryTimeout)
+	containers, err := o.docker.List(discoveryCtx)
+
+	cancelDiscovery()
 	if err != nil {
 		return model.ServiceSuggestion{}, fmt.Errorf("listing containers: %w", err)
 	}
@@ -154,10 +158,22 @@ func (o *Onboarding) Suggest(ctx context.Context, name string) (model.ServiceSug
 		draft.Reasons = append(draft.Reasons, "service id "+strconv.Quote(id)+" is available")
 	}
 
+	// Optional health checks share one budget, regardless of the number of
+	// ports/colors. A slow application must not prevent reviewing the draft.
+	probeCtx, cancelProbes := context.WithTimeout(ctx, suggestProbeTimeout)
+	defer cancelProbes()
 	if base, paired := colorPair(containers, project, svc); paired {
-		o.draftBlueGreen(ctx, &draft, containers, project, base)
+		o.draftBlueGreen(probeCtx, &draft, containers, project, base)
 	} else {
-		o.draftRecreate(ctx, &draft, found)
+		o.draftRecreate(probeCtx, &draft, found)
+	}
+
+	if probeCtx.Err() != nil && ctx.Err() == nil {
+		draft.Warnings = append(draft.Warnings, "health discovery timed out; review the unverified health fields")
+	}
+
+	if err := ctx.Err(); err != nil {
+		return model.ServiceSuggestion{}, fmt.Errorf("suggesting service: %w", err)
 	}
 
 	draft.Confidence = confidence(draft, project, svc, found.Labels[docker.LabelComposeWorkingDir])
@@ -213,9 +229,15 @@ func (o *Onboarding) draftBlueGreen(
 	bluePort, hasBlue := o.draftColorTarget(ctx, draft, blue, true)
 	greenPort, hasGreen := o.draftColorTarget(ctx, draft, green, false)
 
-	if healthURL, _, ok := o.probeContainer(ctx, findContainerOr(containers, draft.Container)); ok {
-		draft.HealthURL = healthURL
-		draft.Reasons = append(draft.Reasons, fmt.Sprintf("probed %s (2xx)", healthURL))
+	switch draft.Container {
+	case blue.Name:
+		draft.HealthURL = draft.BlueURL
+	case green.Name:
+		draft.HealthURL = draft.GreenURL
+	default:
+		if healthURL, _, ok := o.probeContainer(ctx, findContainerOr(containers, draft.Container)); ok {
+			draft.HealthURL = healthURL
+		}
 	}
 
 	var ports []uint16
@@ -326,6 +348,9 @@ func (o *Onboarding) probeContainer(ctx context.Context, found docker.Container)
 	base := "http://" + net.JoinHostPort(dialHost(lowestHostIP(found, port)), strconv.Itoa(int(port)))
 
 	for _, path := range []string{probePathRoot, probePathHealth} {
+		if ctx.Err() != nil {
+			break
+		}
 		target := base + path
 
 		attempt, cancel := context.WithTimeout(ctx, suggestProbeTimeout)

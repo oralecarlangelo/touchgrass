@@ -294,11 +294,13 @@ func (p *Performance) Timeline(ctx context.Context, query model.PerformanceQuery
 		}
 		item.resources++
 	}
-	events, err := p.store.ListContainerEvents(ctx, performanceRange(query, 1000))
+
+	events, err := p.store.ListContainerEvents(ctx, performanceRange(query, query.Limit))
 	if err != nil {
 		return PerformanceTimeline{}, fmt.Errorf("loading runtime events: %w", err)
 	}
-	deployments, err := p.deploys.ListRange(ctx, performanceRange(query, 1000))
+
+	deployments, err := p.deploys.ListRange(ctx, performanceRange(query, query.Limit))
 	if err != nil {
 		return PerformanceTimeline{}, fmt.Errorf("loading deployments: %w", err)
 	}

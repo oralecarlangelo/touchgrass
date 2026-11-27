@@ -406,8 +406,8 @@ func TestRouteTableIsConsistent(t *testing.T) {
 		}
 	}
 
-	if len(seen) != 99 {
-		t.Errorf("route table has %d routes, want 99 (including four storage routes)", len(seen))
+	if len(seen) != 103 {
+		t.Errorf("route table has %d routes, want 103 (including eight storage routes)", len(seen))
 	}
 }
 
@@ -562,6 +562,10 @@ func TestAllServicesAccountsMatchTheLegacyGate(t *testing.T) {
 		"GET /api/storage/buckets",
 		"GET /api/storage/objects",
 		"POST /api/storage/action",
+		"POST /api/storage/connection/discover",
+		"POST /api/storage/connection",
+		"GET /api/storage/content",
+		"PUT /api/storage/content",
 	)
 
 	for _, name := range adminOnly {

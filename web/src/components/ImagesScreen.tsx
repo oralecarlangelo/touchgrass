@@ -26,6 +26,7 @@ import StoragePanel from './StoragePanel';
 import HeartbeatStatus from './HeartbeatStatus.tsx';
 import ScreenErrorBoundary from './ScreenErrorBoundary.tsx';
 import { snapshotHeartbeat } from '@/lib/heartbeat.ts';
+import { LatestRequest } from '@/lib/latest-request.ts';
 import {
   fetchImages,
   isUnauthorized,
@@ -50,20 +51,19 @@ export default function ImagesScreen({
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pruning, setPruning] = useState(false);
- const [revision, setRevision] = useState(0);
-  const loadSequence = useRef(0);
+  const [revision, setRevision] = useState(0);
+  const request = useRef(new LatestRequest<void>()).current;
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    const sequence = ++loadSequence.current;
+  const load = useCallback(() => request.run(async (signal) => {
     setError(null);
 
     try {
       const result = await fetchImages(signal);
-      if (signal?.aborted || sequence !== loadSequence.current) return;
+      if (signal.aborted) return;
       setImages(result.images);
       setFreshness(result.freshness);
     } catch (err) {
-      if (signal?.aborted || sequence !== loadSequence.current) return;
+      if (signal.aborted) return;
       if (isUnauthorized(err)) {
         onUnauthorized();
         return;
@@ -71,25 +71,19 @@ export default function ImagesScreen({
 
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [onUnauthorized]);
+  }), [onUnauthorized, request]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    let running = false;
-    const refresh = async () => {
-      if (running || document.hidden) return;
-      running = true;
-      try { await load(controller.signal); } finally { running = false; }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    const refresh = () => { if (!document.hidden) void load(); };
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
     document.addEventListener('visibilitychange', refresh);
     return () => {
-      controller.abort();
+      request.cancel();
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [load]);
+  }, [load, request]);
 
   async function handlePrune(): Promise<void> {
     setPruning(true);
@@ -101,6 +95,7 @@ export default function ImagesScreen({
       );
       setConfirmOpen(false);
       setRevision(value => value + 1);
+      request.cancel();
       await load();
     } catch (err) {
       if (isUnauthorized(err)) {
@@ -117,6 +112,7 @@ export default function ImagesScreen({
   const totalBytes = (images ?? []).reduce((sum, image) => sum + image.size_bytes, 0);
   const dangling = (images ?? []).filter((image) => image.dangling && image.containers === 0);
   const reclaimableBytes = dangling.reduce((sum, image) => sum + image.size_bytes, 0);
+  const hasSample = freshness?.observed_at != null;
 
   return (
     <div className="space-y-4">
@@ -161,7 +157,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <p className="text-2xl font-semibold">{images.length}</p>
+              <p className="text-2xl font-semibold">{hasSample ? images.length : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -173,7 +169,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <p className="text-2xl font-semibold">{formatBytes(totalBytes)}</p>
+              <p className="text-2xl font-semibold">{hasSample ? formatBytes(totalBytes) : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -185,7 +181,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <p className="text-2xl font-semibold">{dangling.length}</p>
+              <p className="text-2xl font-semibold">{hasSample ? dangling.length : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -197,7 +193,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <p className="text-2xl font-semibold">{formatBytes(reclaimableBytes)}</p>
+              <p className="text-2xl font-semibold">{hasSample ? formatBytes(reclaimableBytes) : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -212,7 +208,7 @@ export default function ImagesScreen({
             </div>
           ) : images.length === 0 ? (
             <p className="text-muted-foreground py-6 text-center text-sm">
-              No images reported by the daemon.
+              {hasSample ? 'No images reported by the daemon.' : 'No image inventory has been collected yet.'}
             </p>
           ) : (
             <Table>

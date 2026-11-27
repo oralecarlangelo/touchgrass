@@ -291,6 +291,9 @@ workflows for investigation.
   last-enabled-admin guard rejects orphaning demotes, disables,
   and deletes. Binds localhost by default; public listen requires
   explicit config.
+  Failed logins are limited by client IP. A loopback reverse proxy may
+  pass that IP in `X-Real-IP`; the proxy must overwrite any caller-supplied
+  value. Requests from non-loopback peers never trust the header.
 - Ingestion: per-project API keys (`tg_<random>`), revocable, stored hashed.
 
 ## Config (12-factor)

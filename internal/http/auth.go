@@ -302,11 +302,18 @@ func isPublic(path string) bool {
 		path == "/api/ingest" || path == "/api/ingest/logs"
 }
 
-// clientIP returns the peer host without trusting proxy headers.
+// clientIP trusts the address supplied by a loopback reverse proxy. A public
+// peer cannot choose its rate-limit bucket with a forwarded header.
 func clientIP(r *nethttp.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
+	}
+
+	if peer := net.ParseIP(host); peer != nil && peer.IsLoopback() {
+		if client := net.ParseIP(r.Header.Get("X-Real-IP")); client != nil {
+			return client.String()
+		}
 	}
 
 	return host

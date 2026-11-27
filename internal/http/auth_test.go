@@ -14,6 +14,8 @@ import (
 	"github.com/oralecarlangelo/touchgrass/internal/store"
 )
 
+const loopbackProxyAddr = "127.0.0.1:1234"
+
 func TestLoginVerifiesManagedUsers(t *testing.T) {
 	t.Parallel()
 
@@ -396,6 +398,89 @@ func TestLoginRateLimited(t *testing.T) {
 
 	if status := login("test-password"); status != nethttp.StatusTooManyRequests {
 		t.Errorf("correct password while limited status = %d, want 429", status)
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		forwarded  string
+		want       string
+	}{
+		{
+			name: "loopback proxy", remoteAddr: loopbackProxyAddr,
+			forwarded: "203.0.113.10", want: "203.0.113.10",
+		},
+		{
+			name: "ipv6 loopback proxy", remoteAddr: "[::1]:1234",
+			forwarded: "2001:db8::1", want: "2001:db8::1",
+		},
+		{
+			name: "public peer ignores header", remoteAddr: "198.51.100.2:1234",
+			forwarded: "203.0.113.10", want: "198.51.100.2",
+		},
+		{
+			name: "invalid forwarded address", remoteAddr: loopbackProxyAddr,
+			forwarded: "203.0.113.10, 198.51.100.2", want: "127.0.0.1",
+		},
+		{name: "no forwarded address", remoteAddr: loopbackProxyAddr, want: "127.0.0.1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequestWithContext(t.Context(), nethttp.MethodPost, "/api/auth/login", nil)
+			req.RemoteAddr = tt.remoteAddr
+			req.Header.Set("X-Real-IP", tt.forwarded)
+
+			if got := clientIP(req); got != tt.want {
+				t.Errorf("clientIP() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoginRateLimitsProxiedClientsSeparately(t *testing.T) {
+	t.Parallel()
+
+	server, _ := fullTestServer(t)
+	login := func(client, password string) int {
+		req := httptest.NewRequestWithContext(
+			t.Context(),
+			nethttp.MethodPost,
+			"/api/auth/login",
+			strings.NewReader(`{"password":"`+password+`"}`),
+		)
+		req.RemoteAddr = loopbackProxyAddr
+		req.Header.Set("X-Real-IP", client)
+
+		rec := httptest.NewRecorder()
+		server.handler.ServeHTTP(rec, req)
+
+		res := rec.Result()
+		if err := res.Body.Close(); err != nil {
+			t.Fatalf("closing body: %v", err)
+		}
+
+		return res.StatusCode
+	}
+
+	for i := range 5 {
+		if status := login("203.0.113.10", "wrong"); status != nethttp.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want 401", i+1, status)
+		}
+	}
+
+	if status := login("203.0.113.10", "test-password"); status != nethttp.StatusTooManyRequests {
+		t.Errorf("limited client status = %d, want 429", status)
+	}
+
+	if status := login("203.0.113.11", "test-password"); status != nethttp.StatusNoContent {
+		t.Errorf("different client status = %d, want 204", status)
 	}
 }
 

@@ -205,48 +205,47 @@ export default function KeysScreen({
                       <TableHead className="hidden text-right sm:table-cell">Sample rate</TableHead>
                       <TableHead className="hidden lg:table-cell">Created</TableHead>
                       <TableHead>Last used</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead className="hidden sm:table-cell">Status</TableHead>
                       {isAdmin && <TableHead className="text-right">Action</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {keys.map((key) => (
-                      <TableRow key={key.id}>
-                        <TableCell className="font-mono text-xs">
-                          {key.key_prefix}…
-                          <span className="text-muted-foreground block sm:hidden">Sample {key.sample_rate}</span>
-                        </TableCell>
-                        <TableCell className="hidden text-right font-mono sm:table-cell">{key.sample_rate}</TableCell>
-                        <TableCell className="text-muted-foreground hidden text-xs lg:table-cell">
-                          {formatTime(key.created_at)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
-                          {key.last_used_at ? <time dateTime={key.last_used_at} title={formatTime(key.last_used_at)}>{timeAgo(key.last_used_at)}</time> : 'No use recorded'}
-                        </TableCell>
-                        <TableCell>
-                          {key.revoked_at === null ? (
-                            <Badge variant="default">active</Badge>
-                          ) : (
-                            <Badge variant="secondary">revoked</Badge>
-                          )}
-                        </TableCell>
-                        {isAdmin && (
-                          <TableCell className="text-right">
-                            {key.revoked_at === null && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive hover:text-destructive"
-                                onClick={() => setPendingRevoke(key)}
-                                aria-label={`Revoke key ${key.key_prefix}`}
-                              >
-                                Revoke
-                              </Button>
-                            )}
+                    {keys.map((key) => {
+                      const revoked = key.revoked_at !== null;
+                      const status = <Badge variant={revoked ? 'secondary' : 'default'}>{revoked ? 'revoked' : 'active'}</Badge>;
+                      return (
+                        <TableRow key={key.id}>
+                          <TableCell className="font-mono text-xs">
+                            {key.key_prefix}…
+                            <span className="text-muted-foreground block sm:hidden">Sample {key.sample_rate}</span>
+                            <span className="mt-1 block font-sans sm:hidden">{status}</span>
                           </TableCell>
-                        )}
-                      </TableRow>
-                    ))}
+                          <TableCell className="hidden text-right font-mono sm:table-cell">{key.sample_rate}</TableCell>
+                          <TableCell className="text-muted-foreground hidden text-xs lg:table-cell">
+                            {formatTime(key.created_at)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-xs whitespace-normal">
+                            {key.last_used_at ? <time dateTime={key.last_used_at} title={formatTime(key.last_used_at)}>{timeAgo(key.last_used_at)}</time> : 'No use recorded'}
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell">{status}</TableCell>
+                          {isAdmin && (
+                            <TableCell className="text-right">
+                              {!revoked && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => setPendingRevoke(key)}
+                                  aria-label={`Revoke key ${key.key_prefix}`}
+                                >
+                                  Revoke
+                                </Button>
+                              )}
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               )}

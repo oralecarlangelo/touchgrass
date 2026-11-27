@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	nethttp "net/http"
 
@@ -88,6 +89,41 @@ func TestHandleAuditUnfiltered(t *testing.T) {
 	}
 }
 
+func TestHandleAuditFiltersWindowBeforeLimit(t *testing.T) {
+	t.Parallel()
+
+	server, db := fullTestServer(t)
+	audits := store.NewAuditStore(db)
+	before := time.Date(2026, 5, 2, 15, 0, 0, 0, time.UTC)
+	serviceID := testServiceAPI
+
+	for _, ts := range []time.Time{before.Add(-time.Minute), before, before.Add(time.Minute)} {
+		_, err := audits.Insert(t.Context(), model.Audit{
+			ServiceID: &serviceID, Actor: "example-operator", Action: model.AuditDeploy,
+			Result: model.AuditSuccess, CreatedAt: ts,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	target := "/api/audit?service_id=" + serviceID + "&start=2026-05-02T14:00:00Z&end=2026-05-02T15:00:00Z&limit=1"
+
+	status, body := doRequest(t, server, nethttp.MethodGet, target, "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
+	}
+
+	var got auditResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got.Audit) != 1 || !got.Audit[0].CreatedAt.Equal(before.Add(-time.Minute)) {
+		t.Fatalf("audit = %s, want the single entry inside the selected window", body)
+	}
+}
+
 func TestHandleAuditErrors(t *testing.T) {
 	t.Parallel()
 
@@ -100,6 +136,8 @@ func TestHandleAuditErrors(t *testing.T) {
 	}{
 		{name: testUnknownService, target: "/api/audit?service_id=nope", status: nethttp.StatusNotFound},
 		{name: "bad limit", target: "/api/audit?limit=huge", status: nethttp.StatusBadRequest},
+		{name: "bad time", target: "/api/audit?start=tomorrow", status: nethttp.StatusBadRequest},
+		{name: "reversed time", target: "/api/audit?start=2026-05-02T15:00:00Z&end=2026-05-02T14:00:00Z", status: nethttp.StatusBadRequest},
 	}
 
 	for _, tt := range tests {

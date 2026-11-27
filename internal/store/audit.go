@@ -52,17 +52,13 @@ func (s *AuditStore) List(
 	serviceID string,
 	limit int,
 ) ([]model.Audit, error) {
-	query := `SELECT id, service_id, actor, action, result, detail, created_at
-	 FROM audit ORDER BY id DESC LIMIT ?`
-	args := []any{limit}
+	filter := model.AuditQuery{Limit: limit}
 
 	if serviceID != "" {
-		query = `SELECT id, service_id, actor, action, result, detail, created_at
-		 FROM audit WHERE service_id = ? ORDER BY id DESC LIMIT ?`
-		args = []any{serviceID, limit}
+		filter.ServiceIDs = []string{serviceID}
 	}
 
-	return queryRows(ctx, s.db.read, rowQuery[model.Audit]{what: "audit", query: query, args: args, scan: scanAudit})
+	return s.Search(ctx, filter)
 }
 
 // ListForServices returns the audit entries of the listed services
@@ -78,14 +74,40 @@ func (s *AuditStore) ListForServices(
 		return []model.Audit{}, nil
 	}
 
-	clause, args := inClause(serviceIDs)
+	return s.Search(ctx, model.AuditQuery{ServiceIDs: serviceIDs, Limit: limit})
+}
+
+// Search returns the latest matching entries within the authorized scope.
+func (s *AuditStore) Search(ctx context.Context, filter model.AuditQuery) ([]model.Audit, error) {
+	if filter.ServiceIDs != nil && len(filter.ServiceIDs) == 0 {
+		return []model.Audit{}, nil
+	}
+
+	query := `SELECT id, service_id, actor, action, result, detail, created_at FROM audit WHERE 1 = 1`
+	args := []any{}
+
+	if filter.ServiceIDs != nil {
+		clause, serviceArgs := inClause(filter.ServiceIDs)
+		query += " AND service_id IN " + clause
+
+		args = append(args, serviceArgs...)
+	}
+
+	if filter.Start != nil {
+		query += " AND julianday(created_at) >= julianday(?)"
+
+		args = append(args, formatTime(*filter.Start))
+	}
+
+	if filter.End != nil {
+		query += " AND julianday(created_at) < julianday(?)"
+
+		args = append(args, formatTime(*filter.End))
+	}
 
 	return queryRows(ctx, s.db.read, rowQuery[model.Audit]{
-		what: "audit",
-		query: `SELECT id, service_id, actor, action, result, detail, created_at
-		 FROM audit WHERE service_id IN ` + clause + ` ORDER BY id DESC LIMIT ?`,
-		args: append(args, limit),
-		scan: scanAudit,
+		what: "audit", query: query + " ORDER BY id DESC LIMIT ?",
+		args: append(args, filter.Limit), scan: scanAudit,
 	})
 }
 

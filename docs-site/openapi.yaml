@@ -1109,6 +1109,14 @@ paths:
         - name: service_id
           in: query
           schema: { type: string }
+        - name: start
+          in: query
+          description: Include entries at or after this time.
+          schema: { type: string, format: date-time }
+        - name: end
+          in: query
+          description: Include entries before this time.
+          schema: { type: string, format: date-time }
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,17 +11,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import ErrorState from '../ErrorState.tsx';
+import { PanelError } from '../performance/PerformancePanel.tsx';
 import {
   fetchDeploys,
   fetchIssues,
   fetchNotifications,
-  isUnauthorized,
-  type Deploy,
-  type Notification,
   type ServiceView,
 } from '@/lib/api.ts';
 import { formatTime, timeAgo } from '@/lib/format.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 export default function OverviewTab({
   service,
@@ -30,42 +28,17 @@ export default function OverviewTab({
   service: ServiceView;
   onUnauthorized: () => void;
 }) {
-  const [deploys, setDeploys] = useState<Deploy[] | null>(null);
-  const [notes, setNotes] = useState<Notification[] | null>(null);
-  const [issueCount, setIssueCount] = useState<number | null>(null);
-  const [eventCount, setEventCount] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-
-    try {
-      const [fetchedDeploys, fetchedNotes, fetchedIssues] = await Promise.all([
-        fetchDeploys(service.id),
-        fetchNotifications(service.id, 5),
-        fetchIssues(service.id),
-      ]);
-      setDeploys(fetchedDeploys);
-      setNotes(fetchedNotes.notifications);
-      setIssueCount(fetchedIssues.length);
-      setEventCount(fetchedIssues.reduce((sum, issue) => sum + issue.count, 0));
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [service.id, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (error !== null) {
-    return <ErrorState title={`Couldn't load ${service.name}`} message={error} onRetry={() => void load()} />;
-  }
+  const readDeploys = useCallback((signal: AbortSignal) => fetchDeploys(service.id, signal, 5), [service.id]);
+  const readNotes = useCallback((signal: AbortSignal) => fetchNotifications(service.id, 5, signal), [service.id]);
+  const readIssues = useCallback(async (signal: AbortSignal) => {
+    const issues = await fetchIssues(service.id, signal);
+    return { count: issues.length, events: issues.reduce((total, issue) => total + issue.count, 0) };
+  }, [service.id]);
+  const deployHistory = usePanelRead(service.id, readDeploys, 0, onUnauthorized);
+  const notifications = usePanelRead(service.id, readNotes, 0, onUnauthorized);
+  const issues = usePanelRead(service.id, readIssues, 0, onUnauthorized);
+  const deploys = deployHistory.data;
+  const notes = notifications.data?.notifications ?? null;
 
   return (
     <div className="space-y-4">
@@ -93,14 +66,15 @@ export default function OverviewTab({
             <CardTitle className="text-sm font-medium">Issues / events</CardTitle>
           </CardHeader>
           <CardContent>
-            {issueCount === null || eventCount === null ? (
+            <PanelError name="issue totals" error={issues.error} retry={issues.retry} />
+            {issues.data === null ? issues.loading && (
               <Skeleton className="h-6 w-20" />
             ) : (
               <p className="text-2xl font-semibold">
-                {issueCount}
+                {issues.data.count}
                 <span className="text-muted-foreground text-base font-normal">
                   {' '}
-                  / {eventCount} events
+                  / {issues.data.events} events
                 </span>
               </p>
             )}
@@ -111,7 +85,9 @@ export default function OverviewTab({
             <CardTitle className="text-sm font-medium">Last deploy</CardTitle>
           </CardHeader>
           <CardContent>
-            {deploys === null ? (
+            {deploys === null && deployHistory.error !== null ? (
+              <p className="text-muted-foreground text-sm">Deploy history unavailable</p>
+            ) : deploys === null ? (
               <Skeleton className="h-6 w-28" />
             ) : deploys.length === 0 ? (
               <p className="text-muted-foreground text-sm">Nothing recorded</p>
@@ -172,13 +148,14 @@ export default function OverviewTab({
             <CardTitle className="text-sm font-medium">Recent notifications</CardTitle>
           </CardHeader>
           <CardContent>
-            {notes === null ? (
+            <PanelError name="recent notifications" error={notifications.error} retry={notifications.retry} />
+            {notes === null ? notifications.loading && (
               <div className="space-y-2">
                 <Skeleton className="h-6 w-full" />
                 <Skeleton className="h-6 w-full" />
               </div>
             ) : notes.length === 0 ? (
-              <p className="text-muted-foreground text-sm">Quiet. Prod is covered.</p>
+              <p className="text-muted-foreground text-sm">No recent notifications.</p>
             ) : (
               <ul className="space-y-2">
                 {notes.map((item) => (
@@ -245,7 +222,8 @@ export default function OverviewTab({
           <CardTitle className="text-sm font-medium">Latest deploys</CardTitle>
         </CardHeader>
         <CardContent>
-          {deploys === null ? (
+          <PanelError name="deploy history" error={deployHistory.error} retry={deployHistory.retry} />
+          {deploys === null ? deployHistory.loading && (
             <Skeleton className="h-10 w-full" />
           ) : deploys.length === 0 ? (
             <p className="text-muted-foreground text-sm">Nothing recorded yet.</p>

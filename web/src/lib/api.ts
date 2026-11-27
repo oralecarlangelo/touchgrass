@@ -501,9 +501,10 @@ export async function deleteRule(id: number): Promise<void> {
   await request<undefined>(`/api/alerts/rules/${id}`, { method: 'DELETE' });
 }
 
-export async function fetchDeploys(serviceId: string): Promise<Deploy[]> {
+export async function fetchDeploys(serviceId: string, signal?: AbortSignal, limit = 50): Promise<Deploy[]> {
   const body = await request<DeploysResponse>(
-    `/api/services/${encodeURIComponent(serviceId)}/deploys?limit=50`,
+    `/api/services/${encodeURIComponent(serviceId)}/deploys?limit=${limit}`,
+    { signal },
   );
 
   return body.deploys ?? [];
@@ -870,17 +871,19 @@ interface IssueRulesResponse {
   rules: IssueRule[];
 }
 
-export async function fetchIssues(serviceId: string): Promise<Issue[]> {
+export async function fetchIssues(serviceId: string, signal?: AbortSignal): Promise<Issue[]> {
   const body = await request<IssuesResponse>(
     `/api/issues?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.issues ?? [];
 }
 
-export async function fetchOccurrences(serviceId: string, limit = 100): Promise<Occurrence[]> {
+export async function fetchOccurrences(serviceId: string, limit = 100, signal?: AbortSignal): Promise<Occurrence[]> {
   const body = await request<OccurrencesResponse>(
     `/api/issues/occurrences?service_id=${encodeURIComponent(serviceId)}&limit=${limit}`,
+    { signal },
   );
 
   return body.occurrences ?? [];

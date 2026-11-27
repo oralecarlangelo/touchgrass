@@ -471,9 +471,10 @@ export async function deleteService(serviceId: string): Promise<void> {
   await request<undefined>(`/api/services/${encodeURIComponent(serviceId)}`, { method: 'DELETE' });
 }
 
-export async function fetchMetrics(serviceId: string): Promise<Metric[]> {
+export async function fetchMetrics(serviceId: string, signal?: AbortSignal): Promise<Metric[]> {
   const body = await request<MetricsResponse>(
     `/api/services/${encodeURIComponent(serviceId)}/metrics?limit=100`,
+    { signal },
   );
 
   return body.metrics ?? [];

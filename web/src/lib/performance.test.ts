@@ -8,7 +8,6 @@ import {
   formatPercentile,
   mergeTimelineSeries,
   performanceDrilldownHref,
-  servicePerformanceState,
 } from './performance.ts';
 import { performanceApiPath } from './api.ts';
 
@@ -307,27 +306,6 @@ describe('service performance view model', () => {
         `/api/services/ticketnation%20api/performance/${resource}?limit=50`,
       );
     }
-  });
-
-  it('keeps safe unknown-service and container-only states', () => {
-    expect(
-      servicePerformanceState({
-        serviceId: '',
-        loading: false,
-        metricCount: 0,
-        signalCount: 0,
-        failureCount: 0,
-      }),
-    ).toBe('unknown-service');
-    expect(
-      servicePerformanceState({
-        serviceId: 'api',
-        loading: false,
-        metricCount: 12,
-        signalCount: 0,
-        failureCount: 5,
-      }),
-    ).toBe('container-only');
   });
 
   it('retains service and time range in drill-down links', () => {

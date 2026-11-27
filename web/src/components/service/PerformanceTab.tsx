@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Search, TriangleAlert } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { RefreshCw, Search } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -31,6 +30,7 @@ import {
 import ErrorState from '../ErrorState.tsx';
 import CorrelationTimeline from '../performance/CorrelationTimeline.tsx';
 import DependencyPanels from '../performance/DependencyPanels.tsx';
+import { DetailsPanel, PanelError } from '../performance/PerformancePanel.tsx';
 import PerformanceSummary, {
   PerformanceSummarySkeleton,
 } from '../performance/PerformanceSummary.tsx';
@@ -42,20 +42,12 @@ import {
   fetchPerformanceRoutes,
   fetchPerformanceSummary,
   fetchPerformanceTimeline,
-  isUnauthorized,
   type Metric,
   type PerformanceFilters,
-  type PerformanceRouteRow,
-  type PerformanceSummaryView,
-  type PerformanceTimelineView,
-  type PostgresPerformanceRow,
-  type RedisPerformanceRow,
 } from '@/lib/api.ts';
 import { formatBytes, formatDuration } from '@/lib/format.ts';
-import {
-  performanceDrilldownHref,
-  servicePerformanceState,
-} from '@/lib/performance.ts';
+import { performanceDrilldownHref } from '@/lib/performance.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const seriesConfig = {
   cpu: { label: 'CPU %', color: 'var(--chart-1)' },
@@ -67,24 +59,6 @@ const ranges = [
   { hours: 6, label: '6h' },
   { hours: 24, label: '24h' },
 ] as const;
-
-interface ServicePerformanceData {
-  metrics: Metric[] | null;
-  summary: PerformanceSummaryView | null;
-  timeline: PerformanceTimelineView | null;
-  routes: PerformanceRouteRow[] | null;
-  postgres: PostgresPerformanceRow[] | null;
-  redis: RedisPerformanceRow[] | null;
-}
-
-const emptyData: ServicePerformanceData = {
-  metrics: null,
-  summary: null,
-  timeline: null,
-  routes: null,
-  postgres: null,
-  redis: null,
-};
 
 function latestByContainer(metrics: Metric[]): Metric[] {
   const latest = new Map<string, Metric>();
@@ -118,8 +92,8 @@ function shortTime(value: string): string {
   return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function selectedFilters(serviceId: string, hours: number): PerformanceFilters {
-  const end = new Date();
+function selectedFilters(serviceId: string, hours: number, windowEnd: number): PerformanceFilters {
+  const end = new Date(windowEnd);
   const start = new Date(end.getTime() - hours * 60 * 60 * 1000);
 
   return {
@@ -291,96 +265,41 @@ export default function PerformanceTab({
   onUnauthorized: () => void;
 }) {
   const [hours, setHours] = useState(1);
-  const [data, setData] = useState<ServicePerformanceData>(emptyData);
-  const [failures, setFailures] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [windowEnd, setWindowEnd] = useState(Date.now);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [routesOpen, setRoutesOpen] = useState(false);
+  const [dependenciesOpen, setDependenciesOpen] = useState(false);
+  const filters = useMemo(() => selectedFilters(serviceId, hours, windowEnd), [serviceId, hours, windowEnd]);
+  const scope = `${serviceId}:${hours}`;
+  const hasService = serviceId.trim() !== '';
 
-  const load = useCallback(
-    async (background = false) => {
-      if (background) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+  const readMetrics = useCallback((signal: AbortSignal) => fetchMetrics(serviceId, signal), [serviceId]);
+  const readSummary = useCallback((signal: AbortSignal) => fetchPerformanceSummary(filters, signal), [filters]);
+  const readTimeline = useCallback((signal: AbortSignal) => fetchPerformanceTimeline(filters, signal), [filters]);
+  const readRoutes = useCallback((signal: AbortSignal) => fetchPerformanceRoutes(filters, signal), [filters]);
+  const readPostgres = useCallback((signal: AbortSignal) => fetchPerformancePostgres(filters, signal), [filters]);
+  const readRedis = useCallback((signal: AbortSignal) => fetchPerformanceRedis(filters, signal), [filters]);
 
-      const filters = selectedFilters(serviceId, hours);
-      const results = await Promise.allSettled([
-        fetchMetrics(serviceId),
-        fetchPerformanceSummary(filters),
-        fetchPerformanceTimeline(filters),
-        fetchPerformanceRoutes(filters),
-        fetchPerformancePostgres(filters),
-        fetchPerformanceRedis(filters),
-      ]);
+  const metrics = usePanelRead(serviceId, hasService ? readMetrics : null, windowEnd, onUnauthorized);
+  const summary = usePanelRead(scope, hasService ? readSummary : null, windowEnd, onUnauthorized);
+  const timeline = usePanelRead(scope, hasService && timelineOpen ? readTimeline : null, windowEnd, onUnauthorized);
+  const routes = usePanelRead(scope, hasService && routesOpen ? readRoutes : null, windowEnd, onUnauthorized);
+  const postgres = usePanelRead(scope, hasService && dependenciesOpen ? readPostgres : null, windowEnd, onUnauthorized);
+  const redis = usePanelRead(scope, hasService && dependenciesOpen ? readRedis : null, windowEnd, onUnauthorized);
 
-      if (
-        results.some((result) => result.status === 'rejected' && isUnauthorized(result.reason))
-      ) {
-        onUnauthorized();
-        return;
-      }
-
-      setFailures(
-        results.flatMap((result) =>
-          result.status === 'rejected'
-            ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
-            : [],
-        ),
-      );
-      setData({
-        metrics: results[0].status === 'fulfilled' ? results[0].value : null,
-        summary: results[1].status === 'fulfilled' ? results[1].value : null,
-        timeline: results[2].status === 'fulfilled' ? results[2].value : null,
-        routes: results[3].status === 'fulfilled' ? results[3].value : null,
-        postgres: results[4].status === 'fulfilled' ? results[4].value : null,
-        redis: results[5].status === 'fulfilled' ? results[5].value : null,
-      });
-      setLoading(false);
-      setRefreshing(false);
-    },
-    [hours, onUnauthorized, serviceId],
-  );
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const signalCount =
-    (data.summary?.request_count ?? 0) +
-    (data.timeline?.points.length ?? 0) +
-    (data.routes?.length ?? 0) +
-    (data.postgres?.length ?? 0) +
-    (data.redis?.length ?? 0);
-  const state = servicePerformanceState({
-    serviceId,
-    loading,
-    metricCount: data.metrics?.length ?? 0,
-    signalCount,
-    failureCount: failures.length,
-  });
+  const refreshing = metrics.loading || summary.loading;
   const linkFilters: PerformanceFilters = {
     serviceId,
-    start: data.summary?.start,
-    end: data.summary?.end,
+    start: summary.data?.start,
+    end: summary.data?.end,
   };
 
-  if (state === 'unknown-service') {
+  if (!hasService) {
     return (
       <ErrorState
         title="Service unavailable"
         message="This performance view needs a known service. Return to Services and select it again."
         onRetry={() => window.location.assign('#/services')}
-      />
-    );
-  }
-
-  if (state === 'error') {
-    return (
-      <ErrorState
-        title="Couldn't load service performance"
-        message={failures[0] ?? 'No performance source responded.'}
-        onRetry={() => void load()}
       />
     );
   }
@@ -396,7 +315,10 @@ export default function PerformanceTab({
               size="sm"
               variant={hours === range.hours ? 'secondary' : 'ghost'}
               aria-pressed={hours === range.hours}
-              onClick={() => setHours(range.hours)}
+              onClick={() => {
+                setHours(range.hours);
+                setWindowEnd(Date.now());
+              }}
             >
               {range.label}
             </Button>
@@ -407,40 +329,43 @@ export default function PerformanceTab({
           size="sm"
           variant="outline"
           disabled={refreshing}
-          onClick={() => void load(true)}
+          onClick={() => setWindowEnd(Date.now())}
         >
           <RefreshCw className={refreshing ? 'animate-spin' : ''} aria-hidden />
           {refreshing ? 'Refreshing' : 'Refresh'}
         </Button>
       </div>
 
-      {failures.length > 0 && (
-        <Alert>
-          <TriangleAlert aria-hidden />
-          <AlertTitle>
-            {state === 'container-only' ? 'Container metrics only' : 'Some signals are unavailable'}
-          </AlertTitle>
-          <AlertDescription>
-            Available runtime history remains visible. {failures[0]}
-          </AlertDescription>
-        </Alert>
-      )}
+      <PanelError name="performance summary" error={summary.error} retry={summary.retry} />
+      {summary.data !== null ? (
+        <PerformanceSummary summary={summary.data} routes={routes.data} />
+      ) : summary.loading ? <PerformanceSummarySkeleton /> : null}
 
-      {loading ? (
-        <PerformanceSummarySkeleton />
-      ) : data.summary !== null ? (
-        <PerformanceSummary summary={data.summary} routes={data.routes ?? []} />
-      ) : null}
+      <PanelError name="container metrics" error={metrics.error} retry={metrics.retry} />
+      {(metrics.loading || metrics.data !== null) && <ContainerMetrics metrics={metrics.data} />}
 
-      <ContainerMetrics metrics={data.metrics} />
+      <DetailsPanel title="Timeline" description="Compare service events over time" onChange={setTimelineOpen}>
+        <PanelError name="timeline" error={timeline.error} retry={timeline.retry} />
+        {timeline.loading && timeline.data === null && <p role="status">Loading timeline…</p>}
+        {timeline.data !== null && <CorrelationTimeline timeline={timeline.data} />}
+      </DetailsPanel>
+      <DetailsPanel title="HTTP routes" description="Find slow route families" onChange={setRoutesOpen}>
+        <PanelError name="HTTP routes" error={routes.error} retry={routes.retry} />
+        {routes.loading && routes.data === null && <p role="status">Loading routes…</p>}
+        {routes.data !== null && <RouteTable routes={routes.data} />}
+      </DetailsPanel>
+      <DetailsPanel title="Database signals" description="Review PostgreSQL and Redis samples" onChange={setDependenciesOpen}>
+        <PanelError name="PostgreSQL" error={postgres.error} retry={postgres.retry} />
+        <PanelError name="Redis" error={redis.error} retry={redis.retry} />
+        {((postgres.loading && postgres.data === null) || (redis.loading && redis.data === null)) && (
+          <p role="status">Loading database signals…</p>
+        )}
+        {(postgres.data !== null || redis.data !== null) && (
+          <DependencyPanels postgres={postgres.data ?? []} redis={redis.data ?? []} />
+        )}
+      </DetailsPanel>
 
-      {data.timeline !== null && <CorrelationTimeline timeline={data.timeline} />}
-      {data.routes !== null && <RouteTable routes={data.routes} />}
-      {(data.postgres !== null || data.redis !== null) && (
-        <DependencyPanels postgres={data.postgres ?? []} redis={data.redis ?? []} />
-      )}
-
-      {data.summary !== null && data.summary.anomalies.length > 0 && (
+      {summary.data !== null && summary.data.anomalies.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
@@ -450,7 +375,7 @@ export default function PerformanceTab({
             <CardDescription>Correlations for this service and selected window.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {data.summary.anomalies.map((anomaly, index) => (
+            {summary.data.anomalies.map((anomaly, index) => (
               <div key={`${anomaly.kind}:${index}`} className="rounded-md border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>

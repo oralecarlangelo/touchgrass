@@ -9,14 +9,6 @@ import type {
 } from './api.ts';
 
 export type CollectorState = 'healthy' | 'degraded' | 'stale' | 'not-configured';
-export type ServicePerformanceState =
-  | 'unknown-service'
-  | 'loading'
-  | 'ready'
-  | 'container-only'
-  | 'error'
-  | 'empty';
-
 export interface TimelineMarker {
   id: string;
   at: string;
@@ -214,31 +206,6 @@ export function collectorSetupSnippet(
 
 export function collectorLastSuccessAt(status: CollectorStatusView): string | null {
   return normalizedTime(status.last_success_at);
-}
-
-export function servicePerformanceState(input: {
-  serviceId: string;
-  loading: boolean;
-  metricCount: number;
-  signalCount: number;
-  failureCount: number;
-}): ServicePerformanceState {
-  if (input.serviceId.trim() === '') {
-    return 'unknown-service';
-  }
-  if (input.loading) {
-    return 'loading';
-  }
-  if (input.signalCount > 0) {
-    return 'ready';
-  }
-  if (input.metricCount > 0) {
-    return 'container-only';
-  }
-  if (input.failureCount > 0) {
-    return 'error';
-  }
-  return 'empty';
 }
 
 export function performanceDrilldownHref(

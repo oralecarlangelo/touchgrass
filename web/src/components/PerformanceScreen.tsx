@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { RefreshCw, Search, TriangleAlert } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import ErrorState from './ErrorState.tsx';
+import { DetailsPanel, PanelError } from './performance/PerformancePanel.tsx';
 import CollectorStatus from './performance/CollectorStatus.tsx';
 import CorrelationTimeline from './performance/CorrelationTimeline.tsx';
 import DependencyPanels from './performance/DependencyPanels.tsx';
@@ -53,29 +53,6 @@ function filtersFor(hours: number, serviceId: string): PerformanceFilters {
     sort: 'p95_ms',
     limit: 50,
   };
-}
-
-function PanelError({ name, error, retry }: { name: string; error: string | null; retry: () => void }) {
-  return error === null ? null : (
-    <ErrorState title={`Couldn’t refresh ${name}`} message={error} onRetry={retry} />
-  );
-}
-
-function DetailsPanel({ title, description, onChange, children }: {
-  title: string;
-  description: string;
-  onChange: (open: boolean) => void;
-  children: ReactNode;
-}) {
-  return (
-    <details className="bg-card rounded-lg border" onToggle={(event) => onChange(event.currentTarget.open)}>
-      <summary className="cursor-pointer p-4 text-sm font-medium">
-        {title}
-        <span className="text-muted-foreground ml-2 font-normal">{description}</span>
-      </summary>
-      <div className="space-y-3 px-4 pb-4">{children}</div>
-    </details>
-  );
 }
 
 export default function PerformanceScreen({

@@ -1,6 +1,6 @@
 # Dashboard reliability assessment
 
-Status: implementation and verification in progress, 27 November 2026.
+Status: deployed and verified, 27 November 2026.
 
 ## Observed production behavior
 
@@ -69,8 +69,7 @@ suite has 144 passing tests including independent section settlement, request sh
 failure, preserved stale rows, and degraded freshness. Race checks passed for
 service, HTTP, command, and model packages. An existing uptime test now compares
 against the actual sampling interval instead of assuming setup takes under ten
-seconds. Production comparison remains pending; no measured
-production speedup is claimed yet.
+seconds. Production results are recorded below.
 
 Rendered browser validation used the built UI with a generic authenticated fixture:
 system data delayed 2.5 seconds and fleet data delayed 4 seconds. Services and
@@ -97,4 +96,40 @@ The requested reduction uses three SQLite snapshots and seven PostgreSQL dumps.
 Daily scheduling remains unchanged. The older compressed archive and deployment
 rollback artifacts are retained separately. The newest PostgreSQL dump passed
 SHA-256 verification and `pg_restore --list`; this is an archive check, not a full
-restore rehearsal. SQLite integrity verification and pruning are in progress.
+restore rehearsal. The newest SQLite snapshot passed `PRAGMA quick_check`.
+Pruning removed four old SQLite snapshots and seven old PostgreSQL dumps,
+reclaiming 11,046,125,814 bytes (10.3 GiB). Three SQLite snapshots and seven dumps
+remain. Root disk usage fell from 63% to 58%, with approximately 83 GB available.
+
+## Production deployment and measurements
+
+Deployed `0.9.0-dashboard.1`, source commit `89c985e`, at 10:03 UTC. Local and
+uploaded ARM64 binary SHA-256 matched. The previous binary and environment are
+retained in `backups/releases/pre-dashboard-20261127`; existing database rollback
+artifacts remain. The systemd service restarted successfully.
+
+Ten authenticated public-URL reads per endpoint across two heartbeat cycles from the EC2 host all returned
+HTTP 200: services 13–15 ms and system 13–15 ms. All returned complete, non-stale
+snapshots and unique `X-Request-ID` headers. Repeated reads shared the same
+observation timestamp rather than triggering collection. Initial background
+system collection took 837 ms and service collection 1,289 ms, isolated from
+browser request latency. These are small-sample checks, not p95 measurements or
+an end-user geographic latency benchmark. The next heartbeat ran without intervening
+service/system reads, updated the observation timestamps, and completed in 16 ms
+(system) and 285 ms (services). The process has zero automatic restarts. A returned
+request ID was matched to its request journal entry with no write error. The
+publicly served JavaScript bundle SHA-256 matches the final local build. Running
+process environment confirms backup retention of three SQLite and seven database
+backups, not merely edited configuration on disk.
+
+## Limits and follow-up
+
+- Observations refresh every 30 seconds; manual browser refresh reads the latest
+  snapshot. A failed or delayed collector can leave older data, explicitly marked
+  degraded/stale. The nginx deployment target watcher retains its 5-second cadence.
+- This removes the observed synchronous-read timeout path, not every possible
+  infrastructure cause of HTTP 502.
+- The production frontend bundle still raises Vite's existing large-chunk warning
+  (about 335 KB gzip); route-level code splitting is a separate optimization.
+- Retention trades historical restore depth for disk space. Compressed archive
+  and release rollback copies are outside normal snapshot-count pruning.

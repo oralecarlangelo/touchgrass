@@ -243,7 +243,8 @@ describe('apply run state machine', () => {
     expect(state.restored).toBe(false);
     expect(mergeRun(state, { id: 'run-1', service_id: 'svc', status: 'failed', started_at: state.startedAt, finished_at: null, steps: [], restored: true }).restored).toBe(true);
     expect(state.error).toBe('probe: 503 from /health');
-    expect(reduceRunEvent(initialRunState('run-1'), { ...event('render'), run_id: 'other' })).toEqual(initialRunState('run-1'));
+    const original = initialRunState('run-1');
+    expect(reduceRunEvent(original, { ...event('render'), run_id: 'other' })).toEqual(original);
   });
 
   it('pins a failure from the message when no step was seen running', () => {

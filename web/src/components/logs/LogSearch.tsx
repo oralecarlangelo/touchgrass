@@ -71,16 +71,31 @@ function isSdkOnlyLevel(level: string): boolean {
   return level === 'fatal' || level === 'trace';
 }
 
+function localDateTime(date: Date): string {
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 23);
+}
+
+function toISO(value: string): string {
+  return value === '' ? '' : new Date(value).toISOString();
+}
+
 export default function LogSearch({
   serviceId,
+  initialAfter,
+  initialBefore,
   onUnauthorized,
 }: {
   serviceId: string;
+  initialAfter?: string | null;
+  initialBefore?: string | null;
   onUnauthorized: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [after, setAfter] = useState('');
-  const [before, setBefore] = useState('');
+  const [after, setAfter] = useState(() => initialAfter
+    ? localDateTime(new Date(initialAfter))
+    : localDateTime(new Date(Date.now() - 60 * 60_000)));
+  const [before, setBefore] = useState(() => initialBefore ? localDateTime(new Date(initialBefore)) : '');
   const [limit, setLimit] = useState<(typeof limitOptions)[number]>('100');
   const [stream, setStream] = useState<'all' | 'stdout' | 'stderr'>('all');
   const [level, setLevel] = useState<LevelFilter>('all');
@@ -89,6 +104,7 @@ export default function LogSearch({
   const [lines, setLines] = useState<LogLine[] | null>(null);
   const [sdkLines, setSdkLines] = useState<SdkLogEntry[] | null>(null);
   const [stats, setStats] = useState<LogStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -97,38 +113,44 @@ export default function LogSearch({
   const [contextOpen, setContextOpen] = useState(false);
   const [loadingContext, setLoadingContext] = useState(false);
 
+  const queryRequest = useRef<AbortController | null>(null);
+  const successfulSearch = useRef<SearchParams | null>(null);
+
   const executeSearch = useCallback(
     async (params: SearchParams) => {
+      queryRequest.current?.abort();
+      const controller = new AbortController();
+      queryRequest.current = controller;
+      const signal = controller.signal;
       setSearching(true);
+      setLoadingOlder(false);
       setError(null);
 
       try {
+        const bounds = { after: toISO(params.after), before: toISO(params.before) };
         if (params.source === 'sdk') {
           const fetched = await listSdkLogs(serviceId, {
             q: params.q,
-            after: params.after,
-            before: params.before,
+            ...bounds,
             level: params.level === 'all' ? '' : params.level,
             trace_id: params.traceId,
             limit: Number(params.limit),
-          });
-          setSdkLines(fetched);
+          }, signal);
+          if (!signal.aborted) setSdkLines(fetched);
         } else {
-          const [fetched, fetchedStats] = await Promise.all([
-            fetchLogs(serviceId, {
-              q: params.q,
-              after: params.after,
-              before: params.before,
-              stream: params.stream === 'all' ? '' : params.stream,
-              level: params.level === 'all' ? '' : params.level,
-              limit: Number(params.limit),
-            }),
-            fetchLogStats(serviceId),
-          ]);
-          setLines(fetched);
-          setStats(fetchedStats);
+          const fetched = await fetchLogs(serviceId, {
+            q: params.q,
+            ...bounds,
+            stream: params.stream === 'all' ? '' : params.stream,
+            level: params.level === 'all' ? '' : params.level,
+            limit: Number(params.limit),
+          }, signal);
+          if (!signal.aborted) setLines(fetched);
         }
+
+        if (!signal.aborted) successfulSearch.current = params;
       } catch (err) {
+        if (signal.aborted) return;
         if (isUnauthorized(err)) {
           onUnauthorized();
           return;
@@ -136,7 +158,7 @@ export default function LogSearch({
 
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setSearching(false);
+        if (!signal.aborted) setSearching(false);
       }
     },
     [serviceId, onUnauthorized],
@@ -241,9 +263,13 @@ export default function LogSearch({
 
   useEffect(() => {
     void searchRef.current();
+    return () => queryRequest.current?.abort();
   }, [serviceId]);
 
   const loadOlder = useCallback(async () => {
+    const signal = queryRequest.current?.signal;
+    const params = successfulSearch.current;
+    if (signal === undefined || signal.aborted || params === null || params.source !== source) return;
     if (source === 'sdk') {
       if (sdkLines === null || sdkLines.length === 0) {
         return;
@@ -255,29 +281,31 @@ export default function LogSearch({
 
       try {
         const fetched = await listSdkLogs(serviceId, {
-          q: query.trim(),
-          after: after.trim(),
+          q: params.q,
+          after: toISO(params.after),
           before: oldest,
-          level: level === 'all' ? '' : level,
-          trace_id: traceId.trim(),
-          limit: Number(limit),
-        });
+          level: params.level === 'all' ? '' : params.level,
+          trace_id: params.traceId,
+          limit: Number(params.limit),
+        }, signal);
+        if (signal.aborted) return;
         const seen = new Set(sdkLines.map((entry) => entry.id));
         const fresh = fetched.filter((entry) => !seen.has(entry.id));
         setSdkLines([...sdkLines, ...fresh]);
 
         if (fresh.length === 0) {
-          setBefore(oldest);
+          setBefore(localDateTime(new Date(oldest)));
         }
       } catch (err) {
-        if (isUnauthorized(err)) {
+        if (signal.aborted) return;
+      if (isUnauthorized(err)) {
           onUnauthorized();
           return;
         }
 
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setLoadingOlder(false);
+        if (!signal.aborted) setLoadingOlder(false);
       }
 
       return;
@@ -293,21 +321,23 @@ export default function LogSearch({
 
     try {
       const fetched = await fetchLogs(serviceId, {
-        q: query.trim(),
-        after: after.trim(),
+        q: params.q,
+        after: toISO(params.after),
         before: oldest,
-        stream: stream === 'all' ? '' : stream,
-        level: level === 'all' ? '' : level,
-        limit: Number(limit),
-      });
+        stream: params.stream === 'all' ? '' : params.stream,
+        level: params.level === 'all' ? '' : params.level,
+        limit: Number(params.limit),
+      }, signal);
+      if (signal.aborted) return;
       const seen = new Set(lines.map((line) => line.id));
       const fresh = fetched.filter((line) => !seen.has(line.id));
       setLines([...lines, ...fresh]);
 
       if (fresh.length === 0) {
-        setBefore(oldest);
+        setBefore(localDateTime(new Date(oldest)));
       }
     } catch (err) {
+      if (signal.aborted) return;
       if (isUnauthorized(err)) {
         onUnauthorized();
         return;
@@ -315,9 +345,9 @@ export default function LogSearch({
 
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoadingOlder(false);
+      if (!signal.aborted) setLoadingOlder(false);
     }
-  }, [lines, sdkLines, serviceId, query, after, limit, stream, level, source, traceId, onUnauthorized]);
+  }, [lines, sdkLines, serviceId, source, onUnauthorized]);
 
   const openContext = useCallback(
     async (line: LogLine) => {
@@ -341,6 +371,23 @@ export default function LogSearch({
     },
     [onUnauthorized],
   );
+
+  const applyRange = (minutes: number) => {
+    const start = localDateTime(new Date(Date.now() - minutes * 60_000));
+    setAfter(start);
+    setBefore('');
+    void executeSearch({ q: query.trim(), after: start, before: '', limit, stream, level, source, traceId: traceId.trim() });
+  };
+
+  async function showStats() {
+    setStatsError(null);
+    try {
+      setStats(await fetchLogStats(serviceId));
+    } catch (err) {
+      if (isUnauthorized(err)) onUnauthorized();
+      else setStatsError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   const visibleLevels = source === 'sdk' ? sdkLevelOptions : levelOptions;
   const results = source === 'sdk' ? sdkLines : lines;
@@ -369,20 +416,31 @@ export default function LogSearch({
               className="lg:flex-1"
               aria-label="Search log text"
             />
-            <Input
-              placeholder="After (RFC 3339)"
-              value={after}
-              onChange={(event) => setAfter(event.target.value)}
-              className="lg:w-52"
-              aria-label="After timestamp"
-            />
-            <Input
-              placeholder="Before (RFC 3339)"
-              value={before}
-              onChange={(event) => setBefore(event.target.value)}
-              className="lg:w-52"
-              aria-label="Before timestamp"
-            />
+            <label className="text-muted-foreground space-y-1 text-xs lg:w-52">
+              <span>From (local time)</span>
+              <Input
+                type="datetime-local"
+                step="0.001"
+                value={after}
+                onChange={(event) => setAfter(event.target.value)}
+                aria-label="From (local time)"
+              />
+            </label>
+            <label className="text-muted-foreground space-y-1 text-xs lg:w-52">
+              <span>To (local time)</span>
+              <Input
+                type="datetime-local"
+                step="0.001"
+                value={before}
+                onChange={(event) => setBefore(event.target.value)}
+                aria-label="To (local time)"
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Quick time ranges">
+            <Button variant="outline" size="sm" onClick={() => applyRange(15)}>Last 15m</Button>
+            <Button variant="outline" size="sm" onClick={() => applyRange(60)}>Last hour</Button>
+            <Button variant="outline" size="sm" onClick={() => applyRange(1_440)}>Last 24h</Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Select value={limit} onValueChange={(value) => setLimit(value as typeof limit)}>
@@ -438,6 +496,9 @@ export default function LogSearch({
                 </Button>
               </span>
             )}
+            {source === 'containers' && stats === null && (
+              <Button variant="ghost" size="sm" onClick={() => void showStats()}>Show storage stats</Button>
+            )}
             {source === 'containers' && stats !== null && (
               <p className="text-muted-foreground ml-auto text-xs">
                 {stats.lines.toLocaleString()} stored
@@ -446,6 +507,9 @@ export default function LogSearch({
               </p>
             )}
           </div>
+          {source === 'containers' && statsError !== null && (
+            <p className="text-muted-foreground text-xs" role="status">Storage stats unavailable: {statsError}</p>
+          )}
         </CardContent>
       </Card>
 

@@ -942,7 +942,7 @@ export interface LogSearch {
   limit?: number;
 }
 
-export async function fetchLogs(serviceId: string, search: LogSearch = {}): Promise<LogLine[]> {
+export async function fetchLogs(serviceId: string, search: LogSearch = {}, signal?: AbortSignal): Promise<LogLine[]> {
   const params = new URLSearchParams({ service_id: serviceId });
 
   if (search.q !== undefined && search.q !== '') {
@@ -969,7 +969,7 @@ export async function fetchLogs(serviceId: string, search: LogSearch = {}): Prom
     params.set('limit', String(search.limit));
   }
 
-  const body = await request<LogsResponse>(`/api/logs?${params.toString()}`);
+  const body = await request<LogsResponse>(`/api/logs?${params.toString()}`, { signal });
 
   return body.lines ?? [];
 }
@@ -1092,7 +1092,7 @@ function normalizeSdkLogEntry(raw: unknown): SdkLogEntry {
   };
 }
 
-export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}): Promise<SdkLogEntry[]> {
+export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}, signal?: AbortSignal): Promise<SdkLogEntry[]> {
   const params = new URLSearchParams({ service_id: serviceId, source: 'sdk' });
 
   if (search.q !== undefined && search.q !== '') {
@@ -1119,7 +1119,7 @@ export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}):
     params.set('limit', String(search.limit));
   }
 
-  const body = await request<SdkLogsResponse>(`/api/logs?${params.toString()}`);
+  const body = await request<SdkLogsResponse>(`/api/logs?${params.toString()}`, { signal });
 
   return (body.lines ?? []).map(normalizeSdkLogEntry);
 }

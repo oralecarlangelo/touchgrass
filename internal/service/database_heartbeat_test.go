@@ -59,6 +59,26 @@ func TestDatabaseHeartbeat(t *testing.T) {
 	}
 }
 
+func TestDatabaseHeartbeatKeepsKnownImageWhileInventoryEnriches(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := testDatabase(t, &fakeRunner{}, nil)
+	now := time.Now()
+	item := docker.Container{
+		ID: "database-instance", Name: "demo-db", Image: "postgres:17-alpine", ImageID: "sha256:123456789abc",
+		State: updateStateRunning, Status: "Up (healthy)",
+	}
+	svc.ObserveContainers([]docker.Container{item}, now, time.Minute)
+	item.Image = "123456789abc"
+	item.Status = "Up (unhealthy)"
+	svc.ObserveContainers([]docker.Container{item}, now.Add(time.Second), time.Minute)
+
+	got := svc.Databases().Databases
+	if len(got) != 4 || got[3].Image != "postgres:17-alpine" || got[3].Status != "unhealthy" {
+		t.Fatalf("observed databases = %+v, want retained database identity with current health", got)
+	}
+}
+
 func checkDatabaseObservations(t *testing.T, snapshot model.DatabaseSnapshot) {
 	t.Helper()
 

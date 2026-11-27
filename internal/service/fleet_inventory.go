@@ -148,6 +148,17 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 		return f.summaryWithError(ctx, fmt.Errorf("listing complete container inventory: %w", err))
 	}
 
+	if containers == nil {
+		containers = []docker.Container{}
+	}
+
+	// Publish lifecycle and Compose metadata while the deeper inspections run.
+	f.rememberOnboardingContainers(containers, observedAt)
+
+	if f.observe != nil {
+		f.observe(containers, observedAt, 2*f.interval)
+	}
+
 	definitions, err := f.services.All(ctx)
 	if err != nil {
 		return model.InventorySummary{}, fmt.Errorf("loading services for inventory: %w", err)
@@ -363,8 +374,6 @@ func (f *FleetInventory) inspectAll(
 	if f.observe != nil {
 		f.observe(observed, observedAt, 2*f.interval)
 	}
-
-	f.rememberOnboardingContainers(observed, observedAt)
 
 	return instances, coverage
 }

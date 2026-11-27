@@ -1,30 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import AccessDenied from './components/AccessDenied.tsx';
 import EmptyState from './components/EmptyState.tsx';
 import ErrorState from './components/ErrorState.tsx';
+import ScreenErrorBoundary from './components/ScreenErrorBoundary.tsx';
 import Dashboard from './components/Dashboard.tsx';
-import ContainerDetail from './components/ContainerDetail.tsx';
-import DatabasesScreen from './components/DatabasesScreen.tsx';
-import EnvironmentScreen from './components/EnvironmentScreen.tsx';
-import HistoryScreen from './components/HistoryScreen.tsx';
-import HelpScreen from './components/HelpScreen.tsx';
-import ImagesScreen from './components/ImagesScreen.tsx';
-import IssuesScreen from './components/IssuesScreen.tsx';
-import KeysScreen from './components/KeysScreen.tsx';
 import FirstLoginPassword from './components/account/FirstLoginPassword.tsx';
 import LoginForm from './components/LoginForm.tsx';
-import LogsScreen from './components/LogsScreen.tsx';
 import NoServicesAssigned from './components/NoServicesAssigned.tsx';
-import NotificationsScreen from './components/NotificationsScreen.tsx';
-import PerformanceScreen from './components/PerformanceScreen.tsx';
-import RulesScreen from './components/RulesScreen.tsx';
-import SecurityScreen from './components/SecurityScreen.tsx';
 import ServicesList from './components/ServicesList.tsx';
-import ServiceWorkspace, { type ServiceTab } from './components/service/ServiceWorkspace.tsx';
-import FleetScreen from './components/FleetScreen.tsx';
-import UsersScreen from './components/UsersScreen.tsx';
-import UpdatesScreen from './components/UpdatesScreen.tsx';
+import type { ServiceTab } from './components/service/ServiceWorkspace.tsx';
 import AppShell from './components/layout/AppShell.tsx';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -52,6 +37,24 @@ import {
 import { navGroups, type ViewId } from './lib/views.ts';
 import { parseHash, writeHash } from './lib/hash.ts';
 import { LatestRequest } from './lib/latest-request.ts';
+
+const ContainerDetail = lazy(() => import('./components/ContainerDetail.tsx'));
+const DatabasesScreen = lazy(() => import('./components/DatabasesScreen.tsx'));
+const EnvironmentScreen = lazy(() => import('./components/EnvironmentScreen.tsx'));
+const HistoryScreen = lazy(() => import('./components/HistoryScreen.tsx'));
+const HelpScreen = lazy(() => import('./components/HelpScreen.tsx'));
+const ImagesScreen = lazy(() => import('./components/ImagesScreen.tsx'));
+const IssuesScreen = lazy(() => import('./components/IssuesScreen.tsx'));
+const KeysScreen = lazy(() => import('./components/KeysScreen.tsx'));
+const LogsScreen = lazy(() => import('./components/LogsScreen.tsx'));
+const NotificationsScreen = lazy(() => import('./components/NotificationsScreen.tsx'));
+const PerformanceScreen = lazy(() => import('./components/PerformanceScreen.tsx'));
+const RulesScreen = lazy(() => import('./components/RulesScreen.tsx'));
+const SecurityScreen = lazy(() => import('./components/SecurityScreen.tsx'));
+const FleetScreen = lazy(() => import('./components/FleetScreen.tsx'));
+const UsersScreen = lazy(() => import('./components/UsersScreen.tsx'));
+const UpdatesScreen = lazy(() => import('./components/UpdatesScreen.tsx'));
+const ServiceWorkspace = lazy(() => import('./components/service/ServiceWorkspace.tsx'));
 
 const refreshIntervalMs = 30_000;
 
@@ -427,190 +430,194 @@ export default function App() {
         session={session}
         can={can}
       >
-        {hasNoServices(session) && view !== 'help' ? (
-          <NoServicesAssigned username={session.username} onRetry={() => void refreshSession()} />
-        ) : deniedServiceId !== null ? (
-          <AccessDenied
-            what={`the service “${deniedServiceId}”`}
-            detail={`Your account is limited to ${scopeLabel(session)}. Ask an admin if you need this one too.`}
-            backLabel="Back to your services"
-            onBack={() => handleSelectService(null)}
-          />
-        ) : !canOpenView(view, session, can) ? (
-          <AccessDenied
-            what={viewLabel(view)}
-            detail={
-              scoped && !needsAdmin(view)
-                ? `It covers the whole host, and your account is limited to ${scopeLabel(session)}.`
-                : `Your role (${session.role}) does not include it. Ask an admin if you need it.`
-            }
-            backLabel="Go to a screen you can use"
-            onBack={() => handleView(firstAllowedView(session, can))}
-          />
-        ) : selectedContainerId !== null ? (
-          <ContainerDetail
-            id={selectedContainerId}
-            onBack={() => setSelectedContainerId(null)}
-            onUnauthorized={handleUnauthorized}
-            onSelectSecurityFinding={(id) => {
-              setSelectedContainerId(null);
-              setSelectedSecurityFindingId(id);
-              setView('security');
-            }}
-          />
-        ) : selected !== null ? (
-          <ServiceWorkspace
-            service={selected}
-            onBack={() => {
-              setSelected(null);
-              setServiceTab('overview');
-            }}
-            onServiceChanged={() => void load()}
-            onUnauthorized={handleUnauthorized}
-            can={can}
-            session={session}
-            initialTab={serviceTab}
-            onTabChange={setServiceTab}
-          />
-        ) : view === 'dashboard' ? (
-          <Dashboard
-            services={services}
-            servicesError={error}
-            servicesRefreshing={refreshing}
-            servicesUpdatedAt={servicesUpdatedAt}
-            servicesFreshness={servicesFreshness}
-            onRetryServices={() => void load()}
-            onSelectService={handleSelectService}
-            onView={handleView}
-            onUnauthorized={handleUnauthorized}
-            canHost={can('host.read')}
-          />
-        ) : view === 'audit' ? (
-          <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
-        ) : view === 'help' ? (
-          <HelpScreen can={can} onView={handleView} />
-        ) : view === 'notifications' ? (
-          <NotificationsScreen
-            services={services ?? []}
-            onUnauthorized={handleUnauthorized}
-            isAdmin={can('notifications.ack')}
-            onSelectSecurityFinding={(id) => {
-              setSelectedSecurityFindingId(id);
-              setView('security');
-            }}
-          />
-        ) : view === 'security' ? (
-          <SecurityScreen
-            isAdmin={can('security.manage')}
-            onUnauthorized={handleUnauthorized}
-            onSelectContainer={setSelectedContainerId}
-            initialFindingId={selectedSecurityFindingId}
-          />
-        ) : view === 'performance' ? (
-          <PerformanceScreen
-            services={services ?? []}
-            onUnauthorized={handleUnauthorized}
-            canFleet={can('host.read')}
-          />
-        ) : view === 'issues' ? (
-          <IssuesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
-        ) : view === 'logs' ? (
-          <LogsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
-        ) : view === 'images' ? (
-          <ImagesScreen onUnauthorized={handleUnauthorized} isAdmin={can('host.manage')} />
-        ) : view === 'fleet' ? (
-          <FleetScreen
-            onUnauthorized={handleUnauthorized}
-            onSelectService={handleSelectService}
-            onSelectContainer={setSelectedContainerId}
-            isAdmin={can('services.manage')}
-          />
-        ) : view === 'databases' ? (
-          <DatabasesScreen onUnauthorized={handleUnauthorized} isAdmin={can('databases.backup')} />
-        ) : view === 'environment' ? (
-          <EnvironmentScreen
-            services={services}
-            isAdmin={can('env.apply')}
-            onUnauthorized={handleUnauthorized}
-            onOpenService={(id) => handleSelectService(id, 'environment')}
-          />
-        ) : view === 'rules' ? (
-          <RulesScreen
-            services={services ?? []}
-            onUnauthorized={handleUnauthorized}
-            isAdmin={can('alerts.manage')}
-          />
-        ) : view === 'keys' ? (
-          <KeysScreen
-            services={services ?? []}
-            onUnauthorized={handleUnauthorized}
-            isAdmin={can('keys.manage')}
-          />
-        ) : view === 'users' ? (
-          <UsersScreen
-            services={services ?? []}
-            currentUsername={session.username}
-            onUnauthorized={handleUnauthorized}
-          />
-        ) : view === 'updates' ? (
-          <UpdatesScreen onUnauthorized={handleUnauthorized} />
-        ) : (
-          <>
-            <div className="flex items-center justify-between">
-              <h1 className="text-lg font-semibold tracking-tight">Services</h1>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void load()}
-                disabled={refreshing}
-              >
-                {refreshing ? 'Checking…' : 'Refresh'}
-              </Button>
-            </div>
-
-            {error !== null && services === null && (
-              <ErrorState
-                title="Couldn't load services"
-                message={error}
-                onRetry={() => void load()}
+        <ScreenErrorBoundary key={selectedContainerId ?? selected?.id ?? view}>
+          <Suspense fallback={<p className="text-muted-foreground py-6 text-sm" role="status">Loading screen…</p>}>
+            {hasNoServices(session) && view !== 'help' ? (
+              <NoServicesAssigned username={session.username} onRetry={() => void refreshSession()} />
+            ) : deniedServiceId !== null ? (
+              <AccessDenied
+                what={`the service “${deniedServiceId}”`}
+                detail={`Your account is limited to ${scopeLabel(session)}. Ask an admin if you need this one too.`}
+                backLabel="Back to your services"
+                onBack={() => handleSelectService(null)}
               />
-            )}
-
-            {services !== null && services.length === 0 && (
-              <EmptyState
-                title="No services on the radar"
-                body={
-                  can('services.manage')
-                    ? 'Nothing is managed yet. Open Fleet, pick a running container and promote it to a managed service to watch and deploy it here.'
-                    : 'Nothing is managed yet. An admin adds services from Fleet; they show up here once added.'
+            ) : !canOpenView(view, session, can) ? (
+              <AccessDenied
+                what={viewLabel(view)}
+                detail={
+                  scoped && !needsAdmin(view)
+                    ? `It covers the whole host, and your account is limited to ${scopeLabel(session)}.`
+                    : `Your role (${session.role}) does not include it. Ask an admin if you need it.`
                 }
-                action={
-                  can('services.manage') ? (
-                    <Button size="sm" onClick={() => handleView('fleet')}>
-                      Open Fleet
-                    </Button>
-                  ) : undefined
-                }
+                backLabel="Go to a screen you can use"
+                onBack={() => handleView(firstAllowedView(session, can))}
               />
-            )}
-
-            {error !== null && services !== null && services.length > 0 && (
-              <div role="alert" className="border-destructive/40 flex items-center justify-between rounded-lg border p-3 text-sm">
-                <span>Refresh failed. Showing last known services.</span>
-                <Button variant="outline" size="sm" onClick={() => void load()}>Retry</Button>
-              </div>
-            )}
-
-            {services === null || services.length > 0 ? (
-              <ServicesList
+            ) : selectedContainerId !== null ? (
+              <ContainerDetail
+                id={selectedContainerId}
+                onBack={() => setSelectedContainerId(null)}
+                onUnauthorized={handleUnauthorized}
+                onSelectSecurityFinding={(id) => {
+                  setSelectedContainerId(null);
+                  setSelectedSecurityFindingId(id);
+                  setView('security');
+                }}
+              />
+            ) : selected !== null ? (
+              <ServiceWorkspace
+                service={selected}
+                onBack={() => {
+                  setSelected(null);
+                  setServiceTab('overview');
+                }}
+                onServiceChanged={() => void load()}
+                onUnauthorized={handleUnauthorized}
+                can={can}
+                session={session}
+                initialTab={serviceTab}
+                onTabChange={setServiceTab}
+              />
+            ) : view === 'dashboard' ? (
+              <Dashboard
                 services={services}
-                onSelect={handleSelectService}
-                onDeleted={handleDeletedService}
+                servicesError={error}
+                servicesRefreshing={refreshing}
+                servicesUpdatedAt={servicesUpdatedAt}
+                servicesFreshness={servicesFreshness}
+                onRetryServices={() => void load()}
+                onSelectService={handleSelectService}
+                onView={handleView}
+                onUnauthorized={handleUnauthorized}
+                canHost={can('host.read')}
+              />
+            ) : view === 'audit' ? (
+              <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+            ) : view === 'help' ? (
+              <HelpScreen can={can} onView={handleView} />
+            ) : view === 'notifications' ? (
+              <NotificationsScreen
+                services={services ?? []}
+                onUnauthorized={handleUnauthorized}
+                isAdmin={can('notifications.ack')}
+                onSelectSecurityFinding={(id) => {
+                  setSelectedSecurityFindingId(id);
+                  setView('security');
+                }}
+              />
+            ) : view === 'security' ? (
+              <SecurityScreen
+                isAdmin={can('security.manage')}
+                onUnauthorized={handleUnauthorized}
+                onSelectContainer={setSelectedContainerId}
+                initialFindingId={selectedSecurityFindingId}
+              />
+            ) : view === 'performance' ? (
+              <PerformanceScreen
+                services={services ?? []}
+                onUnauthorized={handleUnauthorized}
+                canFleet={can('host.read')}
+              />
+            ) : view === 'issues' ? (
+              <IssuesScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+            ) : view === 'logs' ? (
+              <LogsScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
+            ) : view === 'images' ? (
+              <ImagesScreen onUnauthorized={handleUnauthorized} isAdmin={can('host.manage')} />
+            ) : view === 'fleet' ? (
+              <FleetScreen
+                onUnauthorized={handleUnauthorized}
+                onSelectService={handleSelectService}
+                onSelectContainer={setSelectedContainerId}
                 isAdmin={can('services.manage')}
               />
-            ) : null}
-          </>
-        )}
+            ) : view === 'databases' ? (
+              <DatabasesScreen onUnauthorized={handleUnauthorized} isAdmin={can('databases.backup')} />
+            ) : view === 'environment' ? (
+              <EnvironmentScreen
+                services={services}
+                isAdmin={can('env.apply')}
+                onUnauthorized={handleUnauthorized}
+                onOpenService={(id) => handleSelectService(id, 'environment')}
+              />
+            ) : view === 'rules' ? (
+              <RulesScreen
+                services={services ?? []}
+                onUnauthorized={handleUnauthorized}
+                isAdmin={can('alerts.manage')}
+              />
+            ) : view === 'keys' ? (
+              <KeysScreen
+                services={services ?? []}
+                onUnauthorized={handleUnauthorized}
+                isAdmin={can('keys.manage')}
+              />
+            ) : view === 'users' ? (
+              <UsersScreen
+                services={services ?? []}
+                currentUsername={session.username}
+                onUnauthorized={handleUnauthorized}
+              />
+            ) : view === 'updates' ? (
+              <UpdatesScreen onUnauthorized={handleUnauthorized} />
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <h1 className="text-lg font-semibold tracking-tight">Services</h1>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void load()}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? 'Checking…' : 'Refresh'}
+                  </Button>
+                </div>
+
+                {error !== null && services === null && (
+                  <ErrorState
+                    title="Couldn't load services"
+                    message={error}
+                    onRetry={() => void load()}
+                  />
+                )}
+
+                {services !== null && services.length === 0 && (
+                  <EmptyState
+                    title="No services on the radar"
+                    body={
+                      can('services.manage')
+                        ? 'Nothing is managed yet. Open Fleet, pick a running container and promote it to a managed service to watch and deploy it here.'
+                        : 'Nothing is managed yet. An admin adds services from Fleet; they show up here once added.'
+                    }
+                    action={
+                      can('services.manage') ? (
+                        <Button size="sm" onClick={() => handleView('fleet')}>
+                          Open Fleet
+                        </Button>
+                      ) : undefined
+                    }
+                  />
+                )}
+
+                {error !== null && services !== null && services.length > 0 && (
+                  <div role="alert" className="border-destructive/40 flex items-center justify-between rounded-lg border p-3 text-sm">
+                    <span>Refresh failed. Showing last known services.</span>
+                    <Button variant="outline" size="sm" onClick={() => void load()}>Retry</Button>
+                  </div>
+                )}
+
+                {services === null || services.length > 0 ? (
+                  <ServicesList
+                    services={services}
+                    onSelect={handleSelectService}
+                    onDeleted={handleDeletedService}
+                    isAdmin={can('services.manage')}
+                  />
+                ) : null}
+              </>
+            )}
+          </Suspense>
+        </ScreenErrorBoundary>
       </AppShell>
       <Toaster />
     </>

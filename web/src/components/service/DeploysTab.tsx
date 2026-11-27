@@ -173,6 +173,15 @@ export default function DeploysTab({
 
   return (
     <div className="space-y-4">
+      {canTrigger && service.strategy === 'bluegreen' && ['', 'unknown'].includes(service.live_color) && (
+        <div className="border-border rounded-lg border p-4 text-sm" role="status">
+          <p className="font-medium">Live target could not be verified</p>
+          <p className="text-muted-foreground mt-1">
+            Check that the configured Nginx active marker appears on one upstream server line
+            and points to a configured target. Cutover and rollback become available after Touch Grass verifies it.
+          </p>
+        </div>
+      )}
       {canTrigger && service.strategy === 'bluegreen' && (
         <CutoverPanel service={service} onFinished={handleOperationFinished} />
       )}

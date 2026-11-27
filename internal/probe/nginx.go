@@ -13,11 +13,13 @@ import (
 // ErrMarkerNotFound reports an nginx conf without the active marker line.
 var ErrMarkerNotFound = errors.New("probe: active marker not found")
 
-var serverLine = regexp.MustCompile(`server\s+([^;]+);`)
+var serverLine = regexp.MustCompile(`^\s*server\s+([^\s;]+)(?:\s+[^;]*)?;\s*$`)
 
-// LiveTarget parses the nginx active target from the marker line. It
-// replicates bluegreen-lib.sh nginx_active_target exactly: the first line
-// containing the marker, the host:port after "server", whitespace stripped.
+// ErrAmbiguousMarker reports more than one active upstream directive.
+var ErrAmbiguousMarker = errors.New("probe: multiple active upstream markers")
+
+// LiveTarget reads the endpoint from the only marked server directive.
+// Upstream options follow the endpoint and do not affect its identity.
 func LiveTarget(confPath, marker string) (string, error) {
 	//nolint:gosec // confPath is admin-configured service data, never user input.
 	file, err := os.Open(confPath)
@@ -31,22 +33,33 @@ func LiveTarget(confPath, marker string) (string, error) {
 
 	scanner := bufio.NewScanner(file)
 
+	var target string
+
 	for scanner.Scan() {
-		if !strings.Contains(scanner.Text(), marker) {
+		directive, comment, ok := strings.Cut(scanner.Text(), "#")
+		if !ok || !strings.Contains("#"+comment, marker) {
 			continue
 		}
 
-		match := serverLine.FindStringSubmatch(scanner.Text())
+		match := serverLine.FindStringSubmatch(directive)
 		if match == nil {
-			return "", fmt.Errorf("%w in line %q", ErrMarkerNotFound, scanner.Text())
+			return "", ErrMarkerNotFound
 		}
 
-		return strings.ReplaceAll(match[1], " ", ""), nil
+		if target != "" {
+			return "", ErrAmbiguousMarker
+		}
+
+		target = match[1]
 	}
 
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("reading nginx conf: %w", err)
 	}
 
-	return "", fmt.Errorf("%w in %s", ErrMarkerNotFound, confPath)
+	if target == "" {
+		return "", fmt.Errorf("%w in %s", ErrMarkerNotFound, confPath)
+	}
+
+	return target, nil
 }

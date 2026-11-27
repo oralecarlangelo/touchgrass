@@ -1,21 +1,24 @@
 # Databases
 
-The console's **Databases** page watches the data layer next to the
-services: PostgreSQL health plus one-click backups and restores,
-with Redis and touchgrass's own SQLite as health chips alongside.
-Everything Postgres runs `docker exec` against the database
-container — Unix-socket trust auth inside the container, so
-touchgrass holds no database credentials.
+The **Databases** page reads a shared heartbeat for Docker databases and
+Touch Grass's own SQLite database. PostgreSQL backups and restores use
+the container configured as the backup target.
 
 ## Health at a glance
 
-- **PostgreSQL**: reachability, version, database size, connections
-  used/max, postmaster uptime, and newest backup age. The card
-  hides itself when `TOUCHGRASS_POSTGRES_CONTAINER` is empty.
-- **Redis**: ping, used memory, version. Hidden when
-  `TOUCHGRASS_REDIS_CONTAINER` is empty.
-- **SQLite**: touchgrass's own database file size plus an integrity
-  verdict.
+- **Docker databases** appear automatically from inventory on EC2 and other
+  hosts where Touch Grass can read the local Docker daemon. Recognized
+  images include PostgreSQL, Redis, Valkey, MySQL, MariaDB, and MongoDB.
+- **Freshness** shows when inventory was observed. A running container can
+  confirm database readiness when it supplies a healthy Docker health check.
+- **PostgreSQL and Redis** show configured targets and their observed
+  container status. Database metrics from configured collectors are on
+  the **Performance** page.
+- **SQLite** shows the local file size and recent availability. Integrity
+  checks run as part of separate maintenance operations.
+
+Refreshing the page reads the latest snapshot. The shared collector picks up
+Docker startup and lifecycle changes on its own schedule.
 
 ## Backups
 
@@ -85,9 +88,9 @@ Shapes are in the [REST API reference](/api/).
 
 ## Limits
 
-- PostgreSQL and Redis are configured by container name
+- Managed PostgreSQL and Redis targets are configured by container name
   (`TOUCHGRASS_POSTGRES_CONTAINER`, `TOUCHGRASS_REDIS_CONTAINER`)
-  — one of each per host.
+  — one of each per host. Discovery can show multiple containers.
 - Scheduled backups run on a fixed interval from boot, not a
   wall-clock time: the nightly run drifts with restarts. For an
   exact 02:00 window, disable the scheduler (`0`) and call the

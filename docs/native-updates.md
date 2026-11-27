@@ -78,6 +78,18 @@ Before reverting a bootstrap, stop the console, restore the saved drop-in (or
 remove the new one when none existed), reload systemd and restart. The original
 executable path is preserved. Do not restore SQLite over a live database.
 
+### Update request could not be recorded
+
+The console writes an audit entry before it dispatches an update. Check the
+console's systemd journal for the audit failure. If an older installation
+rejects the `self_update` action, use the existing deployment recovery workflow
+to install v0.10.8 or later. On a native host with the root-owned updater already
+configured, the host administrator can use its request helper with the exact
+published tag. That helper verifies the archive and backs up the database before
+restarting the console. The new binary applies the audit migration on startup.
+Verify the exact installed version and the durable job status before retrying
+from the console.
+
 Explicit `TOUCHGRASS_UPDATE_HELPER`, `TOUCHGRASS_UPDATE_STATUS_FILE` and
 `TOUCHGRASS_PUBLIC_ORIGIN` settings remain supported. Standard paths are discovered
 without those settings. Without an explicit origin, requests must carry a valid

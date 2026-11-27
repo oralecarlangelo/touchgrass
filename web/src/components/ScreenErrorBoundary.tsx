@@ -2,7 +2,7 @@ import { Component, type ReactNode } from 'react';
 
 import ErrorState from './ErrorState.tsx';
 
-export default class ScreenErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+export default class ScreenErrorBoundary extends Component<{ children: ReactNode; title?: string }, { failed: boolean }> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -13,7 +13,7 @@ export default class ScreenErrorBoundary extends Component<{ children: ReactNode
     if (this.state.failed) {
       return (
         <ErrorState
-          title="Couldn’t load this screen"
+          title={this.props.title ?? 'Couldn’t load this screen'}
           message="Reload to get the latest version of Touch Grass."
           onRetry={() => window.location.reload()}
         />

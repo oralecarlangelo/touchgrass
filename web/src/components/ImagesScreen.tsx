@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -23,14 +23,20 @@ import {
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
 import StoragePanel from './StoragePanel';
-import BucketManager from './BucketManager';
+import HeartbeatStatus from './HeartbeatStatus.tsx';
+import ScreenErrorBoundary from './ScreenErrorBoundary.tsx';
+import { snapshotHeartbeat } from '@/lib/heartbeat.ts';
+import { LatestRequest } from '@/lib/latest-request.ts';
 import {
   fetchImages,
   isUnauthorized,
   pruneImages,
   type ImageView,
+  type ServiceFreshness,
 } from '@/lib/api.ts';
 import { formatBytes, formatTime, shortId } from '@/lib/format.ts';
+
+const BucketManager = lazy(() => import('./BucketManager.tsx'));
 
 export default function ImagesScreen({
   onUnauthorized,
@@ -41,23 +47,23 @@ export default function ImagesScreen({
 }) {
   const [bucketsOpen, setBucketsOpen] = useState(false);
   const [images, setImages] = useState<ImageView[] | null>(null);
-  const [imagesStale, setImagesStale] = useState(false);
+  const [freshness, setFreshness] = useState<ServiceFreshness | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pruning, setPruning] = useState(false);
- const [revision, setRevision] = useState(0);
-  const loadSequence = useRef(0);
+  const [revision, setRevision] = useState(0);
+  const request = useRef(new LatestRequest<void>()).current;
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    const sequence = ++loadSequence.current;
+  const load = useCallback(() => request.run(async (signal) => {
     setError(null);
 
     try {
       const result = await fetchImages(signal);
-      if (signal?.aborted || sequence !== loadSequence.current) return;
-      setImages(result.images); setImagesStale(result.freshness.stale);
+      if (signal.aborted) return;
+      setImages(result.images);
+      setFreshness(result.freshness);
     } catch (err) {
-      if (signal?.aborted || sequence !== loadSequence.current) return;
+      if (signal.aborted) return;
       if (isUnauthorized(err)) {
         onUnauthorized();
         return;
@@ -65,25 +71,19 @@ export default function ImagesScreen({
 
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [onUnauthorized]);
+  }), [onUnauthorized, request]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    let running = false;
-    const refresh = async () => {
-      if (running || document.hidden) return;
-      running = true;
-      try { await load(controller.signal); } finally { running = false; }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    const refresh = () => { if (!document.hidden) void load(); };
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
     document.addEventListener('visibilitychange', refresh);
     return () => {
-      controller.abort();
+      request.cancel();
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [load]);
+  }, [load, request]);
 
   async function handlePrune(): Promise<void> {
     setPruning(true);
@@ -95,6 +95,7 @@ export default function ImagesScreen({
       );
       setConfirmOpen(false);
       setRevision(value => value + 1);
+      request.cancel();
       await load();
     } catch (err) {
       if (isUnauthorized(err)) {
@@ -111,6 +112,7 @@ export default function ImagesScreen({
   const totalBytes = (images ?? []).reduce((sum, image) => sum + image.size_bytes, 0);
   const dangling = (images ?? []).filter((image) => image.dangling && image.containers === 0);
   const reclaimableBytes = dangling.reduce((sum, image) => sum + image.size_bytes, 0);
+  const hasSample = freshness?.observed_at != null;
 
   return (
     <div className="space-y-4">
@@ -131,7 +133,19 @@ export default function ImagesScreen({
 
       <StoragePanel revision={revision} onUnauthorized={onUnauthorized} />
       <h2 className="text-lg font-semibold">Docker images</h2>
-      {imagesStale && <p role="status" className="text-muted-foreground text-sm">Image inventory is refreshing in the background; showing the last available snapshot.</p>}
+      {freshness !== null && (
+        <HeartbeatStatus
+          label="Docker image heartbeat"
+          state={snapshotHeartbeat(freshness)}
+          observedAt={freshness.observed_at}
+          detail={freshness.last_error_category === 'collection_failed'
+            ? 'The Docker image list could not be collected. Check daemon access.'
+            : freshness.stale ? 'The image collector is waiting for its next sample.' : undefined}
+          action={freshness.stale ? (
+            <Button size="sm" variant="outline" onClick={() => void load()}>Refresh images</Button>
+          ) : null}
+        />
+      )}
       {error !== null && <ErrorState title="Couldn't load images" message={error} onRetry={() => void load()} />}
       <p className="text-muted-foreground text-sm">Image sizes include shared layers. Totals below are logical estimates, not physical disk usage or guaranteed reclaimable space.</p>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -143,7 +157,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <p className="text-2xl font-semibold">{images.length}</p>
+              <p className="text-2xl font-semibold">{hasSample ? images.length : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -155,7 +169,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <p className="text-2xl font-semibold">{formatBytes(totalBytes)}</p>
+              <p className="text-2xl font-semibold">{hasSample ? formatBytes(totalBytes) : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -167,7 +181,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <p className="text-2xl font-semibold">{dangling.length}</p>
+              <p className="text-2xl font-semibold">{hasSample ? dangling.length : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -179,7 +193,7 @@ export default function ImagesScreen({
             {images === null ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <p className="text-2xl font-semibold">{formatBytes(reclaimableBytes)}</p>
+              <p className="text-2xl font-semibold">{hasSample ? formatBytes(reclaimableBytes) : '—'}</p>
             )}
           </CardContent>
         </Card>
@@ -194,7 +208,7 @@ export default function ImagesScreen({
             </div>
           ) : images.length === 0 ? (
             <p className="text-muted-foreground py-6 text-center text-sm">
-              No images reported by the daemon.
+              {hasSample ? 'No images reported by the daemon.' : 'No image inventory has been collected yet.'}
             </p>
           ) : (
             <Table>
@@ -246,7 +260,13 @@ export default function ImagesScreen({
       {isAdmin && (
         <details className="rounded-lg border" onToggle={(event) => setBucketsOpen(event.currentTarget.open)}>
           <summary className="cursor-pointer p-4 text-sm font-medium">Browse object storage</summary>
-          {bucketsOpen && <BucketManager onUnauthorized={onUnauthorized} />}
+          {bucketsOpen && (
+            <ScreenErrorBoundary title="Couldn’t load bucket browsing">
+              <Suspense fallback={<p className="p-4 text-sm" role="status">Loading buckets…</p>}>
+                <BucketManager onUnauthorized={onUnauthorized} />
+              </Suspense>
+            </ScreenErrorBoundary>
+          )}
         </details>
       )}
 

@@ -24,6 +24,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
+import HeartbeatStatus from './HeartbeatStatus.tsx';
 import {
   fetchDatabaseBackups,
   fetchDatabaseJob,
@@ -123,6 +124,7 @@ export default function DatabasesScreen({
   isAdmin: boolean;
 }) {
   const [snapshot, setSnapshot] = useState<DatabasesResponse | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [dbError, setDbError] = useState<string | null>(null);
   const [backups, setBackups] = useState<DatabaseBackup[] | null>(null);
   const [backupsError, setBackupsError] = useState<string | null>(null);
@@ -146,6 +148,7 @@ export default function DatabasesScreen({
   }), []);
 
   const loadHealth = useCallback(() => requests.health.run(async (signal) => {
+    setRefreshing(true);
     setDbError(null);
     try {
       const result = await fetchDatabases(signal);
@@ -158,6 +161,8 @@ export default function DatabasesScreen({
       }
 
       setDbError(err instanceof Error ? err.message : String(err));
+    } finally {
+      if (!signal.aborted) setRefreshing(false);
     }
   }), [onUnauthorized, requests]);
 
@@ -193,21 +198,11 @@ export default function DatabasesScreen({
     }
   }), [onUnauthorized, requests]);
 
-  const loadAll = useCallback(async () => {
-    setRefreshing(true);
-
-    try {
-      await Promise.all([loadHealth(), loadBackups(), loadJobs()]);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [loadHealth, loadBackups, loadJobs]);
-
   useEffect(() => {
-    void loadAll();
     const refreshVisible = () => {
       if (!document.hidden) void loadHealth();
     };
+    refreshVisible();
     const timer = setInterval(refreshVisible, refreshIntervalMs);
     document.addEventListener('visibilitychange', refreshVisible);
 
@@ -218,7 +213,14 @@ export default function DatabasesScreen({
       requests.backups.cancel();
       requests.jobs.cancel();
     };
-  }, [loadAll, loadHealth, requests]);
+  }, [loadHealth, requests]);
+
+  useEffect(() => {
+    if (historyOpen) {
+      void loadBackups();
+      void loadJobs();
+    }
+  }, [historyOpen, loadBackups, loadJobs]);
 
   // Poll a running backup job every 2s until it reaches a terminal status.
   useEffect(() => {
@@ -437,8 +439,8 @@ export default function DatabasesScreen({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Databases</h1>
-        <Button variant="outline" size="sm" onClick={() => void loadAll()} disabled={refreshing}>
-          {refreshing ? 'Checking…' : 'Refresh'}
+        <Button variant="outline" size="sm" onClick={() => void loadHealth()} disabled={refreshing}>
+          {refreshing ? 'Checking…' : 'Refresh heartbeat'}
         </Button>
       </div>
 
@@ -450,12 +452,20 @@ export default function DatabasesScreen({
       )}
       {snapshot !== null && (
         <>
-          <p className="text-muted-foreground text-sm">
-            {snapshot.inventory_status === 'waiting' && 'Waiting for the first Docker inventory.'}
-            {snapshot.inventory_status === 'unavailable' && 'Docker inventory is unavailable.'}
-            {snapshot.inventory_status === 'stale' && 'Docker inventory is stale. Showing last observed containers.'}
-            {snapshot.inventory_status === 'current' && 'Docker status comes from the host inventory heartbeat.'}
-          </p>
+          <div className="rounded-md border p-3">
+            <HeartbeatStatus
+              label="Database discovery heartbeat"
+              state={snapshot.inventory_status}
+              observedAt={snapshot.docker_observed_at}
+              detail={snapshot.inventory_status === 'waiting' ? 'Waiting for the first Docker inventory.'
+                : snapshot.inventory_status === 'unavailable' ? 'Check that Docker is running and Touch Grass can read its socket.'
+                  : snapshot.inventory_status === 'stale' ? 'Showing the last observed containers. Check the Fleet collector before relying on their status.'
+                    : undefined}
+              action={snapshot.inventory_status === 'unavailable' || snapshot.inventory_status === 'stale' ? (
+                <a href="#/fleet" className="inline-block underline underline-offset-4">Open Fleet</a>
+              ) : null}
+            />
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             {databases.filter((db) => db.configured || db.id.startsWith('docker:')).map((database) => (
               <DatabaseCard key={database.id} database={database} action={
@@ -503,156 +513,166 @@ export default function DatabasesScreen({
         </Card>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Backups (newest first)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {backupsError !== null ? (
-            <ErrorState
-              title="Couldn't load backups"
-              message={backupsError}
-              onRetry={() => void loadBackups()}
-            />
-          ) : backups === null ? (
-            <div className="space-y-2" aria-label="Loading backups">
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-10 w-full" />
-            </div>
-          ) : sortedBackups.length === 0 ? (
-            <p className="text-muted-foreground py-6 text-center text-sm">
-              No backups recorded.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="text-right">Size</TableHead>
-                  <TableHead>Age</TableHead>
-                  <TableHead>Checksum</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedBackups.map((backup) => (
-                  <TableRow key={backup.name}>
-                    <TableCell className="font-mono text-xs">{backup.name}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      {formatBytes(backup.size_bytes)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-xs" title={formatTime(backup.created_at)}>
-                      {timeAgo(backup.created_at)}
-                    </TableCell>
-                    <TableCell>
-                      {backup.sha256 === 'present' ? (
-                        <Badge variant="default">sha256</Badge>
-                      ) : (
-                        <Badge variant="secondary">missing</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {verify[backup.name] === 'ok' && (
-                          <Badge variant="default">verified</Badge>
-                        )}
-                        {verify[backup.name] === 'bad' && (
-                          <Badge variant="destructive">checksum mismatch</Badge>
-                        )}
-                        {isAdmin && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => void handleVerify(backup.name)}
-                            disabled={verify[backup.name] === 'verifying'}
-                          >
-                            {verify[backup.name] === 'verifying' ? 'Verifying…' : 'Verify'}
-                          </Button>
-                        )}
-                        {isAdmin && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => openRestore(backup.name)}
-                            disabled={!backupReady || backupRunning}
-                          >
-                            Restore
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <details className="rounded-lg border" onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
+        <summary className="cursor-pointer p-4 text-sm font-medium">Backups and job history</summary>
+        {historyOpen && (
+          <div className="space-y-4 p-4 pt-0">
+            <Button variant="outline" size="sm" onClick={() => { void loadBackups(); void loadJobs(); }}>
+              Refresh history
+            </Button>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Backups (newest first)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {backupsError !== null ? (
+                  <ErrorState
+                    title="Couldn't load backups"
+                    message={backupsError}
+                    onRetry={() => void loadBackups()}
+                  />
+                ) : backups === null ? (
+                  <div className="space-y-2" aria-label="Loading backups">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                ) : sortedBackups.length === 0 ? (
+                  <p className="text-muted-foreground py-6 text-center text-sm">
+                    No backups recorded.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead className="text-right">Size</TableHead>
+                        <TableHead>Age</TableHead>
+                        <TableHead>Checksum</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedBackups.map((backup) => (
+                        <TableRow key={backup.name}>
+                          <TableCell className="font-mono text-xs">{backup.name}</TableCell>
+                          <TableCell className="text-right font-mono">
+                            {formatBytes(backup.size_bytes)}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-xs" title={formatTime(backup.created_at)}>
+                            {timeAgo(backup.created_at)}
+                          </TableCell>
+                          <TableCell>
+                            {backup.sha256 === 'present' ? (
+                              <Badge variant="default">sha256</Badge>
+                            ) : (
+                              <Badge variant="secondary">missing</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {verify[backup.name] === 'ok' && (
+                                <Badge variant="default">verified</Badge>
+                              )}
+                              {verify[backup.name] === 'bad' && (
+                                <Badge variant="destructive">checksum mismatch</Badge>
+                              )}
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => void handleVerify(backup.name)}
+                                  disabled={verify[backup.name] === 'verifying'}
+                                >
+                                  {verify[backup.name] === 'verifying' ? 'Verifying…' : 'Verify'}
+                                </Button>
+                              )}
+                              {isAdmin && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive hover:text-destructive"
+                                  onClick={() => openRestore(backup.name)}
+                                  disabled={!backupReady || backupRunning}
+                                >
+                                  Restore
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Jobs history</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {jobsError !== null ? (
-            <ErrorState
-              title="Couldn't load jobs"
-              message={jobsError}
-              onRetry={() => void loadJobs()}
-            />
-          ) : jobs === null ? (
-            <div className="space-y-2" aria-label="Loading jobs">
-              <Skeleton className="h-10 w-full" />
-            </div>
-          ) : jobs.length === 0 ? (
-            <p className="text-muted-foreground py-6 text-center text-sm">
-              No backup or restore jobs yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>ID</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Target</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Detail</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {jobs.map((job) => (
-                  <TableRow key={String(job.id)}>
-                    <TableCell className="font-mono text-xs">{String(job.id)}</TableCell>
-                    <TableCell className="text-xs">{job.kind}</TableCell>
-                    <TableCell className="max-w-48 truncate font-mono text-xs" title={job.target}>
-                      {job.target}
-                    </TableCell>
-                    <TableCell>
-                      <JobStatusBadge status={job.status} />
-                    </TableCell>
-                    <TableCell
-                      className="text-muted-foreground text-xs"
-                      title={formatTime(job.started_at)}
-                    >
-                      {timeAgo(job.started_at)}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{jobDuration(job)}</TableCell>
-                    <TableCell
-                      className="text-muted-foreground max-w-64 truncate text-xs"
-                      title={job.detail}
-                    >
-                      {job.detail === '' ? '—' : job.detail}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Jobs history</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {jobsError !== null ? (
+                  <ErrorState
+                    title="Couldn't load jobs"
+                    message={jobsError}
+                    onRetry={() => void loadJobs()}
+                  />
+                ) : jobs === null ? (
+                  <div className="space-y-2" aria-label="Loading jobs">
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                ) : jobs.length === 0 ? (
+                  <p className="text-muted-foreground py-6 text-center text-sm">
+                    No backup or restore jobs yet.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>ID</TableHead>
+                        <TableHead>Kind</TableHead>
+                        <TableHead>Target</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Started</TableHead>
+                        <TableHead>Duration</TableHead>
+                        <TableHead>Detail</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {jobs.map((job) => (
+                        <TableRow key={String(job.id)}>
+                          <TableCell className="font-mono text-xs">{String(job.id)}</TableCell>
+                          <TableCell className="text-xs">{job.kind}</TableCell>
+                          <TableCell className="max-w-48 truncate font-mono text-xs" title={job.target}>
+                            {job.target}
+                          </TableCell>
+                          <TableCell>
+                            <JobStatusBadge status={job.status} />
+                          </TableCell>
+                          <TableCell
+                            className="text-muted-foreground text-xs"
+                            title={formatTime(job.started_at)}
+                          >
+                            {timeAgo(job.started_at)}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{jobDuration(job)}</TableCell>
+                          <TableCell
+                            className="text-muted-foreground max-w-64 truncate text-xs"
+                            title={job.detail}
+                          >
+                            {job.detail === '' ? '—' : job.detail}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </details>
 
       <Dialog open={restoreName !== null} onOpenChange={(open) => !open && closeRestore()}>
         <DialogContent>

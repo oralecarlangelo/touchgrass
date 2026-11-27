@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import ErrorState from './ErrorState.tsx';
+import HeartbeatStatus from './HeartbeatStatus.tsx';
 import {
   fetchFleetContainerSummary,
   fetchSystem,
@@ -16,6 +17,7 @@ import {
   type SystemSnapshot,
 } from '@/lib/api.ts';
 import { formatBytes, formatDuration, timeAgo } from '@/lib/format.ts';
+import { inventoryHeartbeat } from '@/lib/heartbeat.ts';
 import type { NotificationPreview } from '@/lib/use-notification-preview.ts';
 import { healthDotClass, type ViewId } from '@/lib/views.ts';
 
@@ -264,14 +266,14 @@ export default function Dashboard({
             </CardHeader>
             <CardContent>
               {fleet === null && fleetError !== null ? <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button> : fleet === null ? <Skeleton className="h-8 w-24" /> : (
-                <div>
-                  <p className="text-2xl font-semibold">
-                    {fleet.freshness.stale || !fleet.freshness.complete ? 'Degraded' : 'Current'}
-                  </p>
-                  <p className="text-muted-foreground text-xs">
-                    {fleet.freshness.reconciled_at === null ? 'Never reconciled' : timeAgo(fleet.freshness.reconciled_at)}
-                  </p>
-                </div>
+                <HeartbeatStatus
+                  label="Docker inventory"
+                  {...inventoryHeartbeat(fleet.freshness)}
+                  observedAt={fleet.freshness.reconciled_at}
+                  action={(fleet.freshness.stale || !fleet.freshness.complete) && (
+                    <Button size="sm" variant="outline" onClick={() => onView('fleet')}>Investigate in Fleet</Button>
+                  )}
+                />
               )}
             </CardContent>
           </Card>

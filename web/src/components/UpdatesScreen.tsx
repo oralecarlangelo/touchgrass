@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { fetchSelfUpdate, isUnauthorized, startSelfUpdate, type SelfUpdateStatus } from '@/lib/api.ts';
+import { apiErrorCode, fetchSelfUpdate, isUnauthorized, startSelfUpdate, type SelfUpdateStatus } from '@/lib/api.ts';
+
+const updaterGuide = 'https://github.com/oralecarlangelo/touchgrass/blob/develop/docs/native-updates.md';
 
 export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () => void }) {
   const initialVersion = useRef<string | null>(null);
@@ -15,6 +17,7 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
   const [status, setStatus] = useState<SelfUpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [installError, setInstallError] = useState<{ message: string; code: string } | null>(null);
   const [working, setWorking] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
@@ -78,7 +81,7 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
     if (!tag) return;
     pendingUpdate(tag);
     setWorking(true);
-    setError(null);
+    setInstallError(null);
     setReconnecting(true);
     try {
       const next = await startSelfUpdate(tag);
@@ -93,7 +96,7 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
       } else {
         pendingUpdate(null);
         setReconnecting(false);
-        setError(err instanceof Error ? err.message : String(err));
+        setInstallError({ message: err instanceof Error ? err.message : String(err), code: apiErrorCode(err) });
       }
     } finally {
       setWorking(false);
@@ -113,7 +116,7 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
         <div>Installed: <strong>{status.installed}</strong></div>
         {checkedAt !== null && <p className="text-muted-foreground text-xs">Console status checked at {new Date(checkedAt).toLocaleTimeString()}.</p>}
         {!status.configured && <p>This older installation needs a one-time updater setup. Once enabled, future updates install here without extra configuration.</p>}
-        {!status.configured && <a className="underline" href="https://github.com/oralecarlangelo/touchgrass/blob/develop/docs/native-updates.md" target="_blank" rel="noreferrer">Set up updates</a>}
+        {!status.configured && <a className="underline" href={updaterGuide} target="_blank" rel="noreferrer">Set up updates</a>}
         {status.check_error && <p role="status">{status.check_error}</p>}
         {status.release && <div className="space-y-1">
           <div>Latest published release: <strong>{status.release.tag}</strong></div>
@@ -123,13 +126,27 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
         {status.job && <div aria-live="polite">Last update: <Badge variant="secondary">{status.job.state}</Badge> {status.job.tag}</div>}
         {reconnecting && <p role="status">Console restarting. Reconnecting… You may need to sign in again.</p>}
         {status.job?.state === 'failed' && <p role="alert">The update failed. Use the deployment recovery workflow if the console needs repair.</p>}
-        <Button disabled={!status.can_install || working || reconnecting} onClick={() => setConfirming(true)}>Install update</Button>
+        <Button disabled={!status.can_install || working || reconnecting} onClick={() => {
+          setInstallError(null);
+          setConfirming(true);
+        }}>Install update</Button>
       </CardContent>
     </Card>}
     <Dialog open={confirming} onOpenChange={setConfirming}>
       <DialogContent><DialogHeader><DialogTitle>Install {status?.release?.tag}?</DialogTitle>
         <DialogDescription>The console will briefly restart. You may need to sign in again. Review the release notes first; use the deployment workflow if this release needs host configuration or migration work.</DialogDescription>
-      </DialogHeader><DialogFooter><Button variant="outline" onClick={() => setConfirming(false)}>Cancel</Button>
+      </DialogHeader>
+        {installError !== null && (
+          <div className="space-y-1 text-sm" role="alert">
+            <p className="text-destructive">{installError.message}</p>
+            {installError.code === 'audit_unavailable' && (
+              <p>Ask the host administrator to check the audit store and follow the{' '}
+                <a className="underline" href={`${updaterGuide}#update-request-could-not-be-recorded`} target="_blank" rel="noreferrer">host recovery guide</a>.
+              </p>
+            )}
+          </div>
+        )}
+        <DialogFooter><Button variant="outline" onClick={() => setConfirming(false)}>Cancel</Button>
         <Button disabled={working} onClick={() => void install()}>{working ? 'Starting…' : 'Install update'}</Button>
       </DialogFooter></DialogContent>
     </Dialog>

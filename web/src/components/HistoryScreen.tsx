@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,8 +21,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
-import { fetchAudit, isUnauthorized, type AuditEntry, type ServiceView } from '@/lib/api.ts';
+import { fetchAudit, type ServiceView } from '@/lib/api.ts';
 import { formatTime } from '@/lib/format.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const pageSize = 25;
 
@@ -35,8 +36,6 @@ export default function HistoryScreen({
   fixedServiceId?: string;
   onUnauthorized: () => void;
 }) {
-  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [serviceId, setServiceId] = useState('all');
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
@@ -46,24 +45,11 @@ export default function HistoryScreen({
 
   const effectiveServiceId = fixedServiceId ?? (serviceId === 'all' ? '' : serviceId);
 
-  const load = useCallback(async () => {
-    setError(null);
-
-    try {
-      setEntries(await fetchAudit(effectiveServiceId));
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [effectiveServiceId, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const readHistory = useCallback(
+    (signal: AbortSignal) => fetchAudit(effectiveServiceId, 100, signal),
+    [effectiveServiceId],
+  );
+  const { data: entries, error, retry } = usePanelRead(effectiveServiceId, readHistory, 0, onUnauthorized);
 
   const results = useMemo(() => [...new Set((entries ?? []).map((entry) => entry.result))].sort(), [entries]);
   const filtered = useMemo(() => {
@@ -82,10 +68,6 @@ export default function HistoryScreen({
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
   const rows = filtered.slice(safePage * pageSize, safePage * pageSize + pageSize);
-
-  if (error !== null) {
-    return <ErrorState title="Couldn't load audit history" message={error} onRetry={() => void load()} />;
-  }
 
   return (
     <div className="space-y-4">
@@ -137,7 +119,8 @@ export default function HistoryScreen({
         </div>
       </div>
 
-      <Card>
+      {error && <ErrorState title="Couldn't load audit history" message={error} onRetry={retry} />}
+      {(entries !== null || !error) && <Card>
         <CardContent className="pt-4">
           {entries === null ? (
             <div className="space-y-2" aria-label="Loading audit entries">
@@ -201,7 +184,7 @@ export default function HistoryScreen({
             </Table>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       <div className="flex items-center justify-between text-sm">
         <p className="text-muted-foreground">

@@ -13,6 +13,11 @@ import (
 // ErrKeyNotFound reports an unknown or revoked API key id.
 var ErrKeyNotFound = errors.New("store: api key not found")
 
+const (
+	keyUseInterval = time.Minute
+	keyUseTimeout  = 25 * time.Millisecond
+)
+
 // KeyStore persists ingestion API keys.
 type KeyStore struct {
 	db *DB
@@ -53,7 +58,7 @@ func (s *KeyStore) Create(ctx context.Context, key model.APIKey) (model.APIKey, 
 // or revoked.
 func (s *KeyStore) ByHash(ctx context.Context, hash string) (model.APIKey, error) {
 	row := s.db.read.QueryRowContext(ctx,
-		`SELECT id, service_id, key_hash, key_prefix, sample_rate, revoked_at, created_at
+		`SELECT id, service_id, key_hash, key_prefix, sample_rate, revoked_at, created_at, last_used_at
 		 FROM api_keys WHERE key_hash = ?`,
 		hash,
 	)
@@ -77,7 +82,7 @@ func (s *KeyStore) ByHash(ctx context.Context, hash string) (model.APIKey, error
 // ListByService returns keys newest first, bounded by limit.
 func (s *KeyStore) ListByService(ctx context.Context, serviceID string, limit int) ([]model.APIKey, error) {
 	rows, err := s.db.read.QueryContext(ctx,
-		`SELECT id, service_id, key_hash, key_prefix, sample_rate, revoked_at, created_at
+		`SELECT id, service_id, key_hash, key_prefix, sample_rate, revoked_at, created_at, last_used_at
 		 FROM api_keys WHERE service_id = ? ORDER BY id DESC LIMIT ?`,
 		serviceID, limit,
 	)
@@ -109,6 +114,26 @@ func (s *KeyStore) ListByService(ctx context.Context, serviceID string, limit in
 	return keys, nil
 }
 
+// RecordUse advances the activity timestamp at most once per minute per live key.
+func (s *KeyStore) RecordUse(ctx context.Context, key model.APIKey, at time.Time) error {
+	cutoff := at.Add(-keyUseInterval)
+	if key.LastUsedAt != nil && key.LastUsedAt.After(cutoff) {
+		return nil
+	}
+
+	writeCtx, cancel := context.WithTimeout(ctx, keyUseTimeout)
+	defer cancel()
+
+	if _, err := s.db.sql.ExecContext(writeCtx, `UPDATE api_keys SET last_used_at = ?
+		WHERE id = ? AND revoked_at IS NULL AND (last_used_at IS NULL OR last_used_at <= ?)`,
+		formatTime(at), key.ID, formatTime(cutoff),
+	); err != nil {
+		return fmt.Errorf("recording api key use: %w", err)
+	}
+
+	return nil
+}
+
 // Revoke stamps a key revoked. Revoking twice still succeeds.
 func (s *KeyStore) Revoke(ctx context.Context, id int64) error {
 	res, err := s.db.sql.ExecContext(ctx,
@@ -134,9 +159,10 @@ func (s *KeyStore) Revoke(ctx context.Context, id int64) error {
 // scanKey maps one api_keys row.
 func scanKey(row scanner) (model.APIKey, error) {
 	var (
-		key       model.APIKey
-		revokedAt sql.NullString
-		createdAt string
+		key        model.APIKey
+		revokedAt  sql.NullString
+		createdAt  string
+		lastUsedAt sql.NullString
 	)
 
 	if err := row.Scan(
@@ -147,6 +173,7 @@ func scanKey(row scanner) (model.APIKey, error) {
 		&key.SampleRate,
 		&revokedAt,
 		&createdAt,
+		&lastUsedAt,
 	); err != nil {
 		return model.APIKey{}, fmt.Errorf("scanning api key: %w", err)
 	}
@@ -164,6 +191,11 @@ func scanKey(row scanner) (model.APIKey, error) {
 	}
 
 	key.CreatedAt = created
+
+	key.LastUsedAt, err = parseNullTime(lastUsedAt, "last_used_at")
+	if err != nil {
+		return model.APIKey{}, err
+	}
 
 	return key, nil
 }

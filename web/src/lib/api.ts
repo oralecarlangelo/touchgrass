@@ -192,6 +192,11 @@ interface RulesResponse {
   rules: AlertRule[];
 }
 
+interface RuleSample {
+  value: number | null;
+  sampled_at?: string;
+}
+
 export interface Deploy {
   id: number;
   service_id: string;
@@ -480,12 +485,18 @@ export async function fetchMetrics(serviceId: string, signal?: AbortSignal): Pro
   return body.metrics ?? [];
 }
 
-export async function fetchRules(serviceId: string): Promise<AlertRule[]> {
+export async function fetchRules(serviceId: string, signal?: AbortSignal): Promise<AlertRule[]> {
   const body = await request<RulesResponse>(
     `/api/alerts/rules?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.rules ?? [];
+}
+
+export async function fetchRuleSample(serviceId: string, metric: string, signal: AbortSignal): Promise<RuleSample> {
+  const query = new URLSearchParams({ service_id: serviceId, metric });
+  return request<RuleSample>(`/api/alerts/rules/preview?${query}`, { signal });
 }
 
 export async function createRule(input: {
@@ -922,9 +933,10 @@ export async function fetchIssueLogs(
   return body.logs ?? [];
 }
 
-export async function fetchIssueRules(serviceId: string): Promise<IssueRule[]> {
+export async function fetchIssueRules(serviceId: string, signal?: AbortSignal): Promise<IssueRule[]> {
   const body = await request<IssueRulesResponse>(
     `/api/issues/rules?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.rules ?? [];
@@ -1155,14 +1167,14 @@ export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}, 
   return (body.lines ?? []).map(normalizeSdkLogEntry);
 }
 
-export async function fetchAudit(serviceId: string, limit = 100): Promise<AuditEntry[]> {
+export async function fetchAudit(serviceId: string, limit = 100, signal?: AbortSignal): Promise<AuditEntry[]> {
   const params = new URLSearchParams({ limit: String(limit) });
 
   if (serviceId !== '') {
     params.set('service_id', serviceId);
   }
 
-  const body = await request<AuditResponse>(`/api/audit?${params.toString()}`);
+  const body = await request<AuditResponse>(`/api/audit?${params.toString()}`, { signal });
 
   return body.audit ?? [];
 }
@@ -1174,6 +1186,7 @@ export interface ApiKey {
   sample_rate: number;
   revoked_at: string | null;
   created_at: string;
+  last_used_at?: string | null;
 }
 
 interface KeysResponse {
@@ -1188,9 +1201,10 @@ export interface CreatedApiKey {
   sample_rate: number;
 }
 
-export async function fetchKeys(serviceId: string): Promise<ApiKey[]> {
+export async function fetchKeys(serviceId: string, signal?: AbortSignal): Promise<ApiKey[]> {
   const body = await request<KeysResponse>(
     `/api/keys?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.keys ?? [];

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +25,7 @@ import {
 } from '@/lib/api.ts';
 import { formatTime, timeAgo } from '@/lib/format.ts';
 import { notificationFindingID } from '@/lib/security.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const pageSize = 20;
 
@@ -56,34 +57,19 @@ export default function NotificationsScreen({
   onReadChange: () => void;
   onSelectSecurityFinding: (id: number) => void;
 }) {
-  const [notes, setNotes] = useState<Notification[] | null>(null);
-  const [unread, setUnread] = useState(0);
-  const [error, setError] = useState<string | null>(null);
   const [serviceId, setServiceId] = useState('all');
   const [kind, setKind] = useState('all');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [page, setPage] = useState(0);
 
-  const load = useCallback(async () => {
-    setError(null);
-
-    try {
-      const fetched = await fetchNotifications(serviceId === 'all' ? '' : serviceId);
-      setNotes(fetched.notifications);
-      setUnread(fetched.unread);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [serviceId, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const effectiveServiceId = serviceId === 'all' ? '' : serviceId;
+  const readFeed = useCallback(
+    (signal: AbortSignal) => fetchNotifications(effectiveServiceId, 100, signal),
+    [effectiveServiceId],
+  );
+  const { data, error, retry } = usePanelRead(effectiveServiceId, readFeed, 0, onUnauthorized);
+  const notes = data?.notifications ?? null;
+  const unread = data?.unread ?? 0;
 
   const kinds = useMemo(() => {
     const seen = new Set<string>();
@@ -112,13 +98,8 @@ export default function NotificationsScreen({
   async function handleMarkRead(id: number): Promise<void> {
     try {
       await markNotificationRead(id);
-      setNotes((current) =>
-        (current ?? []).map((item) =>
-          item.id === id ? { ...item, read_at: new Date().toISOString() } : item,
-        ),
-      );
-      setUnread((current) => Math.max(0, current - 1));
       onReadChange();
+      retry();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -131,10 +112,10 @@ export default function NotificationsScreen({
 
   async function handleMarkAllRead(): Promise<void> {
     try {
-      const result = await markNotificationsRead(serviceId === 'all' ? '' : serviceId);
+      const result = await markNotificationsRead(effectiveServiceId);
       toast.success(`Marked ${result.marked} as read.`);
       onReadChange();
-      await load();
+      retry();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -185,10 +166,6 @@ export default function NotificationsScreen({
         )}
       </li>
     );
-  }
-
-  if (error !== null) {
-    return <ErrorState title="Couldn't load notifications" message={error} onRetry={() => void load()} />;
   }
 
   return (
@@ -262,7 +239,8 @@ export default function NotificationsScreen({
         </div>
       </div>
 
-      {notes === null ? (
+      {error && <ErrorState title="Couldn't load notifications" message={error} onRetry={retry} />}
+      {notes === null ? !error && (
         <div className="space-y-2" aria-label="Loading notifications">
           <Skeleton className="h-16 w-full" />
           <Skeleton className="h-16 w-full" />

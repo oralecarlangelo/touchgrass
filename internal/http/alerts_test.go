@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	nethttp "net/http"
 
@@ -72,6 +73,75 @@ func TestHandleRules(t *testing.T) {
 	status, _ = doRequest(t, server, nethttp.MethodGet, "/api/alerts/rules", "")
 	if status != nethttp.StatusBadRequest {
 		t.Errorf("missing service_id status = %d, want 400", status)
+	}
+}
+
+func TestHandleRulePreview(t *testing.T) {
+	t.Parallel()
+
+	server, db := fullTestServer(t)
+
+	workload := model.Service{
+		ID: "example-worker", Name: "Example worker", Strategy: model.StrategyRecreate, Config: json.RawMessage(`{}`),
+	}
+	if err := store.NewServiceStore(db).Create(t.Context(), workload); err != nil {
+		t.Fatalf("create workload: %v", err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+
+	samples := []model.Metric{
+		{ServiceID: workload.ID, ContainerName: "worker-a", SampledAt: now, MemBytes: 30, MemLimit: 100},
+		{ServiceID: workload.ID, ContainerName: "worker-b", SampledAt: now, MemBytes: 90, MemLimit: 100},
+	}
+	if err := store.NewMetricStore(db).InsertBatch(t.Context(), samples); err != nil {
+		t.Fatalf("insert metrics: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		metric    string
+		status    int
+		available bool
+	}{
+		{name: "highest recorded container", metric: model.MetricMem, status: nethttp.StatusOK, available: true},
+		{name: "collector has no sample", metric: model.MetricHTTPP95, status: nethttp.StatusOK},
+		{name: "unknown metric", metric: "other", status: nethttp.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			target := "/api/alerts/rules/preview?service_id=" + workload.ID + "&metric=" + tc.metric
+
+			status, body := doRequest(t, server, nethttp.MethodGet, target, "")
+			if status != tc.status {
+				t.Fatalf("status = %d, want %d (body: %s)", status, tc.status, body)
+			}
+
+			if status != nethttp.StatusOK {
+				return
+			}
+
+			var got struct {
+				Value     *float64   `json:"value"`
+				SampledAt *time.Time `json:"sampled_at"`
+			}
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("decode preview: %v", err)
+			}
+
+			if !tc.available {
+				if got.Value != nil {
+					t.Fatalf("value = %v, want unavailable", *got.Value)
+				}
+
+				return
+			}
+
+			if got.Value == nil || *got.Value != 90 || got.SampledAt == nil || !got.SampledAt.Equal(now) {
+				t.Fatalf("preview = %s, want value 90 sampled at %s", body, now)
+			}
+		})
 	}
 }
 

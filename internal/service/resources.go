@@ -470,17 +470,70 @@ func (s *Sampler) Rules(ctx context.Context, serviceID string) ([]model.AlertRul
 	return s.rules.ListByService(ctx, serviceID)
 }
 
+// RuleSample reads existing samples without evaluating or saving an alert.
+func (s *Sampler) RuleSample(ctx context.Context, serviceID, metric string) (model.RuleSample, error) {
+	if !supportsAlertMetric(metric) {
+		return model.RuleSample{}, fmt.Errorf("%w: metric %q is unsupported", ErrInvalidInput, metric)
+	}
+
+	if isPerformanceMetric(metric) && s.performance != nil {
+		value, available, err := s.performance.AlertValue(ctx, serviceID, metric)
+		if err != nil || !available {
+			return model.RuleSample{}, err
+		}
+
+		return model.RuleSample{Value: &value}, nil
+	}
+
+	if _, err := s.services.Get(ctx, serviceID); err != nil {
+		return model.RuleSample{}, err
+	}
+
+	if isPerformanceMetric(metric) {
+		return model.RuleSample{}, nil
+	}
+
+	return s.latestContainerRuleSample(ctx, serviceID, metric)
+}
+
+func (s *Sampler) latestContainerRuleSample(ctx context.Context, serviceID, metric string) (model.RuleSample, error) {
+	latest, err := s.metrics.LatestByService(ctx, serviceID)
+	if err != nil {
+		return model.RuleSample{}, fmt.Errorf("loading latest metrics: %w", err)
+	}
+
+	var preview model.RuleSample
+
+	for _, sample := range latest {
+		if metric == model.MetricMem && sample.MemLimit == 0 {
+			continue
+		}
+
+		value := metricValue(metric, sample)
+		if preview.Value == nil || value > *preview.Value {
+			preview = model.RuleSample{Value: &value, SampledAt: &sample.SampledAt}
+		}
+	}
+
+	return preview, nil
+}
+
+func supportsAlertMetric(metric string) bool {
+	switch metric {
+	case model.MetricCPU, model.MetricMem, model.MetricDisk:
+		return true
+	default:
+		return isPerformanceMetric(metric)
+	}
+}
+
 // CreateRule validates and stores an alert rule, audited under actor.
 func (s *Sampler) CreateRule(ctx context.Context, create model.RuleCreate, actor string) (model.AlertRule, error) {
 	if _, err := s.services.Get(ctx, create.ServiceID); err != nil {
 		return model.AlertRule{}, err
 	}
 
-	switch create.Metric {
-	case model.MetricCPU, model.MetricMem, model.MetricDisk,
-		model.MetricHTTPP95, model.MetricHTTPErrorRate,
-		model.MetricPostgresConnectionPct, model.MetricRedisEvictions:
-	default:
+	if !supportsAlertMetric(create.Metric) {
 		return model.AlertRule{}, fmt.Errorf("%w: metric %q is unsupported", ErrInvalidInput, create.Metric)
 	}
 

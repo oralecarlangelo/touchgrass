@@ -167,6 +167,11 @@ func TestIngest(t *testing.T) {
 		t.Error("Ingest() sampled = false, want true at rate 1")
 	}
 
+	keys, err := ingestor.Keys(ctx, testServiceAPI)
+	if err != nil || len(keys) != 1 || keys[0].LastUsedAt == nil {
+		t.Fatalf("keys = %+v and error = %v, want recorded SDK authentication", keys, err)
+	}
+
 	count, err := store.NewOccurrenceStore(db).CountByService(ctx, testServiceAPI)
 	if err != nil {
 		t.Fatalf("CountByService() error = %v, want nil", err)

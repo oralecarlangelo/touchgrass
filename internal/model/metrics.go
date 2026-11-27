@@ -48,6 +48,12 @@ type RuleCreate struct {
 	DurationSecs int
 }
 
+// RuleSample is the latest recorded value used for a read-only rule preview.
+type RuleSample struct {
+	Value     *float64   `json:"value"`
+	SampledAt *time.Time `json:"sampled_at,omitempty"`
+}
+
 // Notification kinds.
 const (
 	NotificationAlertBreach = "alert_breach"

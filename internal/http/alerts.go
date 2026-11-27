@@ -53,6 +53,26 @@ func (s *Server) handleRules(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, s.logger, nethttp.StatusOK, rulesResponse{Rules: rules})
 }
 
+func (s *Server) handleRuleSample(w nethttp.ResponseWriter, r *nethttp.Request) {
+	query := r.URL.Query()
+
+	serviceID := query.Get(serviceIDParam)
+	if serviceID == "" {
+		writeError(w, s.logger, errMissingService, "service_id is required", "invalid_request", nethttp.StatusBadRequest)
+
+		return
+	}
+
+	sample, err := s.sampler.RuleSample(r.Context(), serviceID, query.Get("metric"))
+	if err != nil {
+		writeServiceError(w, s.logger, err, "failed to load the metric sample")
+
+		return
+	}
+
+	writeJSON(w, s.logger, nethttp.StatusOK, sample)
+}
+
 // handleCreateRule stores an alert rule.
 func (s *Server) handleCreateRule(w nethttp.ResponseWriter, r *nethttp.Request) {
 	createJSON(w, s.logger, r, func(ctx context.Context, body ruleRequest) (model.AlertRule, error) {

@@ -958,7 +958,7 @@ paths:
               required: [service_id, metric, threshold, duration_secs]
               properties:
                 service_id: { type: string }
-                metric: { type: string, enum: [cpu, mem, disk] }
+                metric: { $ref: '#/components/schemas/AlertMetric' }
                 threshold: { type: number }
                 duration_secs: { type: integer }
       responses:
@@ -967,6 +967,32 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AlertRule' }
+  /alerts/rules/preview:
+    get:
+      x-touchgrass-capability: alerts.read
+      x-touchgrass-scope: service
+      operationId: previewAlertMetric
+      tags: [alerts]
+      summary: Read the metric rule's latest recorded value
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+        - name: metric
+          in: query
+          required: true
+          schema: { $ref: '#/components/schemas/AlertMetric' }
+      responses:
+        '200':
+          description: Recorded metric value, or null if there is no usable sample
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [value]
+                properties:
+                  value: { type: [number, 'null'] }
+                  sampled_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /alerts/rules/{id}:
     delete:
       x-touchgrass-capability: alerts.manage
@@ -3174,6 +3200,7 @@ components:
         sample_rate: { type: number }
         revoked_at: { type: ['string', 'null'], format: date-time }
         created_at: { type: string, format: date-time }
+        last_used_at: { type: ['string', 'null'], format: date-time, description: 'Latest recorded SDK key authentication, updated at most once per minute.' }
     ServiceView:
       type: object
       required: [id, name, strategy, live_color, health, colors, containers]
@@ -3282,13 +3309,16 @@ components:
         downtime_secs: { type: ['number', 'null'] }
         notes: { type: string }
         created_at: { type: string, format: date-time }
+    AlertMetric:
+      type: string
+      enum: [cpu, mem, disk, http_p95_ms, http_error_rate, postgres_connection_pct, redis_evictions]
     AlertRule:
       type: object
       required: [id, service_id, metric, threshold, duration_secs, enabled, created_at]
       properties:
         id: { type: integer }
         service_id: { type: string }
-        metric: { type: string, enum: [cpu, mem, disk] }
+        metric: { $ref: '#/components/schemas/AlertMetric' }
         threshold: { type: number }
         duration_secs: { type: integer }
         enabled: { type: boolean }

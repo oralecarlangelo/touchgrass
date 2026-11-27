@@ -59,6 +59,7 @@ GET /api/issues/occurrences	reach	reach	403
 GET /api/issues/{id}	reach	reach	404
 GET /api/issues/{id}/logs	reach	reach	404
 GET /api/alerts/rules	reach	reach	403
+GET /api/alerts/rules/preview	reach	reach	403
 POST /api/alerts/rules	403	403	403
 DELETE /api/alerts/rules/{id}	403	403	403
 GET /api/issues/rules	reach	reach	403

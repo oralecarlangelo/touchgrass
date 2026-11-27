@@ -173,7 +173,12 @@ func (in *Ingestor) Ingest(
 
 // authenticate resolves a presented key or rejects it without detail.
 func (in *Ingestor) authenticate(ctx context.Context, presented string) (model.APIKey, error) {
-	return authenticateKey(ctx, in.keys, presented)
+	return authenticateKey(
+		ctx,
+		in.keys,
+		presented,
+		in.logger,
+	)
 }
 
 // buildOccurrence validates a report and normalizes it for storage.

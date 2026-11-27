@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -58,6 +59,7 @@ type LogIngestorConfig struct {
 	Services *store.ServiceStore
 	Keys     *store.KeyStore
 	SDKLogs  *store.SDKLogStore
+	Logger   *slog.Logger
 }
 
 // LogIngestor ingests batched SDK logs under the same per-service keys
@@ -66,14 +68,20 @@ type LogIngestor struct {
 	services *store.ServiceStore
 	keys     *store.KeyStore
 	sdkLogs  *store.SDKLogStore
+	logger   *slog.Logger
 }
 
 // NewLogIngestor builds a LogIngestor.
 func NewLogIngestor(cfg LogIngestorConfig) *LogIngestor {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+
 	return &LogIngestor{
 		services: cfg.Services,
 		keys:     cfg.Keys,
 		sdkLogs:  cfg.SDKLogs,
+		logger:   cfg.Logger,
 	}
 }
 
@@ -83,6 +91,7 @@ func authenticateKey(
 	ctx context.Context,
 	keys *store.KeyStore,
 	presented string,
+	logger *slog.Logger,
 ) (model.APIKey, error) {
 	if len(presented) != keyLen || !strings.HasPrefix(presented, keyTag) {
 		return model.APIKey{}, fmt.Errorf("%w: bad api key", ErrUnauthorized)
@@ -91,6 +100,11 @@ func authenticateKey(
 	key, err := keys.ByHash(ctx, HashKey(presented))
 	if err != nil {
 		return model.APIKey{}, fmt.Errorf("%w: bad api key", ErrUnauthorized)
+	}
+
+	// Keep activity telemetry best-effort when the ingestion database is busy.
+	if err := keys.RecordUse(ctx, key, time.Now()); err != nil {
+		logger.DebugContext(ctx, "api key activity update skipped", "error", err)
 	}
 
 	return key, nil
@@ -121,7 +135,12 @@ func (l *LogIngestor) IngestLogs(
 	presented string,
 	batch model.SDKLogBatch,
 ) (int, error) {
-	key, err := authenticateKey(ctx, l.keys, presented)
+	key, err := authenticateKey(
+		ctx,
+		l.keys,
+		presented,
+		l.logger,
+	)
 	if err != nil {
 		return 0, err
 	}

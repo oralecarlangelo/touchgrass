@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { investigationHref } from './investigation.ts';
+
 import {
   collectorGuidance,
   collectorLastSuccessAt,
@@ -7,7 +9,6 @@ import {
   collectorState,
   formatPercentile,
   mergeTimelineSeries,
-  performanceDrilldownHref,
 } from './performance.ts';
 import { performanceApiPath } from './api.ts';
 
@@ -317,7 +318,7 @@ describe('service performance view model', () => {
 
   it('retains service and time range in drill-down links', () => {
     expect(
-      performanceDrilldownHref('logs', {
+      investigationHref('logs', {
         serviceId: 'api blue',
         start: '2026-10-16T01:00:00Z',
         end: '2026-10-16T02:00:00Z',

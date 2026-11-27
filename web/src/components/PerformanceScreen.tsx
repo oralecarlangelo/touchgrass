@@ -31,7 +31,8 @@ import {
   type PerformanceFilters,
   type ServiceView,
 } from '@/lib/api.ts';
-import { collectorState, performanceDrilldownHref } from '@/lib/performance.ts';
+import { collectorState } from '@/lib/performance.ts';
+import { investigationHref } from '@/lib/investigation.ts';
 import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const CorrelationTimeline = lazy(() => import('./performance/CorrelationTimeline.tsx'));
@@ -246,10 +247,10 @@ export default function PerformanceScreen({
                     </div>
                     <div className="flex gap-2">
                       <Button asChild size="sm" variant="outline">
-                        <a href={performanceDrilldownHref('logs', drilldownFilters)}>Open logs</a>
+                        <a href={investigationHref('logs', drilldownFilters)}>Open logs</a>
                       </Button>
                       <Button asChild size="sm" variant="outline">
-                        <a href={performanceDrilldownHref('issues', drilldownFilters)}>Open issues</a>
+                        <a href={investigationHref('issues', drilldownFilters)}>Open issues</a>
                       </Button>
                     </div>
                   </div>

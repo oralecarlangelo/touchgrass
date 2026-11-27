@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import ErrorState from './ErrorState.tsx';
+import type { Can } from '@/lib/access.ts';
 import {
   fetchNotifications,
   isUnauthorized,
@@ -24,10 +25,22 @@ import {
   type ServiceView,
 } from '@/lib/api.ts';
 import { formatTime, timeAgo } from '@/lib/format.ts';
+import { alertInvestigation, investigationHref } from '@/lib/investigation.ts';
 import { notificationFindingID } from '@/lib/security.ts';
+import { useLocationHash } from '@/lib/use-location-hash.ts';
 import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const pageSize = 20;
+
+const destinations = [
+  { view: 'logs', label: 'Logs', capability: 'logs.read' },
+  { view: 'issues', label: 'Issues', capability: 'issues.read' },
+  { view: 'audit', label: 'Audit', capability: 'audit.read' },
+] as const;
+
+function focusSelectedAlert(row: HTMLLIElement | null): void {
+  row?.focus();
+}
 
 function groupNotifications(items: Notification[]): Notification[][] {
   const bySignal = new Map<string, Notification[]>();
@@ -44,19 +57,31 @@ function groupNotifications(items: Notification[]): Notification[][] {
   return [...bySignal.values()].sort((a, b) => Number(unread(b)) - Number(unread(a)));
 }
 
-export default function NotificationsScreen({
-  services,
-  onUnauthorized,
-  isAdmin,
-  onReadChange,
-  onSelectSecurityFinding,
-}: {
+interface NotificationsProps {
   services: ServiceView[];
+  can: Can;
   onUnauthorized: () => void;
   isAdmin: boolean;
   onReadChange: () => void;
   onSelectSecurityFinding: (id: number) => void;
-}) {
+}
+
+export default function NotificationsScreen(props: NotificationsProps) {
+  const hash = useLocationHash('notifications');
+  if (hash === null) return null;
+  const alertId = new URLSearchParams(hash.split('?')[1]).get('alert');
+  return <NotificationFeed key={alertId} {...props} alertId={alertId} />;
+}
+
+function NotificationFeed({
+  services,
+  can,
+  alertId,
+  onUnauthorized,
+  isAdmin,
+  onReadChange,
+  onSelectSecurityFinding,
+}: NotificationsProps & { alertId: string | null }) {
   const [serviceId, setServiceId] = useState('all');
   const [kind, setKind] = useState('all');
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -70,6 +95,7 @@ export default function NotificationsScreen({
   const { data, error, retry } = usePanelRead(effectiveServiceId, readFeed, 0, onUnauthorized);
   const notes = data?.notifications ?? null;
   const unread = data?.unread ?? 0;
+  const linkedAlert = notes?.find((item) => String(item.id) === alertId);
 
   const kinds = useMemo(() => {
     const seen = new Set<string>();
@@ -85,9 +111,9 @@ export default function NotificationsScreen({
     () =>
       (notes ?? []).filter(
         (item) =>
-          (kind === 'all' || item.kind === kind) && (!unreadOnly || item.read_at === null),
+          item.id !== linkedAlert?.id && (kind === 'all' || item.kind === kind) && (!unreadOnly || item.read_at === null),
       ),
-    [notes, kind, unreadOnly],
+    [notes, kind, linkedAlert?.id, unreadOnly],
   );
 
   const groups = useMemo(() => groupNotifications(filtered), [filtered]);
@@ -126,9 +152,14 @@ export default function NotificationsScreen({
     }
   }
 
-  function notificationRow(item: Notification) {
+  function notificationRow(item: Notification, linked = false) {
+    const filters = alertInvestigation(item);
+    const links = filters === null ? [] : destinations.filter(({ view, capability }) => filters.serviceId
+      ? can(capability, filters.serviceId)
+      : view === 'audit' && can('audit.read_all'));
     return (
-      <li key={item.id} className="flex items-start gap-3 px-4 py-3">
+      <li key={item.id} className="flex items-start gap-3 px-4 py-3"
+        tabIndex={linked ? -1 : undefined} ref={linked ? focusSelectedAlert : undefined}>
         {!item.read_at && (
           <span
             className="bg-primary mt-1.5 h-2 w-2 shrink-0 rounded-full"
@@ -158,6 +189,18 @@ export default function NotificationsScreen({
             <span className="font-mono">{item.service_id}</span> · {timeAgo(item.created_at)}{' '}
             <span className="hidden sm:inline">({formatTime(item.created_at)})</span>
           </p>
+          {filters !== null && links.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <span className="text-muted-foreground" title={`${formatTime(filters.start)} – ${formatTime(filters.end)}`}>
+                Investigate ±30 min
+              </span>
+              {links.map(({ view, label }) => (
+                <a className="text-primary underline underline-offset-4" href={investigationHref(view, filters)} key={view}>
+                  {label}
+                </a>
+              ))}
+            </div>
+          )}
         </div>
         {item.read_at === null && isAdmin && (
           <Button variant="ghost" size="sm" onClick={() => void handleMarkRead(item.id)}>
@@ -240,6 +283,18 @@ export default function NotificationsScreen({
       </div>
 
       {error && <ErrorState title="Couldn't load notifications" message={error} onRetry={retry} />}
+      {alertId !== null && notes !== null && (
+        <Card>
+          <CardContent className="px-0 py-1">
+            {linkedAlert === undefined ? (
+              <p className="text-muted-foreground px-4 py-3 text-sm">This alert is unavailable in the current feed.</p>
+            ) : <ul>{notificationRow(linkedAlert, true)}</ul>}
+            <a className="text-primary mx-4 mb-2 inline-block text-xs underline underline-offset-4" href="#/notifications">
+              Show all notifications
+            </a>
+          </CardContent>
+        </Card>
+      )}
       {notes === null ? !error && (
         <div className="space-y-2" aria-label="Loading notifications">
           <Skeleton className="h-16 w-full" />
@@ -272,7 +327,7 @@ export default function NotificationsScreen({
                           </span>
                         </summary>
                         <ul className="divide-y divide-border">
-                          {group.map(notificationRow)}
+                          {group.map((item) => notificationRow(item))}
                         </ul>
                       </details>
                     </li>

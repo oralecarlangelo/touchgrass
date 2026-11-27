@@ -27,6 +27,8 @@ export interface HashState {
   tab: string | null;
 }
 
+export const hashUpdatedEvent = 'touchgrass:hash-updated';
+
 const tabPattern = /^[a-z]+$/;
 
 // parseHash reads `#/issues`, `#/services/<id>` or `#/services/<id>/<tab>`;
@@ -54,5 +56,7 @@ export function writeHash(view: ViewId, serviceId: string | null, tab: string | 
 
   if (window.location.hash.split('?', 1)[0] !== next) {
     window.history.replaceState(null, '', next);
+    // Replacing the URL does not emit the browser's hashchange event.
+    window.dispatchEvent(new Event(hashUpdatedEvent));
   }
 }

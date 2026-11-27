@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,9 @@ import ErrorState from './ErrorState.tsx';
 import IssueDetail from './issues/IssueDetail.tsx';
 import IssueList from './issues/IssueList.tsx';
 import { fetchIssueInbox, type ServiceView } from '@/lib/api.ts';
+import { formatTime } from '@/lib/format.ts';
+import { readInvestigation, type InvestigationRange } from '@/lib/investigation.ts';
+import { useLocationHash } from '@/lib/use-location-hash.ts';
 import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 interface IssuesProps {
@@ -16,24 +19,18 @@ interface IssuesProps {
 }
 
 export default function IssuesScreen(props: IssuesProps) {
-  const [hash, setHash] = useState(() => window.location.hash);
-  useEffect(() => {
-    const followHash = () => setHash(window.location.hash);
-    window.addEventListener('hashchange', followHash);
-    return () => window.removeEventListener('hashchange', followHash);
-  }, []);
-
-  return <IssueInbox key={hash} initial={new URLSearchParams(hash.split('?')[1] ?? '')} {...props} />;
+  const hash = useLocationHash('issues');
+  return hash === null ? null : <IssueInbox key={hash} initial={readInvestigation(hash)} {...props} />;
 }
 
-function IssueInbox({ services, onUnauthorized, initial }: IssuesProps & { initial: URLSearchParams }) {
-  const [serviceId, setServiceId] = useState(initial.get('service_id') || 'all');
+function IssueInbox({ services, onUnauthorized, initial }: IssuesProps & { initial: InvestigationRange }) {
+  const [serviceId, setServiceId] = useState(initial.serviceId ?? 'all');
   const [query, setQuery] = useState('');
   const [release, setRelease] = useState('');
   const [filters, setFilters] = useState({ q: '', release: '' });
   const [cursors, setCursors] = useState(['']);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [range, setRange] = useState({ start: initial.get('start') ?? '', end: initial.get('end') ?? '' });
+  const [range, setRange] = useState({ start: initial.start ?? '', end: initial.end ?? '' });
 
   const cursor = cursors[cursors.length - 1];
   const scope = JSON.stringify([serviceId, filters, cursor, range]);
@@ -61,7 +58,10 @@ function IssueInbox({ services, onUnauthorized, initial }: IssuesProps & { initi
 
       {(range.start || range.end) && (
         <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm">
-          <span>Filtered to the selected investigation window</span>
+          <span>
+            Issues {range.start && `from ${formatTime(range.start)}`}{' '}
+            {range.end && `before ${formatTime(range.end)}`}
+          </span>
           <Button size="sm" variant="ghost" onClick={() => { setRange({ start: '', end: '' }); setCursors(['']); }}>
             Clear time range
           </Button>

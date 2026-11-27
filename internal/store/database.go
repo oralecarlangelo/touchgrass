@@ -203,14 +203,27 @@ func (s *DBJobStore) trim(ctx context.Context, keep int) error {
 	return nil
 }
 
+// SQLiteVersion checks that the embedded database can answer a lightweight query.
+func (db *DB) SQLiteVersion(ctx context.Context) (string, error) {
+	var version string
+	if err := db.read.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&version); err != nil {
+		return "", fmt.Errorf("querying sqlite version: %w", err)
+	}
+
+	return version, nil
+}
+
 // SQLiteHealth reports the embedded database version and the first
 // PRAGMA integrity_check verdict ("ok" when healthy).
 func (db *DB) SQLiteHealth(ctx context.Context) (model.SQLiteHealth, error) {
 	var health model.SQLiteHealth
 
-	if err := db.read.QueryRowContext(ctx, "SELECT sqlite_version()").Scan(&health.Version); err != nil {
-		return model.SQLiteHealth{}, fmt.Errorf("querying sqlite version: %w", err)
+	version, err := db.SQLiteVersion(ctx)
+	if err != nil {
+		return model.SQLiteHealth{}, err
 	}
+
+	health.Version = version
 
 	if err := db.read.QueryRowContext(ctx, "PRAGMA integrity_check").Scan(&health.Integrity); err != nil {
 		return model.SQLiteHealth{}, fmt.Errorf("checking sqlite integrity: %w", err)

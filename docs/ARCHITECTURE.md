@@ -137,6 +137,29 @@ and private runbooks do not require an ADR because they are not product logic.
 - Middleware: multi-user auth (session cookie, admin/developer/viewer roles),
   structured request logging (method, path, status, duration).
 
+### Monitoring reads
+
+Monitoring pages consume the latest bounded heartbeat. Keep Docker calls,
+service probes, and full database checks out of the page request path. Reuse
+host inventory where it already exists, give observations a timestamp, and show
+waiting, stale, and unavailable states separately. Keep refresh scoped to the
+visible summary. Read backup artifacts and history on entry, explicit refresh,
+and relevant job transitions.
+
+The Databases page reuses the local Docker inventory, collected at startup and
+then on its existing schedule and lifecycle events. It recognizes common
+PostgreSQL, Redis, Valkey, MySQL, MariaDB, and MongoDB images, and tracks
+explicitly configured targets by container name or ID. This works on EC2 and
+other hosts where Touch Grass can read the local Docker daemon. A running
+container without a Docker health check has unknown database readiness.
+Discovery neither reads credentials nor grants backup or restore access.
+Managed databases and host processes outside Docker are not discovered.
+
+The embedded SQLite heartbeat reads its version and file size every 30 seconds
+with a deadline on the query. It does not scan SQLite for integrity.
+Deep database diagnostics belong in a separate collector or an explicit
+operation. A UI refresh only reads the latest observations.
+
 ## Data
 
 SQLite file (`touchgrass.db`, volume-mounted). Schema areas:

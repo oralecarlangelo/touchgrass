@@ -1949,11 +1949,11 @@ paths:
       x-touchgrass-scope: fleet
       operationId: listDatabases
       tags: [databases]
-      summary: Postgres, redis, and sqlite health
+      summary: Last observed database heartbeat
       description: |
-        Always returns all three entries in postgres/redis/sqlite order.
-        Unconfigured entries report configured false; failed probes degrade
-        to reachable false with null stats instead of erroring.
+        Returns the PostgreSQL and Redis configuration slots and embedded SQLite,
+        followed by recognized local Docker database containers. Each entry
+        reports its observation time and status. No live probes run on reads.
       responses:
         '200':
           description: Health entries
@@ -1961,8 +1961,10 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [databases]
+                required: [databases, inventory_status]
                 properties:
+                  inventory_status: { type: string, enum: [waiting, current, stale, unavailable] }
+                  docker_observed_at: { type: string, format: date-time }
                   databases:
                     type: array
                     items: { $ref: '#/components/schemas/Database' }
@@ -3350,12 +3352,16 @@ components:
         dangling: { type: boolean }
     Database:
       type: object
-      required: [id, label, configured, reachable]
+      required: [id, label, configured, reachable, status]
       properties:
-        id: { type: string, enum: [postgres, redis, sqlite] }
+        id: { type: string, description: "postgres, redis, sqlite, or docker:<container ID>" }
         label: { type: string }
         configured: { type: boolean }
         reachable: { type: boolean }
+        container: { type: string }
+        image: { type: string }
+        status: { type: string }
+        observed_at: { type: string, format: date-time }
         version: { type: string }
         size_bytes: { type: integer }
         connections_used: { type: integer }

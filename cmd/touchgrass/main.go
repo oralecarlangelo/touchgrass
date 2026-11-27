@@ -112,7 +112,7 @@ func startBackground(
 	group *sync.WaitGroup,
 	logger *slog.Logger,
 ) {
-	group.Add(13)
+	group.Add(14)
 
 	go func() {
 		defer group.Done()
@@ -148,6 +148,12 @@ func startBackground(
 		defer group.Done()
 
 		loops.databases.RunScheduler(ctx, loops.backupInterval)
+	}()
+
+	go func() {
+		defer group.Done()
+
+		loops.databases.RunHeartbeat(ctx)
 	}()
 
 	go func() {
@@ -419,7 +425,7 @@ func runServe(args []string) error {
 	fleetInventory := service.NewFleetInventory(service.FleetInventoryConfig{
 		Services: serviceStore, Containers: store.NewContainerStore(db), Docker: dockerClient,
 		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
-		Security: securityStore, Evaluator: securityService, Audit: audit,
+		Security: securityStore, Evaluator: securityService, Audit: audit, Observe: databases.ObserveContainers,
 	})
 	processSecurity := service.NewProcessScanner(service.ProcessScannerConfig{
 		Inventory: fleetInventory, Docker: dockerClient, Security: securityService,

@@ -17,6 +17,7 @@ import (
 
 	nethttp "net/http"
 
+	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 	"github.com/oralecarlangelo/touchgrass/internal/service"
 	"github.com/oralecarlangelo/touchgrass/internal/store"
@@ -212,65 +213,50 @@ func waitHTTPJob(t *testing.T, server *Server, id int64) model.DBJob {
 func TestHandleDatabases(t *testing.T) {
 	t.Parallel()
 
-	fixture := newDatabaseFixture(t, cannedDatabaseExec(nil), nil)
+	fixture := newDatabaseFixture(t, func(_ []string, _ io.Reader, _ io.Writer) error {
+		t.Error("reading the heartbeat must not execute Docker commands")
+		return errors.New("unexpected command")
+	}, nil)
 
 	status, body := doRequest(t, fixture.server, nethttp.MethodGet, "/api/databases", "")
 	if status != nethttp.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
 	}
 
-	var got databasesResponse
-
+	var got model.DatabaseSnapshot
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decoding databases: %v", err)
 	}
 
-	if len(got.Databases) != 3 {
-		t.Fatalf("databases = %d entries, want 3", len(got.Databases))
-	}
-
-	ids := []string{got.Databases[0].ID, got.Databases[1].ID, got.Databases[2].ID}
-
-	if ids[0] != "postgres" || ids[1] != "redis" || ids[2] != "sqlite" {
-		t.Errorf("ids = %v, want postgres/redis/sqlite", ids)
+	if len(got.Databases) != 3 || got.InventoryStatus != "waiting" || got.DockerObservedAt != nil {
+		t.Fatalf("initial snapshot = %+v, want three entries waiting for inventory", got)
 	}
 
 	postgres := got.Databases[0]
-
-	if !postgres.Configured || !postgres.Reachable {
-		t.Errorf("postgres = %+v, want configured reachable", postgres)
+	if postgres.ID != model.DatabasePostgres || !postgres.Configured || postgres.Reachable {
+		t.Errorf("initial postgres = %+v, want configured with no verified status", postgres)
 	}
 
-	if postgres.Version == nil || *postgres.Version != "16.3" {
-		t.Errorf("postgres version = %v, want 16.3", postgres.Version)
-	}
-}
+	fixture.server.database.ObserveContainers([]docker.Container{
+		{ID: "example-redis-container", Name: "sample-cache", Image: "redis:7", State: testRunningState},
+	}, time.Now(), time.Minute)
 
-func TestHandleDatabasesUnconfigured(t *testing.T) {
-	t.Parallel()
-
-	fixture := newDatabaseFixture(t, cannedDatabaseExec(nil), func(cfg *service.DatabaseConfig) {
-		cfg.Container = ""
-		cfg.RedisContainer = ""
-	})
-
-	status, body := doRequest(t, fixture.server, nethttp.MethodGet, "/api/databases", "")
+	status, body = doRequest(t, fixture.server, nethttp.MethodGet, "/api/databases", "")
 	if status != nethttp.StatusOK {
 		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
 	}
 
-	var got databasesResponse
-
+	got = model.DatabaseSnapshot{}
 	if err := json.Unmarshal(body, &got); err != nil {
 		t.Fatalf("decoding databases: %v", err)
 	}
 
-	if got.Databases[0].Configured || got.Databases[1].Configured {
-		t.Errorf("databases = %+v, want postgres/redis unconfigured", got.Databases)
+	if len(got.Databases) != 4 || got.InventoryStatus != "current" || got.DockerObservedAt == nil {
+		t.Fatalf("observed snapshot = %+v, want one additional discovery", got)
 	}
 
-	if !got.Databases[2].Configured || !got.Databases[2].Reachable {
-		t.Errorf("sqlite = %+v, want configured reachable", got.Databases[2])
+	if redis := got.Databases[3]; redis.Container != "sample-cache" || redis.Configured || redis.Status != testRunningState {
+		t.Errorf("observed Redis = %+v, want running and unconfigured", redis)
 	}
 }
 

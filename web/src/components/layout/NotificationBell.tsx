@@ -12,16 +12,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { isUnauthorized, markNotificationsRead } from '@/lib/api.ts';
 import { timeAgo } from '@/lib/format.ts';
+import { alertHref } from '@/lib/investigation.ts';
 import { notificationPreviewLimit, type NotificationPreview } from '@/lib/use-notification-preview.ts';
 
 export default function NotificationBell({
   preview,
-  onViewAll,
   onUnauthorized,
   isAdmin,
 }: {
   preview: NotificationPreview;
-  onViewAll: () => void;
   onUnauthorized: () => void;
   isAdmin: boolean;
 }) {
@@ -78,21 +77,23 @@ export default function NotificationBell({
           </p>
         )}
         {items.slice(0, notificationPreviewLimit).map((item) => (
-          <DropdownMenuItem key={item.id} onSelect={onViewAll} className="items-start gap-2">
-            {!item.read_at && (
-              <span className="bg-primary mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden />
-            )}
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-medium">{item.title}</span>
-              <span className="text-muted-foreground block text-xs">
-                {item.service_id} · {timeAgo(item.created_at)}
+          <DropdownMenuItem key={item.id} asChild className="items-start gap-2">
+            <a href={alertHref(item.id)}>
+              {!item.read_at && (
+                <span className="bg-primary mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden />
+              )}
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{item.title}</span>
+                <span className="text-muted-foreground block text-xs">
+                  {item.service_id} · {timeAgo(item.created_at)}
+                </span>
               </span>
-            </span>
+            </a>
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={onViewAll} className="justify-center text-sm font-medium">
-          View all
+        <DropdownMenuItem asChild className="justify-center text-sm font-medium">
+          <a href="#/notifications">View all</a>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

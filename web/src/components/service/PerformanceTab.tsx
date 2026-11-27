@@ -46,7 +46,7 @@ import {
   type PerformanceFilters,
 } from '@/lib/api.ts';
 import { formatBytes, formatDuration } from '@/lib/format.ts';
-import { performanceDrilldownHref } from '@/lib/performance.ts';
+import { investigationHref } from '@/lib/investigation.ts';
 import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const seriesConfig = {
@@ -384,13 +384,13 @@ export default function PerformanceTab({
                   </div>
                   <div className="flex gap-2">
                     <Button asChild size="sm" variant="outline">
-                      <a href={performanceDrilldownHref('logs', linkFilters)}>Logs</a>
+                      <a href={investigationHref('logs', linkFilters)}>Logs</a>
                     </Button>
                     <Button asChild size="sm" variant="outline">
-                      <a href={performanceDrilldownHref('issues', linkFilters)}>Issues</a>
+                      <a href={investigationHref('issues', linkFilters)}>Issues</a>
                     </Button>
                     <Button asChild size="sm" variant="outline">
-                      <a href={performanceDrilldownHref('audit', linkFilters)}>Deploy history</a>
+                      <a href={investigationHref('audit', linkFilters)}>Deploy history</a>
                     </Button>
                   </div>
                 </div>

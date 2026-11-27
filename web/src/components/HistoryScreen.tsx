@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,8 @@ import {
 import ErrorState from './ErrorState.tsx';
 import { fetchAudit, type ServiceView } from '@/lib/api.ts';
 import { formatTime } from '@/lib/format.ts';
+import { readInvestigation, type InvestigationRange } from '@/lib/investigation.ts';
+import { useLocationHash } from '@/lib/use-location-hash.ts';
 import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const pageSize = 25;
@@ -34,20 +36,14 @@ interface HistoryProps {
 }
 
 export default function HistoryScreen(props: HistoryProps) {
-  const [hash, setHash] = useState(() => window.location.hash);
-
-  useEffect(() => {
-    if (props.fixedServiceId !== undefined) return;
-    const followHash = () => setHash(window.location.hash);
-    window.addEventListener('hashchange', followHash);
-    return () => window.removeEventListener('hashchange', followHash);
-  }, [props.fixedServiceId]);
+  const hash = useLocationHash('audit');
+  if (props.fixedServiceId === undefined && hash === null) return null;
 
   return (
     <AuditHistory
       key={props.fixedServiceId ?? hash}
       {...props}
-      link={new URLSearchParams(props.fixedServiceId === undefined ? hash.split('?')[1] : '')}
+      link={props.fixedServiceId === undefined && hash !== null ? readInvestigation(hash) : {}}
     />
   );
 }
@@ -63,8 +59,8 @@ function AuditHistory({
   fixedServiceId,
   onUnauthorized,
   link,
-}: HistoryProps & { link: URLSearchParams }) {
-  const [serviceId, setServiceId] = useState(link.get('service_id') ?? 'all');
+}: HistoryProps & { link: InvestigationRange }) {
+  const [serviceId, setServiceId] = useState(link.serviceId ?? 'all');
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
   const [since, setSince] = useState('');
@@ -73,8 +69,8 @@ function AuditHistory({
   const [page, setPage] = useState(0);
 
   const effectiveServiceId = fixedServiceId ?? (serviceId === 'all' ? '' : serviceId);
-  const linkedStart = showLinkRange ? validBound(link.get('start')) : undefined;
-  const end = showLinkRange ? validBound(link.get('end')) : undefined;
+  const linkedStart = showLinkRange ? link.start : undefined;
+  const end = showLinkRange ? link.end : undefined;
   const start = since ? validBound(`${since}T00:00:00`) : linkedStart;
 
   const readHistory = useCallback(

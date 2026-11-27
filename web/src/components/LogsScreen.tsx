@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import {
   Select,
@@ -9,6 +9,8 @@ import {
 } from '@/components/ui/select';
 import LogSearch from './logs/LogSearch.tsx';
 import type { ServiceView } from '@/lib/api.ts';
+import { readInvestigation } from '@/lib/investigation.ts';
+import { useLocationHash } from '@/lib/use-location-hash.ts';
 
 export default function LogsScreen({
   services,
@@ -17,22 +19,17 @@ export default function LogsScreen({
   services: ServiceView[];
   onUnauthorized: () => void;
 }) {
-  const [hash, setHash] = useState(() => window.location.hash);
+  const hash = useLocationHash('logs');
   const [selection, setSelection] = useState<{ hash: string; serviceId: string } | null>(null);
+  if (hash === null) return null;
 
-  useEffect(() => {
-    const followHash = () => setHash(window.location.hash);
-    window.addEventListener('hashchange', followHash);
-    return () => window.removeEventListener('hashchange', followHash);
-  }, []);
-
-  const filters = new URLSearchParams(hash.split('?')[1] ?? '');
-  const serviceId = selection?.hash === hash ? selection.serviceId : (filters.get('service_id') ?? '');
+  const filters = readInvestigation(hash);
+  const serviceId = selection?.hash === hash ? selection.serviceId : filters.serviceId;
   const setServiceId = (next: string) => setSelection({ hash, serviceId: next });
 
-  const effectiveId = services.some((service) => service.id === serviceId)
-    ? serviceId
-    : (services[0]?.id ?? '');
+  const effectiveId = serviceId === undefined
+    ? (services[0]?.id ?? '')
+    : services.find((service) => service.id === serviceId)?.id ?? '';
 
   return (
     <div className="space-y-4">
@@ -53,13 +50,15 @@ export default function LogsScreen({
       </div>
 
       {effectiveId === '' ? (
-        <p className="text-muted-foreground text-sm">No services on the radar yet.</p>
+        <p className="text-muted-foreground text-sm">
+          {serviceId === undefined ? 'No services on the radar yet.' : 'Select an available service to search its logs.'}
+        </p>
       ) : (
         <LogSearch
           key={`${effectiveId}:${hash}`}
           serviceId={effectiveId}
-          initialAfter={filters.get('start')}
-          initialBefore={filters.get('end')}
+          initialAfter={filters.start}
+          initialBefore={filters.end}
           onUnauthorized={onUnauthorized}
         />
       )}

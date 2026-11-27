@@ -526,6 +526,7 @@ export default function App() {
             ) : view === 'notifications' ? (
               <NotificationsScreen
                 services={services ?? []}
+                can={can}
                 onUnauthorized={handleUnauthorized}
                 isAdmin={can('notifications.ack')}
                 onReadChange={notificationPreview.retry}

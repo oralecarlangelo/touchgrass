@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { parseHash } from './hash.ts';
+import { hashUpdatedEvent, parseHash, writeHash } from './hash.ts';
 
 describe('parseHash', () => {
   it('keeps the Help page deep-linkable', () => {
@@ -19,5 +19,29 @@ describe('parseHash', () => {
       tab: 'environment',
     });
     expect(parseHash('#/services/api/..%2Fetc')).toEqual({ view: 'services', serviceId: 'api', tab: null });
+  });
+});
+
+describe('writeHash', () => {
+  it('preserves investigation parameters and notifies screens when the app changes routes', () => {
+    const location = { hash: '#/issues?service_id=api' };
+    const events = new EventTarget();
+    const updated = vi.fn();
+    events.addEventListener(hashUpdatedEvent, updated);
+    vi.stubGlobal('window', Object.assign(events, {
+      location,
+      history: { replaceState: (_state: unknown, _unused: string, hash: string) => { location.hash = hash; } },
+    }));
+
+    try {
+      writeHash('issues', null);
+      expect(location.hash).toBe('#/issues?service_id=api');
+      expect(updated).not.toHaveBeenCalled();
+      writeHash('audit', null);
+      expect(location.hash).toBe('#/audit');
+      expect(updated).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

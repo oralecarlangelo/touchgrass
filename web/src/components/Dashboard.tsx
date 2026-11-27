@@ -18,6 +18,7 @@ import {
 } from '@/lib/api.ts';
 import { formatBytes, formatDuration, timeAgo } from '@/lib/format.ts';
 import { inventoryHeartbeat } from '@/lib/heartbeat.ts';
+import { alertHref } from '@/lib/investigation.ts';
 import type { NotificationPreview } from '@/lib/use-notification-preview.ts';
 import { healthDotClass, type ViewId } from '@/lib/views.ts';
 
@@ -469,7 +470,9 @@ export default function Dashboard({
                   {!item.read_at && (
                     <span className="bg-primary h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden />
                   )}
-                  <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                  <a className="min-w-0 flex-1 truncate hover:underline focus-visible:underline" href={alertHref(item.id)}>
+                    {item.title}
+                  </a>
                   <span className="text-muted-foreground shrink-0 text-xs">
                     {timeAgo(item.created_at)}
                   </span>

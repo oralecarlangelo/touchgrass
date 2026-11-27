@@ -76,8 +76,11 @@ function localDateTime(date: Date): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 23);
 }
 
-function toISO(value: string): string {
-  return value === '' ? '' : new Date(value).toISOString();
+function toISO(value: string, linked?: string | null): string {
+  if (value === '') return '';
+  // The same local clock time can occur twice when daylight saving time ends.
+  if (linked && value === localDateTime(new Date(linked))) return linked;
+  return new Date(value).toISOString();
 }
 
 export default function LogSearch({
@@ -127,7 +130,7 @@ export default function LogSearch({
       setError(null);
 
       try {
-        const bounds = { after: toISO(params.after), before: toISO(params.before) };
+        const bounds = { after: toISO(params.after, initialAfter), before: toISO(params.before, initialBefore) };
         if (params.source === 'sdk') {
           const fetched = await listSdkLogs(serviceId, {
             q: params.q,
@@ -161,7 +164,7 @@ export default function LogSearch({
         if (!signal.aborted) setSearching(false);
       }
     },
-    [serviceId, onUnauthorized],
+    [serviceId, onUnauthorized, initialAfter, initialBefore],
   );
 
   const search = useCallback(async () => {
@@ -282,7 +285,7 @@ export default function LogSearch({
       try {
         const fetched = await listSdkLogs(serviceId, {
           q: params.q,
-          after: toISO(params.after),
+          after: toISO(params.after, initialAfter),
           before: oldest,
           level: params.level === 'all' ? '' : params.level,
           trace_id: params.traceId,
@@ -322,7 +325,7 @@ export default function LogSearch({
     try {
       const fetched = await fetchLogs(serviceId, {
         q: params.q,
-        after: toISO(params.after),
+        after: toISO(params.after, initialAfter),
         before: oldest,
         stream: params.stream === 'all' ? '' : params.stream,
         level: params.level === 'all' ? '' : params.level,
@@ -347,7 +350,7 @@ export default function LogSearch({
     } finally {
       if (!signal.aborted) setLoadingOlder(false);
     }
-  }, [lines, sdkLines, serviceId, source, onUnauthorized]);
+  }, [lines, sdkLines, serviceId, source, onUnauthorized, initialAfter]);
 
   const openContext = useCallback(
     async (line: LogLine) => {

@@ -128,7 +128,6 @@ export default function AppShell({
               {notificationPreview !== undefined && (
                 <NotificationBell
                   preview={notificationPreview}
-                  onViewAll={() => onView('notifications')}
                   onUnauthorized={onUnauthorized}
                   isAdmin={can('notifications.ack')}
                 />

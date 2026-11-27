@@ -2,7 +2,6 @@ import type {
   CollectorStatusView,
   Deploy,
   DatabaseView,
-  PerformanceFilters,
   PerformanceTimelinePoint,
   RuntimeMarker,
   ServiceView,
@@ -213,35 +212,4 @@ export function collectorSetupSnippet(
 
 export function collectorLastSuccessAt(status: CollectorStatusView): string | null {
   return normalizedTime(status.last_success_at);
-}
-
-export function performanceDrilldownHref(
-  view: 'logs' | 'issues' | 'audit' | 'databases' | 'fleet',
-  filters: PerformanceFilters,
-): string {
-  const params = new URLSearchParams();
-  const serviceId = filters.serviceId?.trim();
-
-  if (serviceId !== undefined && serviceId !== '') {
-    params.set('service_id', serviceId);
-  }
-
-  for (const [key, value] of [
-    ['start', filters.start],
-    ['end', filters.end],
-  ] as const) {
-    if (value === undefined) {
-      continue;
-    }
-
-    const parsed = new Date(value);
-
-    if (!Number.isNaN(parsed.getTime())) {
-      params.set(key, parsed.toISOString());
-    }
-  }
-
-  const query = params.toString();
-
-  return `#/${view}${query === '' ? '' : `?${query}`}`;
 }

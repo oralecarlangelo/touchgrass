@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -23,14 +23,19 @@ import {
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
 import StoragePanel from './StoragePanel';
-import BucketManager from './BucketManager';
+import HeartbeatStatus from './HeartbeatStatus.tsx';
+import ScreenErrorBoundary from './ScreenErrorBoundary.tsx';
+import { snapshotHeartbeat } from '@/lib/heartbeat.ts';
 import {
   fetchImages,
   isUnauthorized,
   pruneImages,
   type ImageView,
+  type ServiceFreshness,
 } from '@/lib/api.ts';
 import { formatBytes, formatTime, shortId } from '@/lib/format.ts';
+
+const BucketManager = lazy(() => import('./BucketManager.tsx'));
 
 export default function ImagesScreen({
   onUnauthorized,
@@ -41,7 +46,7 @@ export default function ImagesScreen({
 }) {
   const [bucketsOpen, setBucketsOpen] = useState(false);
   const [images, setImages] = useState<ImageView[] | null>(null);
-  const [imagesStale, setImagesStale] = useState(false);
+  const [freshness, setFreshness] = useState<ServiceFreshness | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pruning, setPruning] = useState(false);
@@ -55,7 +60,8 @@ export default function ImagesScreen({
     try {
       const result = await fetchImages(signal);
       if (signal?.aborted || sequence !== loadSequence.current) return;
-      setImages(result.images); setImagesStale(result.freshness.stale);
+      setImages(result.images);
+      setFreshness(result.freshness);
     } catch (err) {
       if (signal?.aborted || sequence !== loadSequence.current) return;
       if (isUnauthorized(err)) {
@@ -131,7 +137,19 @@ export default function ImagesScreen({
 
       <StoragePanel revision={revision} onUnauthorized={onUnauthorized} />
       <h2 className="text-lg font-semibold">Docker images</h2>
-      {imagesStale && <p role="status" className="text-muted-foreground text-sm">Image inventory is refreshing in the background; showing the last available snapshot.</p>}
+      {freshness !== null && (
+        <HeartbeatStatus
+          label="Docker image heartbeat"
+          state={snapshotHeartbeat(freshness)}
+          observedAt={freshness.observed_at}
+          detail={freshness.last_error_category === 'collection_failed'
+            ? 'The Docker image list could not be collected. Check daemon access.'
+            : freshness.stale ? 'The image collector is waiting for its next sample.' : undefined}
+          action={freshness.stale ? (
+            <Button size="sm" variant="outline" onClick={() => void load()}>Refresh images</Button>
+          ) : null}
+        />
+      )}
       {error !== null && <ErrorState title="Couldn't load images" message={error} onRetry={() => void load()} />}
       <p className="text-muted-foreground text-sm">Image sizes include shared layers. Totals below are logical estimates, not physical disk usage or guaranteed reclaimable space.</p>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -246,7 +264,13 @@ export default function ImagesScreen({
       {isAdmin && (
         <details className="rounded-lg border" onToggle={(event) => setBucketsOpen(event.currentTarget.open)}>
           <summary className="cursor-pointer p-4 text-sm font-medium">Browse object storage</summary>
-          {bucketsOpen && <BucketManager onUnauthorized={onUnauthorized} />}
+          {bucketsOpen && (
+            <ScreenErrorBoundary title="Couldn’t load bucket browsing">
+              <Suspense fallback={<p className="p-4 text-sm" role="status">Loading buckets…</p>}>
+                <BucketManager onUnauthorized={onUnauthorized} />
+              </Suspense>
+            </ScreenErrorBoundary>
+          )}
         </details>
       )}
 

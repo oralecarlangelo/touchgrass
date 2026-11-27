@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import { RefreshCw, Search, TriangleAlert } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -14,12 +14,12 @@ import {
 } from '@/components/ui/select';
 import { DetailsPanel, PanelError } from './performance/PerformancePanel.tsx';
 import CollectorStatus from './performance/CollectorStatus.tsx';
-import CorrelationTimeline from './performance/CorrelationTimeline.tsx';
 import DependencyPanels from './performance/DependencyPanels.tsx';
 import PerformanceSummary, {
   PerformanceSummarySkeleton,
 } from './performance/PerformanceSummary.tsx';
 import RouteTable from './performance/RouteTable.tsx';
+import ScreenErrorBoundary from './ScreenErrorBoundary.tsx';
 import {
   fetchCollectorStatuses,
   fetchDatabases,
@@ -33,6 +33,8 @@ import {
 } from '@/lib/api.ts';
 import { collectorState, performanceDrilldownHref } from '@/lib/performance.ts';
 import { usePanelRead } from '@/lib/use-panel-read.ts';
+
+const CorrelationTimeline = lazy(() => import('./performance/CorrelationTimeline.tsx'));
 
 const ranges = [
   { hours: 1, label: '1h' },
@@ -188,7 +190,13 @@ export default function PerformanceScreen({
       <DetailsPanel title="Timeline" description="Compare latency, deploys, and runtime events" onChange={setTimelineOpen}>
         <PanelError name="timeline" error={timeline.error} retry={timeline.retry} />
         {timeline.loading && timeline.data === null && <p role="status">Loading timeline…</p>}
-        {timeline.data !== null && <CorrelationTimeline timeline={timeline.data} />}
+        {timeline.data !== null && (
+          <ScreenErrorBoundary title="Couldn’t load the timeline chart">
+            <Suspense fallback={<p role="status">Loading timeline chart…</p>}>
+              <CorrelationTimeline timeline={timeline.data} />
+            </Suspense>
+          </ScreenErrorBoundary>
+        )}
       </DetailsPanel>
       <DetailsPanel title="HTTP routes" description="Find the slowest approved route families" onChange={setRoutesOpen}>
         <PanelError name="HTTP routes" error={routes.error} retry={routes.retry} />

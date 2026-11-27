@@ -44,8 +44,8 @@ func migrateFromV060(t *testing.T) *DB {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
-	if !slices.Equal(applied, []string{"0024", "0025", "0026", "0027", "0028"}) {
-		t.Fatalf("MigrateUp() applied = %v, want [0024 0025 0026 0027 0028]", applied)
+	if !slices.Equal(applied, []string{"0024", "0025", "0026", "0027", "0028", "0029"}) {
+		t.Fatalf("MigrateUp() applied = %v, want [0024 0025 0026 0027 0028 0029]", applied)
 	}
 
 	return db

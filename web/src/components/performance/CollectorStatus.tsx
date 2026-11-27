@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import type { CollectorStatusView, DatabaseView, ServiceView } from '@/lib/api.ts';
-import { timeAgo } from '@/lib/format.ts';
+import { formatTime, timeAgo } from '@/lib/format.ts';
 import {
   collectorGuidance,
   collectorLastSuccessAt,
@@ -89,8 +89,9 @@ export default function CollectorStatus({
             {collectors.map((collector) => {
               const state = collectorState(collector);
               const lastSuccessAt = collectorLastSuccessAt(collector);
-              const guidance = collectorGuidance(collector);
               const showIncident = state === 'degraded' || state === 'stale';
+              const guidance = collectorGuidance(collector) ?? (showIncident
+                ? 'Check the configured source and its permissions, then look for a new successful sample.' : null);
 
               return (
                 <div key={collector.source} className="rounded-md border p-3">
@@ -104,7 +105,9 @@ export default function CollectorStatus({
                     </Badge>
                   </div>
                   <p className="text-muted-foreground mt-2 text-xs">
-                    {lastSuccessAt !== null && `Last success ${timeAgo(lastSuccessAt)}`}
+                    {lastSuccessAt !== null && (
+                      <>Last success <time dateTime={lastSuccessAt} title={formatTime(lastSuccessAt)}>{timeAgo(lastSuccessAt)}</time></>
+                    )}
                     {lastSuccessAt === null && state !== 'disabled' && 'No successful sample yet.'}
                   </p>
                   {collector.dropped_records > 0 && (
@@ -113,8 +116,8 @@ export default function CollectorStatus({
                     </p>
                   )}
                   {showIncident && collector.last_error && (
-                    <p className="text-destructive mt-1 truncate text-xs" title={collector.last_error}>
-                      {collector.last_error}
+                    <p className="text-destructive mt-1 break-words text-xs" title={collector.last_error}>
+                      {collector.last_error.replace(/_/g, ' ')}
                     </p>
                   )}
                   {showIncident && !collector.coverage_complete && (

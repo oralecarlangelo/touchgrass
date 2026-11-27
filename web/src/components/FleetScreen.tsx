@@ -1,10 +1,8 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
+import { Fragment, lazy, Suspense, useEffect, useRef, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import {
   Select,
   SelectContent,
@@ -23,7 +21,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import ErrorState from './ErrorState.tsx';
+import HeartbeatStatus from './HeartbeatStatus.tsx';
 import PromoteDialog from './PromoteDialog.tsx';
+import ScreenErrorBoundary from './ScreenErrorBoundary.tsx';
 import {
   fetchFleetContainerPage,
   fetchSystem,
@@ -35,6 +35,9 @@ import {
   type SystemSnapshot,
 } from '@/lib/api.ts';
 import { formatBytes, formatDuration, timeAgo } from '@/lib/format.ts';
+import { inventoryHeartbeat, snapshotHeartbeat } from '@/lib/heartbeat.ts';
+
+const FleetHistoryCharts = lazy(() => import('./FleetHistoryCharts.tsx'));
 
 const refreshIntervalMs = 30_000;
 const containerPageSize = 40;
@@ -45,18 +48,6 @@ const rangeOptions = [
   { hours: 24, label: '24h' },
   { hours: 168, label: '7d' },
 ];
-
-const cpuConfig = {
-  cpu: { label: 'CPU %', color: 'var(--chart-1)' },
-} satisfies ChartConfig;
-
-const memConfig = {
-  mem: { label: 'Memory', color: 'var(--chart-2)' },
-} satisfies ChartConfig;
-
-const loadConfig = {
-  load: { label: 'Load (1m)', color: 'var(--chart-3)' },
-} satisfies ChartConfig;
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
@@ -109,28 +100,6 @@ function UsageBar({
       </div>
     </div>
   );
-}
-
-function formatTick(ts: string, hours: number): string {
-  const parsed = new Date(ts);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return ts;
-  }
-
-  const time = parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  if (hours <= 24) {
-    return time;
-  }
-
-  return `${parsed.getMonth() + 1}/${parsed.getDate()} ${time}`;
-}
-
-function toSeries(points: HistoryPoint[], hours: number): { at: string; value: number }[] {
-  return [...points]
-    .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
-    .map((point) => ({ at: formatTick(point.ts, hours), value: point.value }));
 }
 
 function ManagedBadge({
@@ -337,20 +306,11 @@ export default function FleetScreen({
     };
   }, [historyAttempt, historyOpen, onUnauthorized, range]);
 
-  const cpuSeries = useMemo(() => toSeries(cpu ?? [], range), [cpu, range]);
-  const memSeries = useMemo(() => toSeries(mem ?? [], range), [mem, range]);
-  const loadSeries = useMemo(() => toSeries(loadAvg ?? [], range), [loadAvg, range]);
   const historyLoading = loadedRange !== range || cpu === null || mem === null || loadAvg === null;
 
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold tracking-tight">Fleet</h1>
-
-      {freshness?.stale === true && (
-        <div className="border-amber-500/40 bg-amber-500/10 rounded-md border px-4 py-3 text-sm" role="status">
-          Container collection is stale. Inventory may be incomplete until the Docker collector recovers.
-        </div>
-      )}
 
       {systemError !== null && system === null ? (
         <ErrorState
@@ -387,6 +347,17 @@ export default function FleetScreen({
                   </Button>
                 </div>
               )}
+              <div className="pb-2">
+                <HeartbeatStatus
+                  label="Host heartbeat"
+                  state={snapshotHeartbeat(system.freshness)}
+                  observedAt={system.freshness.observed_at}
+                  timeLabel={system.freshness.complete ? 'Last successful sample' : 'Last attempt'}
+                  detail={system.freshness.last_error_category === 'collection_failed'
+                    ? 'Host metrics can still update. Check Docker access for daemon metrics.'
+                    : undefined}
+                />
+              </div>
               <Row
                 label="CPU"
                 value={system.cpu_percent === null ? 'n/a' : `${system.cpu_percent.toFixed(1)}%`}
@@ -485,6 +456,26 @@ export default function FleetScreen({
                   >
                     Retry
                   </Button>
+                </div>
+              )}
+              {freshness !== null && (
+                <div className="mb-4 rounded-md border p-3">
+                  <HeartbeatStatus
+                    label="Docker inventory heartbeat"
+                    {...inventoryHeartbeat(freshness)}
+                    observedAt={freshness.reconciled_at}
+                    detail={freshness.last_error_category === 'docker_inventory_unavailable'
+                      ? 'Docker inventory is unreachable. Check the daemon and socket permissions. Retained records can still be listed.'
+                      : freshness.last_error_category === 'docker_inspect_unavailable'
+                        ? 'Some containers could not be inspected. Check Docker access for those containers.'
+                        : freshness.stale ? 'The last reconciliation has aged out. Check the collector if the next sample is also late.'
+                          : freshness.reconciled_at === null ? 'Waiting for Docker inventory to finish its first pass.' : undefined}
+                    action={(freshness.stale || !freshness.complete) ? (
+                      <Button variant="outline" size="sm" onClick={() => setContainersAttempt((attempt) => attempt + 1)}>
+                        Refresh inventory
+                      </Button>
+                    ) : null}
+                  />
                 </div>
               )}
               <div className="mb-4 flex flex-wrap gap-2" aria-label="Container filters">
@@ -702,67 +693,11 @@ export default function FleetScreen({
                       </Button>
                     </div>
                   )}
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <div>
-                      <p className="text-muted-foreground mb-1 text-xs">CPU %</p>
-                      {cpuSeries.length === 0 ? (
-                        <p className="text-muted-foreground py-6 text-center text-sm">
-                          No CPU samples in range.
-                        </p>
-                      ) : (
-                        <ChartContainer config={cpuConfig} className="h-44 w-full">
-                          <LineChart data={cpuSeries}>
-                            <CartesianGrid vertical={false} />
-                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
-                            <YAxis tickLine={false} axisLine={false} width={40} />
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                            <Line type="monotone" dataKey="value" stroke="var(--color-cpu)" dot={false} />
-                          </LineChart>
-                        </ChartContainer>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground mb-1 text-xs">Memory used</p>
-                      {memSeries.length === 0 ? (
-                        <p className="text-muted-foreground py-6 text-center text-sm">
-                          No memory samples in range.
-                        </p>
-                      ) : (
-                        <ChartContainer config={memConfig} className="h-44 w-full">
-                          <LineChart data={memSeries}>
-                            <CartesianGrid vertical={false} />
-                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
-                            <YAxis
-                              tickLine={false}
-                              axisLine={false}
-                              width={52}
-                              tickFormatter={(value: number) => formatBytes(value)}
-                            />
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                            <Line type="monotone" dataKey="value" stroke="var(--color-mem)" dot={false} />
-                          </LineChart>
-                        </ChartContainer>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground mb-1 text-xs">Load (1m)</p>
-                      {loadSeries.length === 0 ? (
-                        <p className="text-muted-foreground py-6 text-center text-sm">
-                          No load samples in range.
-                        </p>
-                      ) : (
-                        <ChartContainer config={loadConfig} className="h-44 w-full">
-                          <LineChart data={loadSeries}>
-                            <CartesianGrid vertical={false} />
-                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
-                            <YAxis tickLine={false} axisLine={false} width={36} />
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                            <Line type="monotone" dataKey="value" stroke="var(--color-load)" dot={false} />
-                          </LineChart>
-                        </ChartContainer>
-                      )}
-                    </div>
-                  </div>
+                  <ScreenErrorBoundary title="Couldn’t load host history charts">
+                    <Suspense fallback={<Skeleton className="h-44 w-full" aria-label="Loading history charts" />}>
+                      <FleetHistoryCharts cpu={cpu ?? []} mem={mem ?? []} load={loadAvg ?? []} range={range} />
+                    </Suspense>
+                  </ScreenErrorBoundary>
                 </>
               )}
             </CardContent>

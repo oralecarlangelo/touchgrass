@@ -17,8 +17,10 @@ the container configured as the backup target.
 - **SQLite** shows the local file size and recent availability. Integrity
   checks run as part of separate maintenance operations.
 
-Refreshing the page reads the latest snapshot. The shared collector picks up
-Docker startup and lifecycle changes on its own schedule.
+**Refresh heartbeat** reads the latest snapshot. The shared collector picks up
+Docker startup and lifecycle changes on its own schedule. If inventory is stale
+or unavailable, open **Fleet** to check the Docker collector and socket access.
+Expand **Backups and job history** to load the backup files and recent jobs.
 
 ## Backups
 

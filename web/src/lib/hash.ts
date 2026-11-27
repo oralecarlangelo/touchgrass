@@ -52,7 +52,7 @@ export function writeHash(view: ViewId, serviceId: string | null, tab: string | 
       ? `#/services/${encodeURIComponent(serviceId)}${tab !== null && tab !== 'overview' ? `/${tab}` : ''}`
       : `#/${view}`;
 
-  if (window.location.hash !== next) {
+  if (window.location.hash.split('?', 1)[0] !== next) {
     window.history.replaceState(null, '', next);
   }
 }

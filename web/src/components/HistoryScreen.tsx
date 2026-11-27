@@ -39,6 +39,9 @@ export default function HistoryScreen({
   const [error, setError] = useState<string | null>(null);
   const [serviceId, setServiceId] = useState('all');
   const [action, setAction] = useState('');
+  const [actor, setActor] = useState('');
+  const [since, setSince] = useState('');
+  const [result, setResult] = useState('all');
   const [page, setPage] = useState(0);
 
   const effectiveServiceId = fixedServiceId ?? (serviceId === 'all' ? '' : serviceId);
@@ -62,19 +65,19 @@ export default function HistoryScreen({
     void load();
   }, [load]);
 
+  const results = useMemo(() => [...new Set((entries ?? []).map((entry) => entry.result))].sort(), [entries]);
   const filtered = useMemo(() => {
-    const needle = action.trim().toLowerCase();
+    const actionNeedle = action.trim().toLowerCase();
+    const actorNeedle = actor.trim().toLowerCase();
+    const after = since === '' ? 0 : new Date(`${since}T00:00:00`).getTime();
 
-    if (needle === '') {
-      return entries ?? [];
-    }
-
-    return (entries ?? []).filter(
-      (entry) =>
-        entry.action.toLowerCase().includes(needle) ||
-        entry.actor.toLowerCase().includes(needle),
+    return (entries ?? []).filter((entry) =>
+      entry.action.toLowerCase().includes(actionNeedle)
+      && entry.actor.toLowerCase().includes(actorNeedle)
+      && (result === 'all' || entry.result === result)
+      && new Date(entry.created_at).getTime() >= after,
     );
-  }, [entries, action]);
+  }, [entries, action, actor, since, result]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
@@ -90,15 +93,26 @@ export default function HistoryScreen({
         <h1 className="text-lg font-semibold tracking-tight">Audit history</h1>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Input
-            placeholder="Filter action or actor…"
+            placeholder="Filter action…"
             value={action}
             onChange={(event) => {
               setAction(event.target.value);
               setPage(0);
             }}
             className="w-52"
-            aria-label="Filter audit entries"
+            aria-label="Filter by action"
           />
+          <Input className="w-36" placeholder="Filter actor…" aria-label="Filter by actor" value={actor}
+            onChange={(event) => { setActor(event.target.value); setPage(0); }} />
+          <Input type="date" className="w-36" aria-label="Entries since (local date)" value={since}
+            onChange={(event) => { setSince(event.target.value); setPage(0); }} />
+          <Select value={result} onValueChange={(value) => { setResult(value); setPage(0); }}>
+            <SelectTrigger className="w-32" aria-label="Filter by result"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All results</SelectItem>
+              {results.filter(Boolean).map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+            </SelectContent>
+          </Select>
           {fixedServiceId === undefined && (
             <Select
               value={serviceId}
@@ -166,11 +180,13 @@ export default function HistoryScreen({
                         {entry.result}
                       </Badge>
                     </TableCell>
-                    <TableCell
-                      className="text-muted-foreground max-w-64 truncate text-xs"
-                      title={entry.detail}
-                    >
-                      {entry.detail === '' ? '—' : entry.detail}
+                    <TableCell className="text-muted-foreground w-64 text-xs">
+                      {entry.detail === '' ? '—' : (
+                        <details>
+                          <summary className="cursor-pointer">View detail</summary>
+                          <p className="mt-2 break-words whitespace-pre-wrap">{entry.detail}</p>
+                        </details>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

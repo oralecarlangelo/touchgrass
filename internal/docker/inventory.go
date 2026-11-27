@@ -26,6 +26,7 @@ type InventoryLister interface {
 type Inspection struct {
 	ID              string            `json:"id"`
 	ImageID         string            `json:"imageId"`
+	ConfiguredImage string            `json:"-"`
 	User            string            `json:"user"`
 	EntrypointHash  string            `json:"entrypointHash,omitempty"`
 	CommandHash     string            `json:"commandHash,omitempty"`
@@ -97,6 +98,7 @@ func NormalizeInspection(response container.InspectResponse) Inspection {
 	}
 
 	if response.Config != nil {
+		inspection.ConfiguredImage = response.Config.Image
 		inspection.User = response.Config.User
 		inspection.EntrypointHash = hashArguments(response.Config.Entrypoint)
 		inspection.CommandHash = hashArguments(response.Config.Cmd)

@@ -146,6 +146,20 @@ func TestScopedListsHoldOnlyTheScope(t *testing.T) {
 		t.Errorf("scoped audit leaks a global or foreign row: %s", body)
 	}
 
+	inbox, body := getAs[issueInboxResponse](t, fixture, scoped, "/api/issues/inbox?release=v1")
+	if len(inbox.Issues) != 1 || inbox.Issues[0].ServiceID != granted {
+		t.Errorf("scoped issue inbox = %s, want only the issue for %s", body, granted)
+	}
+
+	env, body := getAs[envFleetResponse](t, fixture, scoped, "/api/env/overview")
+	if len(env.Services) != 1 || env.Services[0].ServiceID != granted {
+		t.Errorf("scoped environment summary = %s, want only %s", body, granted)
+	}
+
+	if strings.Contains(body, "\"entries\"") || strings.Contains(body, "\"value\"") {
+		t.Errorf("environment summary included entry metadata: %s", body)
+	}
+
 	// The limit applies after the scope, not before it.
 	if limited, body := getAs[auditResponse](t, fixture, scoped, "/api/audit?limit=1"); len(limited.Audit) != 1 {
 		t.Errorf("scoped audit with limit 1 = %s, want the one in-scope row", body)
@@ -160,7 +174,7 @@ func TestListsAreEmptyForAViewerWithNoServices(t *testing.T) {
 
 	cookie := fixture.cookieFor(t, testEmptyUsername)
 
-	for _, target := range []string{testServicesPath, "/api/notifications", "/api/audit"} {
+	for _, target := range []string{testServicesPath, "/api/notifications", "/api/audit", "/api/issues/inbox", "/api/env/overview"} {
 		status, _, body := call(t, fixture.server.handler, cookie, nethttp.MethodGet, target, "")
 		if status != nethttp.StatusOK {
 			t.Errorf("GET %s = %d %s, want 200", target, status, body)

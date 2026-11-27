@@ -30,12 +30,14 @@ export default function IssueList({
   loading,
   selectedId,
   showService,
+  serverPaged = false,
   onSelect,
 }: {
   issues: Issue[];
   loading: boolean;
   selectedId: number | null;
   showService: boolean;
+  serverPaged?: boolean;
   onSelect: (id: number) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -72,43 +74,45 @@ export default function IssueList({
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
-  const rows = filtered.slice(safePage * pageSize, safePage * pageSize + pageSize);
+  const rows = serverPaged ? issues : filtered.slice(safePage * pageSize, safePage * pageSize + pageSize);
   const columnCount = (showService ? 5 : 4) + 1;
 
   return (
     <Card>
       <CardContent className="space-y-3 pt-4">
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            placeholder="Search title or fingerprint…"
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setPage(0);
-            }}
-            className="sm:max-w-sm"
-            aria-label="Search issues"
-          />
-          <Select
-            value={release}
-            onValueChange={(value) => {
-              setRelease(value);
-              setPage(0);
-            }}
-          >
-            <SelectTrigger className="sm:w-48" aria-label="Filter by release">
-              <SelectValue placeholder="Release" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All releases</SelectItem>
-              {releases.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {value}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {!serverPaged && (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              placeholder="Search title or fingerprint…"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(0);
+              }}
+              className="sm:max-w-sm"
+              aria-label="Search issues"
+            />
+            <Select
+              value={release}
+              onValueChange={(value) => {
+                setRelease(value);
+                setPage(0);
+              }}
+            >
+              <SelectTrigger className="sm:w-48" aria-label="Filter by release">
+                <SelectValue placeholder="Release" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All releases</SelectItem>
+                {releases.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         {loading ? (
           <div className="space-y-2" aria-label="Loading issues">
@@ -178,7 +182,7 @@ export default function IssueList({
               {rows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={columnCount} className="text-muted-foreground text-center">
-                    No issues. Ship it.
+                    No issues match. Check SDK ingest if you expected to see events.
                   </TableCell>
                 </TableRow>
               )}
@@ -186,32 +190,34 @@ export default function IssueList({
           </Table>
         )}
 
-        <div className="flex items-center justify-between text-sm">
-          <p className="text-muted-foreground">
-            {filtered.length} issue{filtered.length === 1 ? '' : 's'}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={safePage === 0}
-              onClick={() => setPage(safePage - 1)}
-            >
-              Previous
-            </Button>
-            <span className="text-muted-foreground">
-              {safePage + 1} / {pageCount}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={safePage + 1 >= pageCount}
-              onClick={() => setPage(safePage + 1)}
-            >
-              Next
-            </Button>
+        {!serverPaged && (
+          <div className="flex items-center justify-between text-sm">
+            <p className="text-muted-foreground">
+              {filtered.length} issue{filtered.length === 1 ? '' : 's'}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage === 0}
+                onClick={() => setPage(safePage - 1)}
+              >
+                Previous
+              </Button>
+              <span className="text-muted-foreground">
+                {safePage + 1} / {pageCount}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={safePage + 1 >= pageCount}
+                onClick={() => setPage(safePage + 1)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </CardContent>
     </Card>
   );

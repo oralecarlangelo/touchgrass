@@ -9,8 +9,8 @@ export default function StoragePanel({ revision, onUnauthorized }: { revision: n
   const [host, setHost] = useState<SystemSnapshot | null>(null);
   const [usageError, setUsageError] = useState('');
   const [hostError, setHostError] = useState('');
-  const [usageLoading, setUsageLoading] = useState(false);
-  const [hostLoading, setHostLoading] = useState(false);
+  const [usageLoading, setUsageLoading] = useState(true);
+  const [hostLoading, setHostLoading] = useState(true);
   const [refreshAttempt, setRefreshAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
@@ -37,6 +37,8 @@ export default function StoragePanel({ revision, onUnauthorized }: { revision: n
     return () => controller.abort();
   }, [onUnauthorized, refreshAttempt, revision]);
   const loading = usageLoading || hostLoading;
+  const hostPending = host === null && hostLoading;
+  const usagePending = usage === null && usageLoading;
   const used = host?.disk_used_bytes;
   const total = host?.disk_total_bytes;
   const percent = used != null && total != null && total > 0 ? used / total * 100 : null;
@@ -48,11 +50,11 @@ export default function StoragePanel({ revision, onUnauthorized }: { revision: n
     <CardContent className="space-y-4">
       {hostError && <p role="alert" className="text-destructive text-sm">{hostError}{host === null ? '' : ' Showing last known host capacity.'}</p>}
       {usageError && <p role="alert" className="text-destructive text-sm">{usageError}{usage === null ? '' : ' Showing last known Docker accounting.'}</p>}
-      {usage?.freshness.stale && <p role="status" className="text-muted-foreground text-sm">Docker accounting is refreshing in the background; available values may be from the previous inspection.</p>}
+      {usage?.freshness.stale && <p role="status" className="text-muted-foreground text-sm">{usage.freshness.observed_at == null ? 'Waiting for the first Docker accounting sample.' : 'Docker accounting is stale. Showing the last inspection.'}</p>}
       <div className="grid gap-4 sm:grid-cols-3">
-        <div><p className="text-muted-foreground text-sm">Host filesystem</p><p className="text-xl font-semibold">{used == null || total == null ? 'Unavailable' : `${formatBytes(used)} / ${formatBytes(total)}`}</p></div>
-        <div><p className="text-muted-foreground text-sm">Available</p><p className="text-xl font-semibold">{used == null || total == null ? 'Unavailable' : formatBytes(Math.max(0, total - used))}</p></div>
-        <div><p className="text-muted-foreground text-sm">Docker image layers (shared layers counted once)</p><p className="text-xl font-semibold">{usage?.image_layers_bytes == null ? 'Unavailable' : formatBytes(usage.image_layers_bytes)}</p></div>
+        <div><p className="text-muted-foreground text-sm">Host filesystem</p><p className="text-xl font-semibold">{hostPending ? 'Loading capacity…' : used == null || total == null ? 'Unavailable' : `${formatBytes(used)} / ${formatBytes(total)}`}</p></div>
+        <div><p className="text-muted-foreground text-sm">Available</p><p className="text-xl font-semibold">{hostPending ? 'Loading capacity…' : used == null || total == null ? 'Unavailable' : formatBytes(Math.max(0, total - used))}</p></div>
+        <div><p className="text-muted-foreground text-sm">Docker image layers (shared layers counted once)</p><p className="text-xl font-semibold">{usagePending ? 'Loading snapshot…' : usage?.image_layers_bytes == null ? 'Unavailable' : formatBytes(usage.image_layers_bytes)}</p></div>
       </div>
       {percent !== null && <><progress className="h-3 w-full" max={100} value={Math.min(100, percent)} aria-label="Host disk used" /><p className={percent >= 90 ? 'text-destructive text-sm font-medium' : 'text-muted-foreground text-sm'}>{percent.toFixed(1)}% used{percent >= 90 ? ' — low disk space. Review the largest consumers before the next deployment.' : ''}</p></>}
       <p className="text-muted-foreground text-sm">Container sizes are writable layers only. Bind mounts, container logs, host logs and backups are not included below. Build cache can share image layers; these figures must not be added into a host total. Unreferenced volumes may still hold valuable data.</p>

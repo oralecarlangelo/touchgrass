@@ -42,6 +42,13 @@ import { formatTime } from '@/lib/format.ts';
 
 const sampleRates = ['1', '0.5', '0.1', '0.01'];
 
+const sdkSetup = `import { init } from '@touchgrass/node';
+
+init({
+  endpoint: process.env.TOUCHGRASS_ENDPOINT ?? '',
+  key: process.env.TOUCHGRASS_KEY ?? '',
+});`;
+
 export default function KeysScreen({
   services,
   onUnauthorized,
@@ -135,7 +142,7 @@ export default function KeysScreen({
     void navigator.clipboard
       .writeText(value)
       .then(() => toast.success('Copied to clipboard.'))
-      .catch(() => toast.error('Copy failed — select the key manually.'));
+      .catch(() => toast.error('Could not copy. Select the text and copy it manually.'));
   }
 
   if (error !== null) {
@@ -194,13 +201,26 @@ export default function KeysScreen({
                 </div>
               )}
 
+              <details className="rounded-md border p-3">
+                <summary className="cursor-pointer text-sm font-medium">Connect the Node SDK</summary>
+                <p className="text-muted-foreground my-2 text-sm">
+                  Use a key from this service. Set TOUCHGRASS_ENDPOINT to this console URL and store
+                  TOUCHGRASS_KEY in the application environment.
+                </p>
+                <pre className="bg-muted overflow-auto rounded-md p-2 text-xs"><code>{sdkSetup}</code></pre>
+                <div className="mt-2 flex items-center gap-3">
+                  <Button variant="outline" size="sm" onClick={() => copyKey(sdkSetup)}>Copy setup snippet</Button>
+                  <a className="text-primary text-sm underline underline-offset-4" href="/docs/sdk" target="_blank" rel="noreferrer">SDK guide</a>
+                </div>
+              </details>
+
               {keys === null ? (
                 <div className="space-y-2" aria-label="Loading keys">
                   <Skeleton className="h-10 w-full" />
                 </div>
               ) : keys.length === 0 ? (
                 <p className="text-muted-foreground text-sm">
-                  No keys yet — create one and set it as the SDK key.
+                  No ingest keys for this service yet.
                 </p>
               ) : (
                 <Table>

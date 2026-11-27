@@ -35,13 +35,19 @@ export default function CollectorStatus({
   services,
   serviceId,
   fleetContainers,
+  setupOnly = false,
 }: {
   collectors: CollectorStatusView[];
   services: ServiceView[];
   serviceId: string;
   fleetContainers: FleetContainer[];
+  setupOnly?: boolean;
 }) {
   const setupSnippet = collectorSetupSnippet(collectors, services, serviceId, fleetContainers);
+
+  if (setupOnly && setupSnippet === '') {
+    return <p className="text-muted-foreground text-sm">No additional collector configuration was detected for this service.</p>;
+  }
 
   return (
     <Card>
@@ -75,7 +81,7 @@ export default function CollectorStatus({
             <pre className="mt-3 overflow-x-auto text-xs"><code>{setupSnippet}</code></pre>
           </div>
         )}
-        {collectors.length === 0 ? (
+        {!setupOnly && (collectors.length === 0 ? (
           <p className="text-muted-foreground text-sm">Collector status is not available.</p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -121,7 +127,7 @@ export default function CollectorStatus({
               );
             })}
           </div>
-        )}
+        ))}
       </CardContent>
     </Card>
   );

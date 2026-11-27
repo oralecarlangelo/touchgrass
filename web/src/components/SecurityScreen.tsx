@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ShieldAlert, ShieldCheck, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -30,6 +30,7 @@ import {
   acknowledgeSecurityFinding,
   createSecurityPolicy,
   deleteSecurityPolicy,
+  fetchSecurityFinding,
   fetchSecurityFindings,
   fetchSecurityPolicies,
   fetchSecuritySummary,
@@ -44,11 +45,14 @@ import {
 } from '@/lib/api.ts';
 import { filterSecurityFindings, severityLabel } from '@/lib/security.ts';
 import { timeAgo } from '@/lib/format.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 export function SecurityScreenView({
   summary,
   findings,
   error,
+  summaryError = null,
+  onRetrySummary,
   isAdmin,
   onRetry,
   onSelect,
@@ -57,28 +61,19 @@ export function SecurityScreenView({
   summary: SecuritySummary | null;
   findings: SecurityFinding[] | null;
   error: string | null;
+  summaryError?: string | null;
+  onRetrySummary?: () => void;
   isAdmin: boolean;
   onRetry: () => void;
   onSelect: (finding: SecurityFinding) => void;
   onCreatePolicy: () => void;
 }) {
   const [severity, setSeverity] = useState<'all' | SecurityFinding['severity']>('all');
-  const [status, setStatus] = useState<'all' | SecurityFinding['status']>('all');
+  const [status, setStatus] = useState<'all' | SecurityFinding['status']>('open');
   const [query, setQuery] = useState('');
   const filtered = useMemo(() => filterSecurityFindings(findings ?? [], { severity, status, query }), [findings, severity, status, query]);
 
-  if (error !== null) {
-    return <ErrorState title="Couldn't load security posture" message={error} onRetry={onRetry} />;
-  }
-  if (summary === null || findings === null) {
-    return (
-      <div className="space-y-3" aria-label="Loading security findings">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-72 w-full" />
-      </div>
-    );
-  }
-  const summaryCards: { label: string; value: number; icon: LucideIcon }[] = [
+  const summaryCards: { label: string; value: number; icon: LucideIcon }[] = summary === null ? [] : [
     { label: 'Active', value: summary.open, icon: ShieldAlert },
     { label: 'Critical', value: summary.critical, icon: TriangleAlert },
     { label: 'High', value: summary.high, icon: ShieldAlert },
@@ -99,7 +94,12 @@ export function SecurityScreenView({
         </div>
       </div>
 
-      {!summary.coverage_complete && (
+      {summaryError !== null && (
+        <ErrorState title="Couldn’t refresh collector coverage" message={summaryError} onRetry={onRetrySummary ?? onRetry} />
+      )}
+      {summary === null && summaryError === null && <Skeleton className="h-24 w-full" aria-label="Loading collector coverage" />}
+
+      {summary?.coverage_complete === false && (
         <Alert variant="destructive">
           <TriangleAlert aria-hidden />
           <AlertTitle>Partial collector coverage</AlertTitle>
@@ -129,7 +129,12 @@ export function SecurityScreenView({
           </div>
         </CardHeader>
         <CardContent className="px-0">
-          {filtered.length === 0 ? (
+          {error !== null && (
+            <div className="px-4"><ErrorState title="Couldn’t refresh findings" message={error} onRetry={onRetry} /></div>
+          )}
+          {findings === null ? (
+            error === null && <Skeleton className="m-4 h-40" aria-label="Loading security findings" />
+          ) : filtered.length === 0 ? (
             <div className="px-4 py-10 text-center"><ShieldCheck className="text-muted-foreground mx-auto mb-2 h-6 w-6" aria-hidden /><p className="font-medium">No security findings</p><p className="text-muted-foreground text-sm">No episodes match the current filters.</p></div>
           ) : (
             <div className="overflow-x-auto">
@@ -167,43 +172,39 @@ export default function SecurityScreen({
   onSelectContainer: (id: string) => void;
   initialFindingId?: number | null;
 }) {
-  const [summary, setSummary] = useState<SecuritySummary | null>(null);
-  const [findings, setFindings] = useState<SecurityFinding[] | null>(null);
-  const [policies, setPolicies] = useState<SecurityPolicy[]>([]);
+  const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<SecurityFinding | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [dismissedFinding, setDismissedFinding] = useState<number | null>(null);
+  const [policiesOpen, setPoliciesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [policyTarget, setPolicyTarget] = useState<SecurityPolicy | null | undefined>(undefined);
   const [policyError, setPolicyError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const [nextSummary, nextFindings, nextPolicies] = await Promise.all([
-        fetchSecuritySummary(), fetchSecurityFindings({ limit: 1000, sort: 'severity' }), fetchSecurityPolicies(),
-      ]);
-      setSummary(nextSummary);
-      setFindings(nextFindings);
-      setPolicies(nextPolicies);
-      if (initialFindingId !== null && initialFindingId !== undefined) {
-        setSelected(nextFindings.find((finding) => finding.id === initialFindingId) ?? null);
-      } else {
-        setSelected((current) => current === null ? null : (nextFindings.find((finding) => finding.id === current.id) ?? null));
-      }
-    } catch (err) {
-      if (isUnauthorized(err)) { onUnauthorized(); return; }
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [initialFindingId, onUnauthorized]);
+  const readFindings = useCallback(
+    (signal: AbortSignal) => fetchSecurityFindings({ limit: 1000, sort: 'severity' }, signal), [],
+  );
+  const linkedId = initialFindingId !== dismissedFinding ? initialFindingId : null;
+  const readLinkedFinding = useCallback(
+    (signal: AbortSignal) => fetchSecurityFinding(linkedId ?? 0, signal), [linkedId],
+  );
 
-  useEffect(() => { void load(); }, [load]);
+  const summary = usePanelRead('fleet', fetchSecuritySummary, refresh, onUnauthorized);
+  const findings = usePanelRead('fleet', readFindings, refresh, onUnauthorized);
+  const policies = usePanelRead('fleet', policiesOpen ? fetchSecurityPolicies : null, refresh, onUnauthorized);
+  const linked = usePanelRead(String(linkedId), linkedId != null ? readLinkedFinding : null, refresh, onUnauthorized);
+  const load = useCallback(() => setRefresh((value) => value + 1), []);
+  const activeFinding = selected ?? linked.data;
+  const closeFinding = () => {
+    if (linkedId != null && activeFinding?.id === linkedId) setDismissedFinding(linkedId);
+    setSelected(null);
+  };
 
   const mutate = useCallback(async (action: () => Promise<SecurityFinding>) => {
     setBusy(true);
     try {
       const updated = await action();
       setSelected(updated);
-      await load();
+      load();
     } catch (err) {
       if (isUnauthorized(err)) { onUnauthorized(); return; }
       toast.error(err instanceof Error ? err.message : String(err));
@@ -216,28 +217,42 @@ export default function SecurityScreen({
       if (policyTarget === null) await createSecurityPolicy(scope, scopeId, body);
       else if (policyTarget !== undefined) await updateSecurityPolicy(policyTarget.id, body);
       setPolicyTarget(undefined);
-      await load();
+      load();
     } catch (err) {
       if (isUnauthorized(err)) { onUnauthorized(); return; }
       setPolicyError(err instanceof Error ? err.message : String(err));
     } finally { setBusy(false); }
   }
 
-  if (selected !== null) {
-    return <FindingDetail finding={selected} isAdmin={isAdmin} busy={busy} onClose={() => setSelected(null)} onContainer={onSelectContainer} onAcknowledge={() => void mutate(() => acknowledgeSecurityFinding(selected.id))} onResolve={() => void mutate(() => resolveSecurityFinding(selected.id))} onSuppress={(reason, until) => void mutate(() => suppressSecurityFinding(selected.id, reason, until))} />;
+  if (activeFinding !== null) {
+    return <FindingDetail finding={activeFinding} isAdmin={isAdmin} busy={busy} onClose={closeFinding} onContainer={onSelectContainer} onAcknowledge={() => void mutate(() => acknowledgeSecurityFinding(activeFinding.id))} onResolve={() => void mutate(() => resolveSecurityFinding(activeFinding.id))} onSuppress={(reason, until) => void mutate(() => suppressSecurityFinding(activeFinding.id, reason, until))} />;
   }
 
   return (
     <div className="space-y-4">
-      <SecurityScreenView summary={summary} findings={findings} error={error} isAdmin={isAdmin} onRetry={() => void load()} onSelect={setSelected} onCreatePolicy={() => setPolicyTarget(null)} />
-      {policies.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-base">Policy overrides</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {policies.map((policy) => <div key={policy.id} className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-sm"><Badge variant="outline">{policy.scope}</Badge><span className="font-mono text-xs">{policy.scope_id || 'all containers'}</span><span className="text-muted-foreground ml-auto text-xs">Updated by {policy.updated_by}</span>{isAdmin && <><Button size="sm" variant="outline" onClick={() => setPolicyTarget(policy)}>Edit</Button><Button size="sm" variant="ghost" onClick={() => void deleteSecurityPolicy(policy.id).then(load).catch((err: unknown) => toast.error(err instanceof Error ? err.message : String(err)))}>Delete</Button></>}</div>)}
-          </CardContent>
-        </Card>
+      {linked.error !== null && (
+        <ErrorState title="Couldn’t open the linked finding" message={linked.error} onRetry={linked.retry} />
       )}
+      <SecurityScreenView
+        summary={summary.data}
+        summaryError={summary.error}
+        onRetrySummary={summary.retry}
+        findings={findings.data}
+        error={findings.error}
+        isAdmin={isAdmin}
+        onRetry={load}
+        onSelect={setSelected}
+        onCreatePolicy={() => setPolicyTarget(null)}
+      />
+      <details className="bg-card rounded-lg border" onToggle={(event) => setPoliciesOpen(event.currentTarget.open)}>
+        <summary className="cursor-pointer p-4 text-sm font-medium">Policy overrides</summary>
+        <div className="space-y-2 px-4 pb-4">
+          {policies.error !== null && <ErrorState title="Couldn’t refresh policies" message={policies.error} onRetry={policies.retry} />}
+          {policies.loading && policies.data === null && <p role="status">Loading policies…</p>}
+          {policies.data?.length === 0 && <p className="text-muted-foreground text-sm">No policy overrides.</p>}
+          {policies.data?.map((policy) => <div key={policy.id} className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-sm"><Badge variant="outline">{policy.scope}</Badge><span className="font-mono text-xs">{policy.scope_id || 'all containers'}</span><span className="text-muted-foreground ml-auto text-xs">Updated by {policy.updated_by}</span>{isAdmin && <><Button size="sm" variant="outline" onClick={() => setPolicyTarget(policy)}>Edit</Button><Button size="sm" variant="ghost" onClick={() => void deleteSecurityPolicy(policy.id).then(load).catch((err: unknown) => toast.error(err instanceof Error ? err.message : String(err)))}>Delete</Button></>}</div>)}
+        </div>
+      </details>
       <PolicyDialog open={policyTarget !== undefined} policy={policyTarget ?? null} busy={busy} error={policyError} onClose={() => setPolicyTarget(undefined)} onSubmit={(scope, scopeId, body) => void savePolicy(scope, scopeId, body)} />
     </div>
   );

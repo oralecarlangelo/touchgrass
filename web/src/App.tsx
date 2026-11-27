@@ -262,10 +262,13 @@ export default function App() {
     }
 
     void load();
-    const timer = setInterval(() => void load(), refreshIntervalMs);
+    const refreshVisible = () => { if (!document.hidden) void load(); };
+    const timer = setInterval(refreshVisible, refreshIntervalMs);
+    document.addEventListener('visibilitychange', refreshVisible);
 
     return () => {
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
       servicesRequestRef.current.cancel();
     };
   }, [authed, session, can, load]);
@@ -321,6 +324,7 @@ export default function App() {
 
   const handleView = useCallback((next: ViewId) => {
     if (next !== 'services') {
+      pendingServiceRef.current = null;
       setSelected(null);
     }
 
@@ -359,6 +363,21 @@ export default function App() {
     },
     [services, load],
   );
+
+  useEffect(() => {
+    const followHash = () => {
+      const location = parseHash(window.location.hash);
+      if (location.view === 'services' && location.serviceId !== null) {
+        handleView('services');
+        handleSelectService(location.serviceId, (location.tab ?? 'overview') as ServiceTab);
+        return;
+      }
+      if (location.view === 'services') handleSelectService(null);
+      handleView(location.view);
+    };
+    window.addEventListener('hashchange', followHash);
+    return () => window.removeEventListener('hashchange', followHash);
+  }, [handleSelectService, handleView]);
 
   const handleDeletedService = useCallback(
     (id: string) => {

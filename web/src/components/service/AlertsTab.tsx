@@ -215,7 +215,7 @@ export default function AlertsTab({
           <CardTitle className="text-sm font-medium">Metric rules</CardTitle>
           {isAdmin && (
             <Button size="sm" onClick={() => openDialog('metric')}>
-              New rule
+              New metric rule
             </Button>
           )}
         </CardHeader>
@@ -272,7 +272,7 @@ export default function AlertsTab({
           <CardTitle className="text-sm font-medium">Issue rules</CardTitle>
           {isAdmin && (
             <Button size="sm" onClick={() => openDialog('issue')}>
-              New rule
+              New issue rule
             </Button>
           )}
         </CardHeader>

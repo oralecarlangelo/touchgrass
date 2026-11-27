@@ -182,6 +182,7 @@ type envRouteAccess struct {
 // developer; apply, discard, import, reveal and revision rollback stay
 // closed to every non-admin.
 var envRouteAccessTable = []envRouteAccess{
+	{"GET /api/env/overview", matrixReach, matrixReach, "403", matrixReach},
 	{"GET /api/services/{id}/env", matrixReach, matrixReach, "403", matrixReach},
 	{"PUT /api/services/{id}/env/entries/{key}", "403", matrixReach, "403", matrixReach},
 	{"DELETE /api/services/{id}/env/entries/{key}", "403", matrixReach, "403", matrixReach},

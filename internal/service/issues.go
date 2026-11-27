@@ -18,6 +18,14 @@ func (in *Ingestor) Issues(ctx context.Context, serviceID string) ([]model.Issue
 	return in.issues.ListByService(ctx, serviceID, maxIssuesListed)
 }
 
+// IssueInbox lists issue groups visible to the caller.
+func (in *Ingestor) IssueInbox(
+	ctx context.Context,
+	query model.IssueInboxQuery,
+) ([]model.Issue, model.IssueCursor, error) {
+	return in.issues.IssueInbox(ctx, query)
+}
+
 // Issue returns one issue with its live stats.
 func (in *Ingestor) Issue(ctx context.Context, id int64) (model.Issue, error) {
 	return in.issues.Get(ctx, id)

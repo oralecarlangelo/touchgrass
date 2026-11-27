@@ -404,16 +404,18 @@ export function performanceApiPath(
 
 export async function fetchPerformanceSummary(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PerformanceSummaryView> {
-  const result = await request<PerformanceSummaryView>(performanceApiPath('summary', filters));
+  const result = await request<PerformanceSummaryView>(performanceApiPath('summary', filters), { signal });
 
   return { ...result, anomalies: result.anomalies ?? [] };
 }
 
 export async function fetchPerformanceTimeline(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PerformanceTimelineView> {
-  const result = await request<PerformanceTimelineView>(performanceApiPath('timeline', filters));
+  const result = await request<PerformanceTimelineView>(performanceApiPath('timeline', filters), { signal });
 
   return {
     ...result,
@@ -425,9 +427,11 @@ export async function fetchPerformanceTimeline(
 
 export async function fetchPerformanceRoutes(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PerformanceRouteRow[]> {
   const result = await request<{ routes: PerformanceRouteRow[] }>(
     performanceApiPath('routes', filters),
+    { signal },
   );
 
   return result.routes ?? [];
@@ -435,9 +439,11 @@ export async function fetchPerformanceRoutes(
 
 export async function fetchPerformancePostgres(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PostgresPerformanceRow[]> {
   const result = await request<{ metrics: PostgresPerformanceRow[] }>(
     performanceApiPath('postgres', filters),
+    { signal },
   );
 
   return result.metrics ?? [];
@@ -445,16 +451,18 @@ export async function fetchPerformancePostgres(
 
 export async function fetchPerformanceRedis(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<RedisPerformanceRow[]> {
   const result = await request<{ metrics: RedisPerformanceRow[] }>(
     performanceApiPath('redis', filters),
+    { signal },
   );
 
   return result.metrics ?? [];
 }
 
-export async function fetchCollectorStatuses(): Promise<CollectorStatusView[]> {
-  const result = await request<{ collectors: CollectorStatusView[] }>('/api/collectors/status');
+export async function fetchCollectorStatuses(signal?: AbortSignal): Promise<CollectorStatusView[]> {
+  const result = await request<{ collectors: CollectorStatusView[] }>('/api/collectors/status', { signal });
 
   return result.collectors ?? [];
 }
@@ -463,9 +471,10 @@ export async function deleteService(serviceId: string): Promise<void> {
   await request<undefined>(`/api/services/${encodeURIComponent(serviceId)}`, { method: 'DELETE' });
 }
 
-export async function fetchMetrics(serviceId: string): Promise<Metric[]> {
+export async function fetchMetrics(serviceId: string, signal?: AbortSignal): Promise<Metric[]> {
   const body = await request<MetricsResponse>(
     `/api/services/${encodeURIComponent(serviceId)}/metrics?limit=100`,
+    { signal },
   );
 
   return body.metrics ?? [];
@@ -658,11 +667,11 @@ export interface SecurityPolicy extends SecurityPolicyBody {
   updated_at: string;
 }
 
-export async function fetchSecuritySummary(): Promise<SecuritySummary> {
-  return request<SecuritySummary>('/api/security/summary');
+export async function fetchSecuritySummary(signal?: AbortSignal): Promise<SecuritySummary> {
+  return request<SecuritySummary>('/api/security/summary', { signal });
 }
 
-export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}): Promise<SecurityFinding[]> {
+export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}, signal?: AbortSignal): Promise<SecurityFinding[]> {
   const params = new URLSearchParams();
   if (filters.status !== undefined) params.set('status', filters.status);
   if (filters.severity !== undefined) params.set('severity', filters.severity);
@@ -671,12 +680,12 @@ export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}
   if (filters.limit !== undefined) params.set('limit', String(filters.limit));
   if (filters.offset !== undefined) params.set('offset', String(filters.offset));
   const query = params.toString();
-  const body = await request<{ findings?: SecurityFinding[] }>(`/api/security/findings${query === '' ? '' : `?${query}`}`);
+  const body = await request<{ findings?: SecurityFinding[] }>(`/api/security/findings${query === '' ? '' : `?${query}`}`, { signal });
   return (body.findings ?? []).map(normalizeSecurityFinding);
 }
 
-export async function fetchSecurityFinding(id: number): Promise<SecurityFinding> {
-  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}`));
+export async function fetchSecurityFinding(id: number, signal?: AbortSignal): Promise<SecurityFinding> {
+  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}`, { signal }));
 }
 
 export async function acknowledgeSecurityFinding(id: number): Promise<SecurityFinding> {
@@ -691,8 +700,8 @@ export async function suppressSecurityFinding(id: number, reason: string, until:
   return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}/suppress`, jsonBody({ reason, until })));
 }
 
-export async function fetchSecurityPolicies(): Promise<SecurityPolicy[]> {
-  const body = await request<{ policies?: SecurityPolicy[] }>('/api/security/policies');
+export async function fetchSecurityPolicies(signal?: AbortSignal): Promise<SecurityPolicy[]> {
+  const body = await request<{ policies?: SecurityPolicy[] }>('/api/security/policies', { signal });
   return (body.policies ?? []).map(normalizeSecurityPolicy);
 }
 
@@ -820,6 +829,28 @@ interface IssuesResponse {
   issues: Issue[];
 }
 
+export interface IssueInboxFilters {
+  service_id?: string;
+  q?: string;
+  release?: string;
+  start?: string;
+  end?: string;
+  cursor?: string;
+}
+
+export interface IssueInbox {
+  issues: Issue[];
+  next_cursor?: string;
+}
+
+export function fetchIssueInbox(filters: IssueInboxFilters, signal?: AbortSignal): Promise<IssueInbox> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  return request<IssueInbox>(`/api/issues/inbox?${params.toString()}`, { signal });
+}
+
 interface IssueDetailResponse {
   issue: Issue;
   occurrences: Occurrence[];
@@ -934,7 +965,7 @@ export interface LogSearch {
   limit?: number;
 }
 
-export async function fetchLogs(serviceId: string, search: LogSearch = {}): Promise<LogLine[]> {
+export async function fetchLogs(serviceId: string, search: LogSearch = {}, signal?: AbortSignal): Promise<LogLine[]> {
   const params = new URLSearchParams({ service_id: serviceId });
 
   if (search.q !== undefined && search.q !== '') {
@@ -961,7 +992,7 @@ export async function fetchLogs(serviceId: string, search: LogSearch = {}): Prom
     params.set('limit', String(search.limit));
   }
 
-  const body = await request<LogsResponse>(`/api/logs?${params.toString()}`);
+  const body = await request<LogsResponse>(`/api/logs?${params.toString()}`, { signal });
 
   return body.lines ?? [];
 }
@@ -1084,7 +1115,7 @@ function normalizeSdkLogEntry(raw: unknown): SdkLogEntry {
   };
 }
 
-export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}): Promise<SdkLogEntry[]> {
+export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}, signal?: AbortSignal): Promise<SdkLogEntry[]> {
   const params = new URLSearchParams({ service_id: serviceId, source: 'sdk' });
 
   if (search.q !== undefined && search.q !== '') {
@@ -1111,7 +1142,7 @@ export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}):
     params.set('limit', String(search.limit));
   }
 
-  const body = await request<SdkLogsResponse>(`/api/logs?${params.toString()}`);
+  const body = await request<SdkLogsResponse>(`/api/logs?${params.toString()}`, { signal });
 
   return (body.lines ?? []).map(normalizeSdkLogEntry);
 }
@@ -1588,6 +1619,23 @@ export interface EnvValidation {
   // Optional structured hints; the UI falls back to parsing `lines`.
   missing_required?: string[];
   required_keys?: string[];
+}
+
+export interface EnvFleetSummary {
+  service_id: string;
+  configured: boolean;
+  reason?: string;
+  target_path?: string;
+  key_count: number;
+  secret_count: number;
+  pending_count: number;
+  last_applied_at?: string;
+  apply_in_progress: boolean;
+}
+
+export async function fetchEnvFleet(signal?: AbortSignal): Promise<EnvFleetSummary[]> {
+  const result = await request<{ services: EnvFleetSummary[] }>('/api/env/overview', { signal });
+  return result.services ?? [];
 }
 
 export interface EnvOverview {

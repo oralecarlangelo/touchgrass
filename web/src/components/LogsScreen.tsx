@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   Select,
@@ -17,7 +17,18 @@ export default function LogsScreen({
   services: ServiceView[];
   onUnauthorized: () => void;
 }) {
-  const [serviceId, setServiceId] = useState(services[0]?.id ?? '');
+  const [hash, setHash] = useState(() => window.location.hash);
+  const [selection, setSelection] = useState<{ hash: string; serviceId: string } | null>(null);
+
+  useEffect(() => {
+    const followHash = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', followHash);
+    return () => window.removeEventListener('hashchange', followHash);
+  }, []);
+
+  const filters = new URLSearchParams(hash.split('?')[1] ?? '');
+  const serviceId = selection?.hash === hash ? selection.serviceId : (filters.get('service_id') ?? '');
+  const setServiceId = (next: string) => setSelection({ hash, serviceId: next });
 
   const effectiveId = services.some((service) => service.id === serviceId)
     ? serviceId
@@ -44,7 +55,13 @@ export default function LogsScreen({
       {effectiveId === '' ? (
         <p className="text-muted-foreground text-sm">No services on the radar yet.</p>
       ) : (
-        <LogSearch key={effectiveId} serviceId={effectiveId} onUnauthorized={onUnauthorized} />
+        <LogSearch
+          key={`${effectiveId}:${hash}`}
+          serviceId={effectiveId}
+          initialAfter={filters.get('start')}
+          initialBefore={filters.get('end')}
+          onUnauthorized={onUnauthorized}
+        />
       )}
     </div>
   );

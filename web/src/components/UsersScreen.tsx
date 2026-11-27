@@ -452,6 +452,18 @@ export default function UsersScreen({
               services={services}
             />
           )}
+          {editing !== null && (
+            <div className="rounded-md border p-3 text-sm">
+              <p className="font-medium">Effective access after saving</p>
+              <p className="text-muted-foreground mt-1">
+                {editAccess.role} · {editAccess.role === 'admin' || editAccess.all_services
+                  ? 'All current and future services'
+                  : editAccess.services.length === 0
+                    ? 'No services selected'
+                    : editAccess.services.map((id) => services.find((service) => service.id === id)?.name ?? id).join(', ')}
+              </p>
+            </div>
+          )}
           {editError !== null && (
             <p role="alert" className="text-destructive text-sm">
               {editError}

@@ -143,46 +143,87 @@ export default function Dashboard({
   const [notesError, setNotesError] = useState<string | null>(null);
   const [fleetError, setFleetError] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const refreshingRef = useRef(false);
 
   const load = useCallback(() => {
-    requestRef.current?.abort();
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
     const controller = new AbortController();
     requestRef.current = controller;
     const isCurrent = () => requestRef.current === controller && !controller.signal.aborted;
 
+    const loads: Promise<void>[] = [];
     if (canHost) {
-      void settleRegion(fetchSystem(controller.signal), isCurrent, (snapshot) => {
+      loads.push(settleRegion(fetchSystem(controller.signal), isCurrent, (snapshot) => {
         setSystem(snapshot);
         setSystemError(null);
-      }, setSystemError, onUnauthorized);
-      void settleRegion(fetchFleetContainers(controller.signal), isCurrent, (snapshot) => {
+      }, setSystemError, onUnauthorized));
+      loads.push(settleRegion(fetchFleetContainers(controller.signal), isCurrent, (snapshot) => {
         setFleet(snapshot);
         setFleetError(null);
-      }, setFleetError, onUnauthorized);
+      }, setFleetError, onUnauthorized));
     }
 
-    void settleRegion(fetchNotifications('', 100, controller.signal), isCurrent, (fetched) => {
+    loads.push(settleRegion(fetchNotifications('', 100, controller.signal), isCurrent, (fetched) => {
       setNotes(fetched.notifications);
       setUnread(fetched.unread);
       setNotesError(null);
-    }, setNotesError, onUnauthorized);
+    }, setNotesError, onUnauthorized));
+    void Promise.allSettled(loads).then(() => {
+      if (requestRef.current === controller) refreshingRef.current = false;
+    });
   }, [onUnauthorized, canHost]);
 
   useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), refreshIntervalMs);
+    const refreshVisible = () => { if (!document.hidden) load(); };
+    refreshVisible();
+    const timer = setInterval(refreshVisible, refreshIntervalMs);
+    document.addEventListener('visibilitychange', refreshVisible);
 
     return () => {
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
       requestRef.current?.abort();
+      requestRef.current = null;
+      refreshingRef.current = false;
     };
   }, [load]);
 
   const activity = useMemo(() => bucketByHour(notes ?? []), [notes]);
   const healthy = (services ?? []).filter((service) => service.health === 'healthy').length;
 
+  const diskPercent = system?.disk_used_bytes != null && system.disk_total_bytes != null && system.disk_total_bytes > 0
+    ? system.disk_used_bytes / system.disk_total_bytes * 100
+    : 0;
+  const needsAttention = (services ?? []).filter((service) => service.health === 'unhealthy' || service.health === 'unknown');
+  const hostPressure = system !== null && !system.freshness.stale && (
+    (system.cpu_percent ?? 0) >= 90 || diskPercent >= 85
+  );
+  const partialCollection = fleet !== null && (fleet.freshness.stale || !fleet.freshness.complete);
+
   return (
     <div className="space-y-4">
+      {(hostPressure || needsAttention.length > 0 || partialCollection) && (
+        <Card className="border-amber-500/40">
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Needs attention</CardTitle></CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
+            {hostPressure && (system.cpu_percent ?? 0) >= 90 && (
+              <Button variant="outline" size="sm" onClick={() => onView('fleet')}>Host CPU {system.cpu_percent?.toFixed(0)}% · View Fleet</Button>
+            )}
+            {hostPressure && diskPercent >= 85 && (
+              <Button variant="outline" size="sm" onClick={() => onView('images')}>Root disk {diskPercent.toFixed(0)}% full · View Storage</Button>
+            )}
+            {needsAttention.map((service) => (
+              <Button key={service.id} variant="outline" size="sm" onClick={() => onSelectService(service.id)}>
+                {service.name} · {service.health}
+              </Button>
+            ))}
+            {partialCollection && (
+              <Button variant="outline" size="sm" onClick={() => onView('fleet')}>Container inventory coverage · View Fleet</Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">

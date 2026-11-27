@@ -42,6 +42,7 @@ POST /api/services/{id}/deploys	reach	reach	403
 POST /api/services/{id}/cutover	reach	reach	403
 POST /api/services/{id}/rollback	reach	reach	403
 POST /api/services/{id}/deploy	reach	reach	403
+GET /api/env/overview	reach	reach	403
 GET /api/services/{id}/env	reach	reach	403
 PUT /api/services/{id}/env/entries/{key}	reach	reach	403
 DELETE /api/services/{id}/env/entries/{key}	reach	reach	403
@@ -57,6 +58,7 @@ GET /api/logs	reach	reach	403
 GET /api/logs/stats	reach	reach	403
 GET /api/logs/{id}	reach	reach	404
 GET /api/issues	reach	reach	403
+GET /api/issues/inbox	reach	reach	403
 GET /api/issues/occurrences	reach	reach	403
 GET /api/issues/{id}	reach	reach	404
 GET /api/issues/{id}/logs	reach	reach	404

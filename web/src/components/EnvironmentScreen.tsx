@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ArrowRight, Lock, RefreshCw } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -7,13 +7,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import EmptyState from './EmptyState.tsx';
 import ErrorState from './ErrorState.tsx';
-import { ApiError, fetchEnv, isUnauthorized, type EnvOverview, type ServiceView } from '@/lib/api.ts';
+import { fetchEnvFleet, type EnvFleetSummary, type ServiceView } from '@/lib/api.ts';
 import { envDocsHref } from '@/lib/env.ts';
 import { formatTime, timeAgo } from '@/lib/format.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 export interface EnvFleetRow {
   service: ServiceView;
-  overview: EnvOverview | null;
+  overview: EnvFleetSummary | null;
   error: string | null;
 }
 
@@ -29,7 +30,8 @@ export function envRowSummary(row: EnvFleetRow): {
   }
   if (!row.overview.configured) {
     return {
-      label: row.overview.reason === 'key_missing' ? 'No encryption key on the host' : 'No env target configured',
+      label: row.overview.reason === 'key_missing' ? 'No encryption key on the host' :
+        row.overview.reason === 'invalid_target' ? 'Invalid env target configuration' : 'No env target configured',
       tone: 'muted',
     };
   }
@@ -42,7 +44,7 @@ export function envRowSummary(row: EnvFleetRow): {
       tone: 'pending',
     };
   }
-  if (row.overview.entries.length === 0) {
+  if (row.overview.key_count === 0) {
     return { label: 'No entries yet', tone: 'muted' };
   }
 
@@ -107,20 +109,20 @@ export function EnvironmentScreenView({
             {rows.map((row) => {
               const summary = envRowSummary(row);
               const overview = row.overview;
-              const secrets = overview?.entries.filter((entry) => entry.is_secret).length ?? 0;
+              const secrets = overview?.secret_count ?? 0;
 
               return (
                 <div key={row.service.id} className="flex flex-wrap items-center gap-3 px-4 py-3" data-service={row.service.id}>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{row.service.name}</p>
                     <p className="text-muted-foreground truncate font-mono text-xs">
-                      {overview?.target?.path ?? row.service.id}
+                      {overview?.target_path ?? row.service.id}
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs">
-                    {overview !== null && overview.configured && overview.entries.length > 0 && (
+                    {overview !== null && overview.configured && overview.key_count > 0 && (
                       <Badge variant="outline">
-                        {overview.entries.length} {overview.entries.length === 1 ? 'key' : 'keys'}
+                        {overview.key_count} {overview.key_count === 1 ? 'key' : 'keys'}
                         {secrets > 0 && (
                           <>
                             <Lock className="size-3" aria-hidden /> {secrets}
@@ -129,9 +131,9 @@ export function EnvironmentScreenView({
                       </Badge>
                     )}
                     <span className={toneClass[summary.tone]}>{summary.label}</span>
-                    {overview?.applied_revision != null && (
-                      <span className="text-muted-foreground" title={formatTime(overview.applied_revision.created_at)}>
-                        applied {timeAgo(overview.applied_revision.created_at) || formatTime(overview.applied_revision.created_at)}
+                    {overview?.last_applied_at != null && (
+                      <span className="text-muted-foreground" title={formatTime(overview.last_applied_at)}>
+                        applied {timeAgo(overview.last_applied_at) || formatTime(overview.last_applied_at)}
                       </span>
                     )}
                   </div>
@@ -166,75 +168,28 @@ export default function EnvironmentScreen({
   onUnauthorized: () => void;
   onOpenService: (id: string) => void;
 }) {
-  const [rows, setRows] = useState<EnvFleetRow[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (services === null) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const results = await Promise.all(
-        services.map(async (service): Promise<EnvFleetRow> => {
-          try {
-            return { service, overview: await fetchEnv(service.id), error: null };
-          } catch (err) {
-            if (isUnauthorized(err)) {
-              throw err;
-            }
-            if (err instanceof ApiError && err.status === 503) {
-              return {
-                service,
-                overview: {
-                  configured: false,
-                  reason: 'key_missing',
-                  target: null,
-                  entries: [],
-                  applied_revision: null,
-                  pending_count: 0,
-                  last_validation: null,
-                  apply_in_progress: false,
-                },
-                error: null,
-              };
-            }
-
-            return { service, overview: null, error: err instanceof Error ? err.message : String(err) };
-          }
-        }),
-      );
-      setRows(results);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [services, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  if (error !== null) {
-    return <ErrorState title="Couldn't load environment status" message={error} onRetry={() => void load()} />;
-  }
+  const [refresh, setRefresh] = useState(0);
+  const scope = JSON.stringify(services?.map(({ id }) => id) ?? []);
+  const fleet = usePanelRead(scope, services?.length ? fetchEnvFleet : null, refresh, onUnauthorized);
+  const summary = new Map(fleet.data?.map((row) => [row.service_id, row]) ?? []);
+  const rows = services?.map((service) => ({
+    service,
+    overview: summary.get(service.id) ?? null,
+    error: fleet.data !== null && !summary.has(service.id) ? 'Status unavailable' : null,
+  })) ?? null;
 
   return (
-    <EnvironmentScreenView
-      rows={services === null ? null : (rows ?? services.map((service) => ({ service, overview: null, error: null })))}
-      loading={loading}
-      isAdmin={isAdmin}
-      onRefresh={() => void load()}
-      onOpenService={onOpenService}
-    />
+    <>
+      {fleet.error !== null && (
+        <ErrorState title="Couldn’t refresh environment status" message={fleet.error} onRetry={fleet.retry} />
+      )}
+      <EnvironmentScreenView
+        rows={rows}
+        loading={fleet.loading || services === null}
+        isAdmin={isAdmin}
+        onRefresh={() => setRefresh((value) => value + 1)}
+        onOpenService={onOpenService}
+      />
+    </>
   );
 }

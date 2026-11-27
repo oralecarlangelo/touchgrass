@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/errdefs"
 	"github.com/oralecarlangelo/touchgrass/internal/docker"
 	"github.com/oralecarlangelo/touchgrass/internal/model"
@@ -136,6 +137,61 @@ func TestFleetInventoryReconcileSkipsVanishedContainer(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].ID != "stable" {
 		t.Errorf("Containers() = %+v, want only stable instance", got)
+	}
+}
+
+func TestFleetInventoryDatabaseDiscoveryReusesInspection(t *testing.T) {
+	t.Parallel()
+
+	const (
+		postgresID = "8e61cd741ae6"
+		redisID    = "6a1c9ed5f042"
+		workerID   = "demo-worker"
+	)
+
+	db := openInventoryDB(t)
+
+	dockerClient := &fakeInventoryDocker{
+		containers: []docker.Container{
+			{ID: "db", Name: "demo-db", Image: postgresID, ImageID: "sha256:" + postgresID, State: "running"},
+			{ID: "cache", Name: "demo-cache", Image: "sha256:" + redisID, ImageID: "sha256:" + redisID},
+			{ID: workerID, Name: "demo-app", Image: "example/app:stable", ImageID: "sha256:worker"},
+			{ID: "gone", Name: "demo-old-db", Image: "postgres:16"},
+		},
+		inspections: map[string]docker.Inspection{},
+		inspectErrs: map[string]error{"gone": errdefs.NotFound(errors.New("gone"))},
+	}
+	for id, image := range map[string]string{"db": "postgres:17-alpine", "cache": "redis:7-alpine", workerID: "postgres:16"} {
+		dockerClient.inspections[id] = docker.NormalizeInspection(container.InspectResponse{
+			Config: &container.Config{Image: image},
+		})
+	}
+
+	var observed []docker.Container
+
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services: store.NewServiceStore(db), Containers: store.NewContainerStore(db), Docker: dockerClient,
+		Observe: func(items []docker.Container, _ time.Time, _ time.Duration) { observed = items },
+	})
+
+	for _, attempt := range []string{"initial discovery", "inspection temporarily unavailable"} {
+		if _, err := inventory.Reconcile(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		found := map[string]string{}
+
+		for _, item := range observed {
+			if label := databaseImageLabel(item.Image); label != "" {
+				found[item.ID] = label
+			}
+		}
+
+		if len(found) != 2 || found["db"] != model.DatabasePostgresLabel || found["cache"] != model.DatabaseRedisLabel {
+			t.Errorf("%s: discovered %v, want postgres and redis only", attempt, found)
+		}
+
+		dockerClient.inspectErrs["db"] = errors.New("inspect unavailable")
 	}
 }
 

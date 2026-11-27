@@ -64,9 +64,9 @@ export default function PerformanceSummary({
   routes,
 }: {
   summary: PerformanceSummaryView;
-  routes: PerformanceRouteRow[];
+  routes: PerformanceRouteRow[] | null;
 }) {
-  const slowRoutes = routes.filter((route) => route.p95_ms >= 1_000).length;
+  const slowRoutes = routes?.filter((route) => route.p95_ms >= 1_000).length;
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -96,8 +96,8 @@ export default function PerformanceSummary({
       />
       <SummaryCard
         label="Slow routes"
-        value={String(slowRoutes)}
-        detail="p95 at or above 1 second"
+        value={slowRoutes === undefined ? '—' : String(slowRoutes)}
+        detail={slowRoutes === undefined ? 'Open HTTP routes to calculate' : 'p95 at or above 1 second'}
         icon={Route}
       />
     </div>

@@ -1167,14 +1167,14 @@ export async function listSdkLogs(serviceId: string, search: SdkLogSearch = {}, 
   return (body.lines ?? []).map(normalizeSdkLogEntry);
 }
 
-export async function fetchAudit(serviceId: string, limit = 100): Promise<AuditEntry[]> {
+export async function fetchAudit(serviceId: string, limit = 100, signal?: AbortSignal): Promise<AuditEntry[]> {
   const params = new URLSearchParams({ limit: String(limit) });
 
   if (serviceId !== '') {
     params.set('service_id', serviceId);
   }
 
-  const body = await request<AuditResponse>(`/api/audit?${params.toString()}`);
+  const body = await request<AuditResponse>(`/api/audit?${params.toString()}`, { signal });
 
   return body.audit ?? [];
 }

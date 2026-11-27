@@ -44,8 +44,8 @@ func migrateFromV060(t *testing.T) *DB {
 		t.Fatalf("MigrateUp() error = %v, want nil", err)
 	}
 
-	if !slices.Equal(applied, []string{"0024", "0025", "0026", "0027"}) {
-		t.Fatalf("MigrateUp() applied = %v, want [0024 0025 0026 0027]", applied)
+	if !slices.Equal(applied, []string{"0024", "0025", "0026", "0027", "0028"}) {
+		t.Fatalf("MigrateUp() applied = %v, want [0024 0025 0026 0027 0028]", applied)
 	}
 
 	return db
@@ -139,6 +139,39 @@ func TestMigrateAuditOperatorActionsLeavesAccountsAlone(t *testing.T) {
 		default:
 			t.Errorf("unexpected account %+v", user)
 		}
+	}
+}
+
+func TestMigrateAuditSupportsSelfUpdate(t *testing.T) {
+	t.Parallel()
+
+	db := openMigratedThrough(t, "0027")
+	execAll(t, db,
+		`INSERT INTO audit (id, actor, action, result, detail)
+		 VALUES (7, 'example-admin', 'storage_action', 'success', 'cleanup recorded')`,
+		`UPDATE sqlite_sequence SET seq = 55 WHERE name = 'audit'`,
+	)
+
+	if _, err := db.MigrateUp(t.Context()); err != nil {
+		t.Fatalf("migrate audit: %v", err)
+	}
+
+	audits := NewAuditStore(db)
+
+	id, err := audits.Insert(t.Context(), model.Audit{
+		Actor: "example-admin", Action: model.AuditSelfUpdate, Result: model.AuditSuccess,
+	})
+	if err != nil || id != 56 {
+		t.Fatalf("recorded self-update id = %d, error = %v, want id 56", id, err)
+	}
+
+	rows, err := audits.List(t.Context(), "", 2)
+	if err != nil {
+		t.Fatalf("list migrated rows: %v", err)
+	}
+
+	if len(rows) != 2 || rows[1].ID != 7 || rows[1].Detail != "cleanup recorded" {
+		t.Fatalf("rows = %+v, want the update and the original storage action", rows)
 	}
 }
 

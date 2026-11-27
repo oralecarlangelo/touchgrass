@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -124,17 +125,10 @@ func (f *FleetInventory) Reconcile(ctx context.Context) (model.InventorySummary,
 	containers, err := f.docker.ListAll(listCtx)
 	cancelList()
 
-	if f.observe != nil {
-		switch {
-		case err != nil:
-			f.observe(nil, observedAt, 2*f.interval)
-		case containers == nil:
-			f.observe([]docker.Container{}, observedAt, 2*f.interval)
-		default:
-			f.observe(containers, observedAt, 2*f.interval)
-		}
-	}
 	if err != nil {
+		if f.observe != nil {
+			f.observe(nil, observedAt, 2*f.interval)
+		}
 		if f.evaluator != nil {
 			_ = f.evaluator.RecordCollector(ctx, "security_posture", false, "docker_inventory_unavailable", f.interval)
 		}
@@ -298,7 +292,7 @@ func (f *FleetInventory) inspectAll(
 	}()
 
 	byIndex := make(map[int]docker.Inspection, len(containers))
-	priorInspections := make(map[int]model.SafeInspection)
+	priorInstances := map[int]model.ContainerInstance{}
 	coverage := make(map[string]bool, len(containers))
 	vanished := make(map[int]bool)
 	for result := range results {
@@ -314,7 +308,7 @@ func (f *FleetInventory) inspectAll(
 			}
 			if previous, getErr := f.containers.Get(ctx, containers[result.index].ID); getErr == nil {
 				previous.Inspection.CoverageComplete = false
-				priorInspections[result.index] = previous.Inspection
+				priorInstances[result.index] = previous
 			}
 			continue
 		}
@@ -323,6 +317,7 @@ func (f *FleetInventory) inspectAll(
 	}
 
 	instances := make([]model.ContainerInstance, 0, len(containers)-len(vanished))
+	observed := make([]docker.Container, 0, cap(instances))
 	for index, item := range containers {
 		if vanished[index] {
 			continue
@@ -331,11 +326,21 @@ func (f *FleetInventory) inspectAll(
 		if owners[item.ID] != "" {
 			classification = model.ContainerClassificationManaged
 		}
-		inspection, hasPrior := priorInspections[index]
-		if !hasPrior {
-			inspection = safeInspection(byIndex[index])
-			inspection.CoverageComplete = coverage[item.ID]
+
+		fresh := byIndex[index]
+		inspection := safeInspection(fresh)
+		inspection.CoverageComplete = coverage[item.ID]
+		image := fresh.ConfiguredImage
+
+		if previous, ok := priorInstances[index]; ok {
+			inspection = previous.Inspection
+			if previous.ImageID == item.ImageID {
+				image = previous.Image
+			}
 		}
+
+		item.Image = inventoryImage(item, image)
+		observed = append(observed, item)
 		inspection.PublishedPorts = publishedPorts(item.Published)
 		instances = append(instances, model.ContainerInstance{
 			ID: item.ID, Name: item.Name, Image: item.Image, ImageID: item.ImageID,
@@ -347,7 +352,25 @@ func (f *FleetInventory) inspectAll(
 			ImageFingerprint: item.ImageID, Inspection: inspection,
 		})
 	}
+
+	if f.observe != nil {
+		f.observe(observed, observedAt, 2*f.interval)
+	}
+
 	return instances, coverage
+}
+
+// Docker may list an image ID in place of a name after a tag moves. Use the
+// create-time reference from the inspection already read by this heartbeat.
+func inventoryImage(item docker.Container, configuredImage string) string {
+	shortID := strings.TrimPrefix(item.Image, "sha256:")
+	fullID := strings.TrimPrefix(item.ImageID, "sha256:")
+
+	if configuredImage != "" && len(shortID) >= 12 && strings.HasPrefix(fullID, shortID) {
+		return configuredImage
+	}
+
+	return item.Image
 }
 
 func (f *FleetInventory) evaluatePosture(

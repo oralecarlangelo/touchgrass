@@ -38,6 +38,7 @@ func WithLogging(logger *slog.Logger, next nethttp.Handler) nethttp.Handler {
 			"request_id", requestID,
 			"method", r.Method,
 			"path", safeRequestPath(r.URL.Path),
+			"route", wrapped.routeTemplate,
 			"status", wrapped.Status(),
 			"duration_ms", duration.Milliseconds(),
 			"response_bytes", wrapped.bytes,
@@ -46,6 +47,17 @@ func WithLogging(logger *slog.Logger, next nethttp.Handler) nethttp.Handler {
 			"deadline_exceeded", isDeadlineExceeded,
 		)
 	})
+}
+
+// withLogRoute records the static template supplied by the route registry.
+func withLogRoute(template string, next nethttp.HandlerFunc) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		if response, ok := w.(*statusWriter); ok {
+			response.routeTemplate = template
+		}
+
+		next(w, r)
+	}
 }
 
 func requestLogLevel(responseStartDuration time.Duration, hasWriteError bool) slog.Level {
@@ -99,6 +111,7 @@ func WithSecurityHeaders(next nethttp.Handler) nethttp.Handler {
 // statusWriter captures the response status code.
 type statusWriter struct {
 	nethttp.ResponseWriter
+	routeTemplate string
 	status        int
 	bytes         int64
 	hasWriteError bool

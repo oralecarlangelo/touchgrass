@@ -138,7 +138,7 @@ func New(cfg Config) *Server {
 	// Every API route comes from the route table and is wrapped in its
 	// guard. Nothing under /api/ is registered anywhere else.
 	for _, rt := range server.routes() {
-		mux.HandleFunc(rt.method+" "+rt.pattern, server.guard(rt))
+		mux.HandleFunc(rt.method+" "+rt.pattern, withLogRoute(rt.pattern, server.guard(rt)))
 	}
 
 	mux.HandleFunc("GET /docs", func(w nethttp.ResponseWriter, r *nethttp.Request) {

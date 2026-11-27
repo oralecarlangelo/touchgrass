@@ -1138,6 +1138,46 @@ paths:
                   issues:
                     type: array
                     items: { $ref: '#/components/schemas/Issue' }
+  /issues/inbox:
+    get:
+      x-touchgrass-capability: issues.read
+      x-touchgrass-scope: service
+      operationId: listIssueInbox
+      tags: [issues]
+      summary: Page issues across the caller's permitted services
+      parameters:
+        - name: service_id
+          in: query
+          schema: { type: string }
+        - name: q
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: release
+          in: query
+          schema: { type: string, maxLength: 200 }
+        - name: start
+          in: query
+          schema: { type: string, format: date-time }
+        - name: end
+          in: query
+          schema: { type: string, format: date-time }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Up to 25 issues ordered by latest activity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issues]
+                properties:
+                  issues:
+                    type: array
+                    items: { $ref: '#/components/schemas/Issue' }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
   /issues/occurrences:
     get:
       x-touchgrass-capability: issues.read

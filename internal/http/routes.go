@@ -139,6 +139,7 @@ func (s *Server) routes() []route {
 		{method: nethttp.MethodGet, pattern: "/api/logs/stats", kind: guardServiceQuery, capability: authz.LogsRead, handler: s.handleLogStats},
 		{method: nethttp.MethodGet, pattern: "/api/logs/{id}", kind: guardResource, capability: authz.LogsRead, resource: model.ResourceLogLine, handler: s.handleLogContext},
 		{method: nethttp.MethodGet, pattern: "/api/issues", kind: guardServiceQuery, capability: authz.IssuesRead, handler: s.handleIssues},
+		{method: nethttp.MethodGet, pattern: "/api/issues/inbox", kind: guardServiceQuery, capability: authz.IssuesRead, listScoped: true, handler: s.handleIssueInbox},
 		{method: nethttp.MethodGet, pattern: "/api/issues/occurrences", kind: guardServiceQuery, capability: authz.IssuesRead, handler: s.handleOccurrences},
 		{method: nethttp.MethodGet, pattern: "/api/issues/{id}", kind: guardResource, capability: authz.IssuesRead, resource: model.ResourceIssue, handler: s.handleIssue},
 		{method: nethttp.MethodGet, pattern: "/api/issues/{id}/logs", kind: guardResource, capability: authz.LogsRead, resource: model.ResourceIssue, handler: s.handleIssueLogs},

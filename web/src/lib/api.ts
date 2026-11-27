@@ -828,6 +828,28 @@ interface IssuesResponse {
   issues: Issue[];
 }
 
+export interface IssueInboxFilters {
+  service_id?: string;
+  q?: string;
+  release?: string;
+  start?: string;
+  end?: string;
+  cursor?: string;
+}
+
+export interface IssueInbox {
+  issues: Issue[];
+  next_cursor?: string;
+}
+
+export function fetchIssueInbox(filters: IssueInboxFilters, signal?: AbortSignal): Promise<IssueInbox> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  return request<IssueInbox>(`/api/issues/inbox?${params.toString()}`, { signal });
+}
+
 interface IssueDetailResponse {
   issue: Issue;
   occurrences: Occurrence[];

@@ -153,3 +153,36 @@ func TestIssueStoreNotifyAndTrim(t *testing.T) {
 		t.Errorf("Get() error = %v, want ErrIssueNotFound after trim", err)
 	}
 }
+
+func TestIssueInboxCursor(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	issues := NewIssueStore(db)
+	first := groupTestOccurrence(t, issues, "old-fingerprint", "alpha")
+	second := groupTestOccurrence(t, issues, "new-fingerprint", "beta")
+
+	// Exercise the cursor tie-breaker, including timestamp text with
+	// trailing fractional zeroes left by older SQLite defaults.
+	if _, err := db.sql.ExecContext(t.Context(), "UPDATE issues SET last_seen = ?", "2026-01-01T00:00:01.120Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	filter := model.IssueInboxQuery{ServiceIDs: []string{testServiceAPI}, Limit: 1, Search: "fingerprint"}
+
+	page, cursor, err := issues.IssueInbox(t.Context(), filter)
+	if err != nil || len(page) != 1 || page[0].ID != *second.IssueID {
+		t.Fatalf("first page = %v, %v", page, err)
+	}
+
+	filter.Before = cursor
+
+	page, cursor, err = issues.IssueInbox(t.Context(), filter)
+	if err != nil || len(page) != 1 || page[0].ID != *first.IssueID {
+		t.Fatalf("second page = %v, %v", page, err)
+	}
+
+	if cursor.ID != 0 {
+		t.Errorf("final cursor = %+v, want no next page", cursor)
+	}
+}

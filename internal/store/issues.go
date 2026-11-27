@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -196,7 +197,7 @@ func (s *IssueStore) TrimBefore(ctx context.Context, cutoff time.Time) (int64, e
 	return s.db.trimOlderThan(ctx, ageTrim{table: "issues", column: columnLastSeen}, formatTime(cutoff))
 }
 
-// withReleases attaches sorted releases to issues from one service query.
+// withReleases attaches sorted releases to just the issues in the result.
 func (s *IssueStore) withReleases(
 	ctx context.Context,
 	issues []model.Issue,
@@ -205,11 +206,20 @@ func (s *IssueStore) withReleases(
 		return issues, nil
 	}
 
+	ids := make([]int64, 0, len(issues))
+	for _, issue := range issues {
+		ids = append(ids, issue.ID)
+	}
+
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("encoding issue ids: %w", err)
+	}
+
 	rows, err := s.db.read.QueryContext(ctx,
-		`SELECT r.issue_id, r.release FROM issue_releases r
-		 JOIN issues i ON i.id = r.issue_id
-		 WHERE i.service_id = ? ORDER BY r.release`,
-		issues[0].ServiceID,
+		`SELECT issue_id, release FROM issue_releases
+		 WHERE issue_id IN (SELECT value FROM json_each(?)) ORDER BY release`,
+		string(encoded),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying issue releases: %w", err)
@@ -251,6 +261,10 @@ func (s *IssueStore) withReleases(
 
 // scanIssue maps one issues row with its live count.
 func scanIssue(row scanner) (model.Issue, error) {
+	return scanIssueCapturingSeen(row, nil)
+}
+
+func scanIssueCapturingSeen(row scanner, seen *string) (model.Issue, error) {
 	var (
 		issue      model.Issue
 		firstSeen  string
@@ -286,6 +300,10 @@ func scanIssue(row scanner) (model.Issue, error) {
 	}
 
 	issue.LastSeen = last
+
+	if seen != nil {
+		*seen = lastSeen
+	}
 
 	notified, err := parseNullTime(notifiedAt, "notified_at")
 	if err != nil {

@@ -146,6 +146,12 @@ waiting, stale, and unavailable states separately. Keep refresh scoped to the
 visible summary. Read backup artifacts and history on entry, explicit refresh,
 and relevant job transitions.
 
+Dashboard uses aggregate inventory counts and shares its notification read
+with the header. Fleet reads its current inventory independently of history.
+Expanding history reads all three bounded host series in one query. Opening a
+service onboarding draft uses Compose metadata from the latest Fleet heartbeat.
+An operator can check published health URLs from the draft before saving.
+
 The Databases page reuses the local Docker inventory, collected at startup and
 then on its existing schedule and lifecycle events. It recognizes common
 PostgreSQL, Redis, Valkey, MySQL, MariaDB, and MongoDB images, and tracks

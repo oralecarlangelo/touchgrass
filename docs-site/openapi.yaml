@@ -897,17 +897,18 @@ paths:
       tags: [onboarding]
       summary: Draft a service row for one fleet container (admin only)
       description: |
-        Drafts project/service/dir from compose labels, the service id
-        from the project name, the health URL by probing the lowest
-        published host port, and blue-green fields when an X-blue +
-        X-green pair shares the project. It writes nothing, but it
-        probes a container's ports and returns host paths, so it is
-        limited to admins.
+        Uses the current Fleet heartbeat to draft Compose and deployment
+        metadata. An optional health check contacts the lowest published
+        host port. This read-only action returns host paths and requires an admin.
       parameters:
         - name: container
           in: query
           required: true
           schema: { type: string }
+        - name: probe
+          in: query
+          description: Use false to draft from inventory without contacting the service.
+          schema: { type: boolean, default: true }
       responses:
         '200':
           description: Drafted service row
@@ -1606,6 +1607,10 @@ paths:
       tags: [system]
       summary: Complete current container inventory, including stopped containers
       parameters:
+        - name: view
+          in: query
+          description: Use summary for current inventory totals and freshness. List filters and paging apply only to inventory rows.
+          schema: { type: string, enum: [summary] }
         - name: classification
           in: query
           schema: { type: string, enum: [managed, approved_observed, unknown, ignored, missing_expected] }
@@ -1633,13 +1638,22 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [containers, freshness]
-                properties:
-                  containers:
-                    type: array
-                    items: { $ref: '#/components/schemas/FleetContainer' }
-                  freshness: { $ref: '#/components/schemas/ContainerFreshness' }
+                oneOf:
+                  - type: object
+                    required: [containers, freshness]
+                    properties:
+                      containers:
+                        type: array
+                        items: { $ref: '#/components/schemas/FleetContainer' }
+                      freshness: { $ref: '#/components/schemas/ContainerFreshness' }
+                  - type: object
+                    required: [total, critical, unknown, stopped, freshness]
+                    properties:
+                      total: { type: integer, minimum: 0 }
+                      critical: { type: integer, minimum: 0 }
+                      unknown: { type: integer, minimum: 0 }
+                      stopped: { type: integer, minimum: 0 }
+                      freshness: { $ref: '#/components/schemas/ContainerFreshness' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /system/containers/{id}:
@@ -1744,11 +1758,12 @@ paths:
       description: |
         Metric mem reports used bytes. Buckets size to the window so the
         series never exceeds 1500 points. Hours above 168 clamp to 168.
+        Use all to return all three series from the same aggregation.
       parameters:
         - name: metric
           in: query
           required: true
-          schema: { type: string, enum: [cpu, mem, load] }
+          schema: { type: string, enum: [cpu, mem, load, all] }
         - name: hours
           in: query
           schema: { type: integer, default: 24, minimum: 1, maximum: 168 }
@@ -1758,12 +1773,29 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [points]
-                properties:
-                  points:
-                    type: array
-                    items: { $ref: '#/components/schemas/HistoryPoint' }
+                oneOf:
+                  - type: object
+                    required: [points]
+                    properties:
+                      points:
+                        type: array
+                        items: { $ref: '#/components/schemas/HistoryPoint' }
+                  - type: object
+                    required: [series]
+                    properties:
+                      series:
+                        type: object
+                        required: [cpu, mem, load]
+                        properties:
+                          cpu:
+                            type: array
+                            items: { $ref: '#/components/schemas/HistoryPoint' }
+                          mem:
+                            type: array
+                            items: { $ref: '#/components/schemas/HistoryPoint' }
+                          load:
+                            type: array
+                            items: { $ref: '#/components/schemas/HistoryPoint' }
         '400': { $ref: '#/components/responses/BadRequest' }
   /performance/summary:
     get:

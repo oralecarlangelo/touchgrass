@@ -172,6 +172,27 @@ func TestHandleOnboardingSuggest(t *testing.T) {
 	checkSuggestDraft(t, got)
 }
 
+func TestHandleOnboardingSuggestWithoutProbe(t *testing.T) {
+	t.Parallel()
+
+	server := onboardingTestServer(t, stubLister{containers: suggestContainers()}, stubProber{})
+
+	status, body := doRequest(t, server, nethttp.MethodGet, "/api/onboarding/suggest?container=shop-web-1&probe=false", "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
+	}
+
+	var draft model.ServiceSuggestion
+
+	if err := json.Unmarshal(body, &draft); err != nil {
+		t.Fatal(err)
+	}
+
+	if draft.ServiceID == "" || draft.HealthURL != "" {
+		t.Errorf("draft = %+v, want metadata with no verified health URL", draft)
+	}
+}
+
 func TestHandleOnboardingSuggestErrors(t *testing.T) {
 	t.Parallel()
 

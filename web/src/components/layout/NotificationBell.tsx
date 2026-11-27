@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
 import { Bell } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -10,64 +10,40 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  fetchNotifications,
-  isUnauthorized,
-  markNotificationsRead,
-  type Notification,
-} from '@/lib/api.ts';
+import { isUnauthorized, markNotificationsRead } from '@/lib/api.ts';
 import { timeAgo } from '@/lib/format.ts';
-
-const pollIntervalMs = 30_000;
-const previewLimit = 5;
+import { notificationPreviewLimit, type NotificationPreview } from '@/lib/use-notification-preview.ts';
 
 export default function NotificationBell({
+  preview,
   onViewAll,
   onUnauthorized,
   isAdmin,
 }: {
+  preview: NotificationPreview;
   onViewAll: () => void;
   onUnauthorized: () => void;
   isAdmin: boolean;
 }) {
-  const [items, setItems] = useState<Notification[]>([]);
-  const [unread, setUnread] = useState(0);
-
-  const load = useCallback(async () => {
-    try {
-      const fetched = await fetchNotifications('', previewLimit);
-      setItems(fetched.notifications);
-      setUnread(fetched.unread);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-      }
-      // Otherwise stay silent: the bell is ambient, the page shows errors.
-    }
-  }, [onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), pollIntervalMs);
-
-    return () => clearInterval(timer);
-  }, [load]);
+  const { data, error, loading, retry } = preview;
+  const items = data?.notifications ?? [];
+  const unread = data?.unread ?? 0;
 
   const markAll = useCallback(async () => {
     try {
       await markNotificationsRead('');
-      await load();
+      retry();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
       }
     }
-  }, [load, onUnauthorized]);
+  }, [onUnauthorized, retry]);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={`Notifications, ${unread} unread`}>
+        <Button variant="ghost" size="icon" aria-label={data === null ? 'Notifications' : `Notifications, ${unread} unread`}>
           <span className="relative">
             <Bell className="h-4 w-4" aria-hidden />
             {unread > 0 && (
@@ -98,10 +74,10 @@ export default function NotificationBell({
         <DropdownMenuSeparator />
         {items.length === 0 && (
           <p className="text-muted-foreground px-2 py-4 text-center text-sm">
-            Quiet. Prod is covered.
+            {error !== null ? 'Notifications unavailable.' : loading ? 'Loading notifications…' : 'No recent notifications.'}
           </p>
         )}
-        {items.slice(0, previewLimit).map((item) => (
+        {items.slice(0, notificationPreviewLimit).map((item) => (
           <DropdownMenuItem key={item.id} onSelect={onViewAll} className="items-start gap-2">
             {!item.read_at && (
               <span className="bg-primary mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden />

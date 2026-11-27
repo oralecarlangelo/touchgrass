@@ -110,37 +110,18 @@ func NewOnboarding(cfg OnboardingConfig) *Onboarding {
 // names are invalid input; containers already owned by a service row
 // conflict.
 func (o *Onboarding) Suggest(ctx context.Context, name string) (model.ServiceSuggestion, error) {
-	if name == "" {
-		return model.ServiceSuggestion{}, fmt.Errorf("%w: container query is required", ErrInvalidInput)
-	}
+	return o.Draft(ctx, name, true)
+}
 
-	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, suggestDiscoveryTimeout)
-	containers, err := o.docker.List(discoveryCtx)
-
-	cancelDiscovery()
+// Draft uses inventory metadata and optionally checks the published health URLs.
+func (o *Onboarding) Draft(ctx context.Context, name string, verifyHealth bool) (model.ServiceSuggestion, error) {
+	containers, found, err := o.discoverUnmanaged(ctx, name)
 	if err != nil {
-		return model.ServiceSuggestion{}, fmt.Errorf("listing containers: %w", err)
-	}
-
-	found, ok := findContainer(containers, name)
-	if !ok {
-		return model.ServiceSuggestion{}, fmt.Errorf("%w: unknown container %q", ErrInvalidInput, name)
-	}
-
-	defs, err := o.services.All(ctx)
-	if err != nil {
-		return model.ServiceSuggestion{}, fmt.Errorf("loading services: %w", err)
+		return model.ServiceSuggestion{}, err
 	}
 
 	project := found.Labels[docker.LabelComposeProject]
 	svc := found.Labels[docker.LabelComposeService]
-
-	if project != "" && svc != "" {
-		if owner, managed := managedBy(defs, project, svc); managed {
-			return model.ServiceSuggestion{},
-				fmt.Errorf("%w: container already managed by service %q", ErrConflict, owner)
-		}
-	}
 
 	draft := newDraft(name, found)
 
@@ -163,12 +144,12 @@ func (o *Onboarding) Suggest(ctx context.Context, name string) (model.ServiceSug
 	probeCtx, cancelProbes := context.WithTimeout(ctx, suggestProbeTimeout)
 	defer cancelProbes()
 	if base, paired := colorPair(containers, project, svc); paired {
-		o.draftBlueGreen(probeCtx, &draft, containers, project, base)
+		o.draftBlueGreen(probeCtx, &draft, containers, project, base, verifyHealth)
 	} else {
-		o.draftRecreate(probeCtx, &draft, found)
+		o.draftRecreate(probeCtx, &draft, found, verifyHealth)
 	}
 
-	if probeCtx.Err() != nil && ctx.Err() == nil {
+	if verifyHealth && probeCtx.Err() != nil && ctx.Err() == nil {
 		draft.Warnings = append(draft.Warnings, "health discovery timed out; review the unverified health fields")
 	}
 
@@ -181,12 +162,57 @@ func (o *Onboarding) Suggest(ctx context.Context, name string) (model.ServiceSug
 	return draft, nil
 }
 
+func (o *Onboarding) discoverUnmanaged(ctx context.Context, name string) ([]docker.Container, docker.Container, error) {
+	if name == "" {
+		return nil, docker.Container{}, fmt.Errorf("%w: container query is required", ErrInvalidInput)
+	}
+
+	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, suggestDiscoveryTimeout)
+	containers, err := o.docker.List(discoveryCtx)
+
+	cancelDiscovery()
+
+	if err != nil {
+		return nil, docker.Container{}, fmt.Errorf("listing containers: %w", err)
+	}
+
+	found, ok := findContainer(containers, name)
+	if !ok {
+		return nil, docker.Container{}, fmt.Errorf("%w: unknown container %q", ErrInvalidInput, name)
+	}
+
+	defs, err := o.services.All(ctx)
+	if err != nil {
+		return nil, docker.Container{}, fmt.Errorf("loading services: %w", err)
+	}
+
+	project := found.Labels[docker.LabelComposeProject]
+	svc := found.Labels[docker.LabelComposeService]
+
+	if project != "" && svc != "" {
+		if owner, managed := managedBy(defs, project, svc); managed {
+			return nil, docker.Container{}, fmt.Errorf("%w: container already managed by service %q", ErrConflict, owner)
+		}
+	}
+
+	return containers, found, nil
+}
+
 // draftRecreate fills the recreate fields: probed health URL plus default
 // script paths.
-func (o *Onboarding) draftRecreate(ctx context.Context, draft *model.ServiceSuggestion, found docker.Container) {
+func (o *Onboarding) draftRecreate(
+	ctx context.Context,
+	draft *model.ServiceSuggestion,
+	found docker.Container,
+	verifyHealth bool,
+) {
 	draft.Strategy = model.StrategyRecreate
 	draft.DeployScript = filepath.Join(o.scriptsDir, recreateDeployScript)
 	draft.RollbackScript = filepath.Join(o.scriptsDir, recreateRollbackScript)
+
+	if !verifyHealth {
+		return
+	}
 
 	healthURL, port, ok := o.probeContainer(ctx, found)
 	if !ok {
@@ -213,6 +239,7 @@ func (o *Onboarding) draftBlueGreen(
 	draft *model.ServiceSuggestion,
 	containers []docker.Container,
 	project, base string,
+	verifyHealth bool,
 ) {
 	draft.Strategy = model.StrategyBlueGreen
 	draft.BlueService = base + colorBlueSuffix
@@ -226,8 +253,8 @@ func (o *Onboarding) draftBlueGreen(
 	blue := findServiceContainer(containers, project, draft.BlueService)
 	green := findServiceContainer(containers, project, draft.GreenService)
 
-	bluePort, hasBlue := o.draftColorTarget(ctx, draft, blue, true)
-	greenPort, hasGreen := o.draftColorTarget(ctx, draft, green, false)
+	bluePort, hasBlue := o.draftColorTarget(ctx, draft, blue, true, verifyHealth)
+	greenPort, hasGreen := o.draftColorTarget(ctx, draft, green, false, verifyHealth)
 
 	switch draft.Container {
 	case blue.Name:
@@ -235,6 +262,10 @@ func (o *Onboarding) draftBlueGreen(
 	case green.Name:
 		draft.HealthURL = draft.GreenURL
 	default:
+		if !verifyHealth {
+			break
+		}
+
 		if healthURL, _, ok := o.probeContainer(ctx, findContainerOr(containers, draft.Container)); ok {
 			draft.HealthURL = healthURL
 		}
@@ -275,6 +306,7 @@ func (o *Onboarding) draftColorTarget(
 	draft *model.ServiceSuggestion,
 	found docker.Container,
 	isBlue bool,
+	verifyHealth bool,
 ) (uint16, bool) {
 	label := colorGreen
 	if isBlue {
@@ -322,6 +354,10 @@ func (o *Onboarding) draftColorTarget(
 	}
 
 	setTarget(net.JoinHostPort(dialHost(lowestHostIP(found, port)), strconv.Itoa(int(port))))
+
+	if !verifyHealth {
+		return port, true
+	}
 
 	healthURL, _, probed := o.probeContainer(ctx, found)
 	if probed {

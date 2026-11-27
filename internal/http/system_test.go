@@ -221,6 +221,53 @@ func TestHandleSystemHistory(t *testing.T) {
 	}
 }
 
+func TestHandleSystemHistoryAllMetrics(t *testing.T) {
+	t.Parallel()
+
+	server, db := fullTestServer(t)
+	processed := time.Now()
+	cpu, load, used := 25.0, 1.5, int64(2048)
+	fleet := store.NewFleetStore(db)
+
+	for _, sample := range []model.HostSample{
+		{SampledAt: processed.Add(-10 * time.Minute), CPUPercent: &cpu, MemUsed: &used, Load1: &load},
+		{SampledAt: processed.Add(-20 * time.Minute), Load1: &load},
+		{SampledAt: processed.Add(-2 * time.Hour), CPUPercent: &cpu},
+	} {
+		if err := fleet.InsertHost(t.Context(), sample); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status, body := doRequest(t, server, nethttp.MethodGet, "/api/system/history?metric=all&hours=1", "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", status, nethttp.StatusOK, body)
+	}
+
+	var got struct {
+		Series map[string][]model.HistoryPoint `json:"series"`
+	}
+
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	for metric, values := range map[string][]float64{
+		model.MetricCPU: {cpu}, model.MetricMem: {float64(used)}, model.MetricLoad: {load, load},
+	} {
+		points := got.Series[metric]
+		if len(points) != len(values) {
+			t.Fatalf("%s series has %d points, want %d", metric, len(points), len(values))
+		}
+
+		for i, value := range values {
+			if points[i].Value != value || (i > 0 && !points[i].TS.After(points[i-1].TS)) {
+				t.Errorf("%s point %d = %+v, want value %v and ascending buckets", metric, i, points[i], value)
+			}
+		}
+	}
+}
+
 func TestParseHistoryHours(t *testing.T) {
 	t.Parallel()
 

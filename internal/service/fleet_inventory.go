@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -50,6 +51,12 @@ type FleetInventory struct {
 	observe      func([]docker.Container, time.Time, time.Duration)
 	requests     chan struct{}
 	reconcileMu  sync.Mutex
+	snapshot     atomic.Pointer[fleetDockerObservation]
+}
+
+type fleetDockerObservation struct {
+	containers []docker.Container
+	observedAt time.Time
 }
 
 // NewFleetInventory builds one authoritative inventory reconciler.
@@ -357,7 +364,46 @@ func (f *FleetInventory) inspectAll(
 		f.observe(observed, observedAt, 2*f.interval)
 	}
 
+	f.rememberOnboardingContainers(observed, observedAt)
+
 	return instances, coverage
+}
+
+func (f *FleetInventory) rememberOnboardingContainers(containers []docker.Container, at time.Time) {
+	running := make([]docker.Container, 0, len(containers))
+
+	for _, item := range containers {
+		if item.State != updateStateRunning {
+			continue
+		}
+
+		labels := map[string]string{}
+
+		for _, key := range []string{docker.LabelComposeProject, docker.LabelComposeService, docker.LabelComposeWorkingDir} {
+			if value, ok := item.Labels[key]; ok {
+				labels[key] = value
+			}
+		}
+
+		item.Labels = labels
+		running = append(running, item)
+	}
+
+	f.snapshot.Store(&fleetDockerObservation{containers: running, observedAt: at})
+}
+
+// List provides the existing fleet heartbeat to onboarding's Docker lister.
+func (f *FleetInventory) List(ctx context.Context) ([]docker.Container, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("reading fleet discovery: %w", err)
+	}
+
+	snapshot := f.snapshot.Load()
+	if snapshot == nil || f.isStale(&snapshot.observedAt) {
+		return nil, fmt.Errorf("%w: fleet discovery needs a current heartbeat", docker.ErrDaemonBackoff)
+	}
+
+	return slices.Clone(snapshot.containers), nil
 }
 
 // Docker may list an image ID in place of a name after a tag moves. Use the
@@ -449,8 +495,26 @@ func (f *FleetInventory) Summary(ctx context.Context) (model.InventorySummary, e
 	if err != nil {
 		return model.InventorySummary{}, err
 	}
-	summary.Stale = summary.ReconciledAt == nil || time.Since(*summary.ReconciledAt) > 2*f.interval
+
+	summary.Stale = f.isStale(summary.ReconciledAt)
+
 	return summary, nil
+}
+
+// PostureSummary reads counts without loading individual inventory rows.
+func (f *FleetInventory) PostureSummary(ctx context.Context) (model.InventorySummary, model.InventoryPosture, error) {
+	summary, posture, err := f.containers.PostureSummary(ctx)
+	if err != nil {
+		return model.InventorySummary{}, model.InventoryPosture{}, err
+	}
+
+	summary.Stale = f.isStale(summary.ReconciledAt)
+
+	return summary, posture, nil
+}
+
+func (f *FleetInventory) isStale(reconciledAt *time.Time) bool {
+	return reconciledAt == nil || time.Since(*reconciledAt) > 2*f.interval
 }
 
 // ApproveContainer records the current image/configuration fingerprint as an

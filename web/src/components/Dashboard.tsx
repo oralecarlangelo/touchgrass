@@ -6,17 +6,17 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import ErrorState from './ErrorState.tsx';
 import {
-  fetchNotifications,
-  fetchFleetContainers,
+  fetchFleetContainerSummary,
   fetchSystem,
   isUnauthorized,
   type Notification,
-  type FleetContainersResponse,
+  type FleetContainerSummary,
   type ServiceView,
   type ServiceFreshness,
   type SystemSnapshot,
 } from '@/lib/api.ts';
 import { formatBytes, formatDuration, timeAgo } from '@/lib/format.ts';
+import type { NotificationPreview } from '@/lib/use-notification-preview.ts';
 import { healthDotClass, type ViewId } from '@/lib/views.ts';
 
 const refreshIntervalMs = 30_000;
@@ -50,15 +50,12 @@ export function collectionFreshnessLabel(freshness: ServiceFreshness): string {
   return freshness.observed_at === null ? `${state} · never observed` : `${state} · observed ${timeAgo(freshness.observed_at)}`;
 }
 
-export function containerPostureLabel(fleet: FleetContainersResponse): string {
+export function containerPostureLabel(fleet: FleetContainerSummary): string {
   if (fleet.freshness.stale || !fleet.freshness.complete) return 'degraded collection';
-  const critical = fleet.containers.filter((container) => container.risk_counts.critical > 0).length;
-  const unknown = fleet.containers.filter((container) => container.classification === 'unknown').length;
-  const stopped = fleet.containers.filter((container) => container.state !== 'running').length;
-  if (critical > 0) return `${critical} critical`;
-  if (unknown > 0) return `${unknown} unknown`;
-  if (stopped > 0) return `${stopped} stopped`;
-  return `${fleet.containers.length} observed`;
+  if (fleet.critical > 0) return `${fleet.critical} critical`;
+  if (fleet.unknown > 0) return `${fleet.unknown} unknown`;
+  if (fleet.stopped > 0) return `${fleet.stopped} stopped`;
+  return `${fleet.total} observed`;
 }
 
 function bucketByHour(items: Notification[]): { hour: string; count: number }[] {
@@ -120,6 +117,7 @@ export default function Dashboard({
   onView,
   onUnauthorized,
   canHost,
+  notificationPreview,
 }: {
   services: ServiceView[] | null;
   servicesError: string | null;
@@ -134,41 +132,32 @@ export default function Dashboard({
   // inventory. A user scoped to some services may not, so those calls
   // are never made and their cards are not drawn.
   canHost: boolean;
+  notificationPreview?: NotificationPreview;
 }) {
   const [system, setSystem] = useState<SystemSnapshot | null>(null);
-  const [notes, setNotes] = useState<Notification[] | null>(null);
-  const [unread, setUnread] = useState(0);
-  const [fleet, setFleet] = useState<FleetContainersResponse | null>(null);
+  const [fleet, setFleet] = useState<FleetContainerSummary | null>(null);
   const [systemError, setSystemError] = useState<string | null>(null);
-  const [notesError, setNotesError] = useState<string | null>(null);
   const [fleetError, setFleetError] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
   const refreshingRef = useRef(false);
 
   const load = useCallback(() => {
-    if (refreshingRef.current) return;
+    if (!canHost || refreshingRef.current) return;
     refreshingRef.current = true;
     const controller = new AbortController();
     requestRef.current = controller;
     const isCurrent = () => requestRef.current === controller && !controller.signal.aborted;
 
-    const loads: Promise<void>[] = [];
-    if (canHost) {
-      loads.push(settleRegion(fetchSystem(controller.signal), isCurrent, (snapshot) => {
+    const loads = [
+      settleRegion(fetchSystem(controller.signal), isCurrent, (snapshot) => {
         setSystem(snapshot);
         setSystemError(null);
-      }, setSystemError, onUnauthorized));
-      loads.push(settleRegion(fetchFleetContainers(controller.signal), isCurrent, (snapshot) => {
+      }, setSystemError, onUnauthorized),
+      settleRegion(fetchFleetContainerSummary(controller.signal), isCurrent, (snapshot) => {
         setFleet(snapshot);
         setFleetError(null);
-      }, setFleetError, onUnauthorized));
-    }
-
-    loads.push(settleRegion(fetchNotifications('', 100, controller.signal), isCurrent, (fetched) => {
-      setNotes(fetched.notifications);
-      setUnread(fetched.unread);
-      setNotesError(null);
-    }, setNotesError, onUnauthorized));
+      }, setFleetError, onUnauthorized),
+    ];
     void Promise.allSettled(loads).then(() => {
       if (requestRef.current === controller) refreshingRef.current = false;
     });
@@ -189,6 +178,7 @@ export default function Dashboard({
     };
   }, [load]);
 
+  const notes = notificationPreview?.data?.notifications ?? null;
   const activity = useMemo(() => bucketByHour(notes ?? []), [notes]);
   const healthy = (services ?? []).filter((service) => service.health === 'healthy').length;
 
@@ -260,7 +250,7 @@ export default function Dashboard({
             <CardContent>
               {fleet === null && fleetError !== null ? <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button> : fleet === null ? <Skeleton className="h-8 w-24" /> : (
                 <div>
-                  <p className="text-2xl font-semibold">{fleet.containers.length}</p>
+                  <p className="text-2xl font-semibold">{fleet.total}</p>
                   <p className="text-muted-foreground text-xs">{containerPostureLabel(fleet)}</p>
                 </div>
               )}
@@ -270,7 +260,7 @@ export default function Dashboard({
         {canHost && (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium">Collector freshness</CardTitle>
+              <CardTitle className="text-sm font-medium">Container inventory freshness</CardTitle>
             </CardHeader>
             <CardContent>
               {fleet === null && fleetError !== null ? <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button> : fleet === null ? <Skeleton className="h-8 w-24" /> : (
@@ -286,20 +276,20 @@ export default function Dashboard({
             </CardContent>
           </Card>
         )}
-        <Card>
+        {notificationPreview !== undefined && <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">Unread notifications</CardTitle>
           </CardHeader>
           <CardContent>
-            {notes === null && notesError !== null ? (
-              <button className="text-destructive text-sm" onClick={() => void load()}>Unavailable · Retry</button>
-            ) : notes === null ? (
+            {notificationPreview.data === null && notificationPreview.error !== null ? (
+              <button className="text-destructive text-sm" onClick={notificationPreview.retry}>Unavailable · Retry</button>
+            ) : notificationPreview.data === null ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <p className="text-2xl font-semibold">{unread}</p>
+              <p className="text-2xl font-semibold">{notificationPreview.data.unread}</p>
             )}
           </CardContent>
-        </Card>
+        </Card>}
         {canHost && (
           <Card>
             <CardHeader className="pb-2">
@@ -453,15 +443,20 @@ export default function Dashboard({
           </CardContent>
         </Card>
 
-        <Card>
+        {notificationPreview !== undefined && <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium">Notifications, last 24h</CardTitle>
+            <div>
+              <CardTitle className="text-sm font-medium">Notifications, last 24h</CardTitle>
+              {notes?.length === 100 && <p className="text-muted-foreground text-xs">Based on the latest 100</p>}
+            </div>
             <Button variant="ghost" size="sm" onClick={() => onView('notifications')}>
               View all
             </Button>
           </CardHeader>
           <CardContent>
-            {notes === null ? (
+            {notes === null && notificationPreview.error !== null ? (
+              <ErrorState title="Notifications unavailable" message={notificationPreview.error} onRetry={notificationPreview.retry} />
+            ) : notes === null ? (
               <Skeleton className="h-40 w-full" />
             ) : (
               <NotificationActivity activity={activity} />
@@ -479,11 +474,11 @@ export default function Dashboard({
                 </li>
               ))}
               {notes !== null && notes.length === 0 && (
-                <li className="text-muted-foreground text-sm">Quiet. Prod is covered.</li>
+                <li className="text-muted-foreground text-sm">No recent notifications.</li>
               )}
             </ul>
           </CardContent>
-        </Card>
+        </Card>}
       </div>
     </div>
   );

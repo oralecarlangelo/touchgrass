@@ -237,6 +237,56 @@ func (s *FleetStore) History(
 	return points, nil
 }
 
+// HistorySeries reads each metric from the same bounded set of host buckets.
+func (s *FleetStore) HistorySeries(
+	ctx context.Context,
+	since time.Time,
+	bucketSecs int64,
+) (map[string][]model.HistoryPoint, error) {
+	series := map[string][]model.HistoryPoint{model.MetricCPU: {}, model.MetricMem: {}, model.MetricLoad: {}}
+	bucketSecs = max(bucketSecs, 1)
+
+	rows, err := s.db.read.QueryContext(ctx, `SELECT CAST(strftime('%s', sampled_at) / ? AS INTEGER) * ?,
+	  AVG(cpu_percent), AVG(mem_used), AVG(load1)
+	 FROM host_samples WHERE sampled_at >= ?
+	 GROUP BY 1 ORDER BY 1 ASC`, bucketSecs, bucketSecs, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("querying host history series: %w", err)
+	}
+	defer func() {
+		// Rows.Err reports iteration and automatic close errors.
+		_ = rows.Close()
+	}()
+
+	metrics := [...]string{model.MetricCPU, model.MetricMem, model.MetricLoad}
+
+	for rows.Next() {
+		var (
+			bucket   int64
+			averages [len(metrics)]sql.NullFloat64
+		)
+
+		if err := rows.Scan(&bucket, &averages[0], &averages[1], &averages[2]); err != nil {
+			return nil, fmt.Errorf("scanning host history series: %w", err)
+		}
+
+		at := time.Unix(bucket, 0).UTC()
+
+		for index, average := range averages {
+			if average.Valid {
+				metric := metrics[index]
+				series[metric] = append(series[metric], model.HistoryPoint{TS: at, Value: average.Float64})
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating host history series: %w", err)
+	}
+
+	return series, nil
+}
+
 // TrimHostsBefore deletes host samples older than cutoff.
 func (s *FleetStore) TrimHostsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
 	return s.db.trimOlderThan(ctx, ageTrim{table: "host_samples", column: columnSampledAt, what: "host samples"}, formatTime(cutoff))

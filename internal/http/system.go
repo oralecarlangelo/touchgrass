@@ -58,15 +58,32 @@ type historyResponse struct {
 	Points []model.HistoryPoint `json:"points"`
 }
 
-// handleSystemHistory returns bucket-averaged host points for one
-// metric over the trailing hours window.
+type historySeriesResponse struct {
+	Series map[string][]model.HistoryPoint `json:"series"`
+}
+
+// handleSystemHistory returns bucket-averaged host points over a trailing window.
 func (s *Server) handleSystemHistory(w nethttp.ResponseWriter, r *nethttp.Request) {
 	hours, ok := historyHours(w, s.logger, r)
 	if !ok {
 		return
 	}
 
-	points, err := s.sampler.HostHistory(r.Context(), r.URL.Query().Get("metric"), hours)
+	metric := r.URL.Query().Get("metric")
+	if metric == "all" {
+		series, err := s.sampler.HostHistorySeries(r.Context(), hours)
+		if err != nil {
+			writeServiceError(w, s.logger, err, "failed to load host history")
+
+			return
+		}
+
+		writeJSON(w, s.logger, nethttp.StatusOK, historySeriesResponse{Series: series})
+
+		return
+	}
+
+	points, err := s.sampler.HostHistory(r.Context(), metric, hours)
 	if err != nil {
 		writeServiceError(w, s.logger, err, "failed to load host history")
 

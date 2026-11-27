@@ -501,9 +501,10 @@ export async function deleteRule(id: number): Promise<void> {
   await request<undefined>(`/api/alerts/rules/${id}`, { method: 'DELETE' });
 }
 
-export async function fetchDeploys(serviceId: string): Promise<Deploy[]> {
+export async function fetchDeploys(serviceId: string, signal?: AbortSignal, limit = 50): Promise<Deploy[]> {
   const body = await request<DeploysResponse>(
-    `/api/services/${encodeURIComponent(serviceId)}/deploys?limit=50`,
+    `/api/services/${encodeURIComponent(serviceId)}/deploys?limit=${limit}`,
+    { signal },
   );
 
   return body.deploys ?? [];
@@ -870,17 +871,19 @@ interface IssueRulesResponse {
   rules: IssueRule[];
 }
 
-export async function fetchIssues(serviceId: string): Promise<Issue[]> {
+export async function fetchIssues(serviceId: string, signal?: AbortSignal): Promise<Issue[]> {
   const body = await request<IssuesResponse>(
     `/api/issues?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.issues ?? [];
 }
 
-export async function fetchOccurrences(serviceId: string, limit = 100): Promise<Occurrence[]> {
+export async function fetchOccurrences(serviceId: string, limit = 100, signal?: AbortSignal): Promise<Occurrence[]> {
   const body = await request<OccurrencesResponse>(
     `/api/issues/occurrences?service_id=${encodeURIComponent(serviceId)}&limit=${limit}`,
+    { signal },
   );
 
   return body.occurrences ?? [];
@@ -1364,6 +1367,18 @@ export interface FleetContainersResponse {
   freshness: ContainerFreshness;
 }
 
+export interface FleetContainerSummary {
+  total: number;
+  critical: number;
+  unknown: number;
+  stopped: number;
+  freshness: ContainerFreshness;
+}
+
+export async function fetchFleetContainerSummary(signal?: AbortSignal): Promise<FleetContainerSummary> {
+  return request<FleetContainerSummary>('/api/system/containers?view=summary', { signal });
+}
+
 export async function fetchFleetContainers(signal?: AbortSignal): Promise<FleetContainersResponse> {
   const pageSize = 500;
   const containers: FleetContainer[] = [];
@@ -1409,26 +1424,21 @@ export async function fetchContainer(id: string): Promise<ContainerDetailRespons
   return request<ContainerDetailResponse>(`/api/system/containers/${encodeURIComponent(id)}`);
 }
 
-export type SystemHistoryMetric = 'cpu' | 'mem' | 'load';
-
 export interface HistoryPoint {
   ts: string;
   value: number;
 }
 
-interface SystemHistoryResponse {
-  points: HistoryPoint[];
-}
-
 export async function fetchSystemHistory(
-  metric: SystemHistoryMetric,
   hours: number,
   signal?: AbortSignal,
-): Promise<HistoryPoint[]> {
-  const params = new URLSearchParams({ metric, hours: String(hours) });
-  const body = await request<SystemHistoryResponse>(`/api/system/history?${params.toString()}`, { signal });
+): Promise<Record<'cpu' | 'mem' | 'load', HistoryPoint[]>> {
+  const params = new URLSearchParams({ metric: 'all', hours: String(hours) });
+  const body = await request<{ series: Record<'cpu' | 'mem' | 'load', HistoryPoint[]> }>(
+    `/api/system/history?${params.toString()}`, { signal },
+  );
 
-  return body.points ?? [];
+  return body.series;
 }
 
 export interface DatabaseView {
@@ -1548,8 +1558,9 @@ export interface OnboardingSuggest {
   warnings: string[];
 }
 
-export async function suggestService(container: string, signal?: AbortSignal): Promise<OnboardingSuggest> {
+export async function suggestService(container: string, signal?: AbortSignal, verifyHealth = true): Promise<OnboardingSuggest> {
   const params = new URLSearchParams({ container });
+  if (!verifyHealth) params.set('probe', 'false');
   const body = await request<OnboardingSuggest>(`/api/onboarding/suggest?${params.toString()}`, { signal });
 
   return {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 
 import { Badge } from '@/components/ui/badge';
@@ -222,6 +222,7 @@ export default function FleetScreen({
   const [loadedRange, setLoadedRange] = useState<number | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [promoteTarget, setPromoteTarget] = useState<string | null>(null);
+  const promoteTrigger = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ContainerFilter>('all');
   const [systemAttempt, setSystemAttempt] = useState(0);
@@ -311,15 +312,11 @@ export default function FleetScreen({
       if (timer !== undefined) clearTimeout(timer);
       running = true;
       try {
-        const [cpuPoints, memPoints, loadPoints] = await Promise.all([
-          fetchSystemHistory('cpu', range, controller.signal),
-          fetchSystemHistory('mem', range, controller.signal),
-          fetchSystemHistory('load', range, controller.signal),
-        ]);
+        const history = await fetchSystemHistory(range, controller.signal);
         if (!controller.signal.aborted) {
-          setCpu(cpuPoints);
-          setMem(memPoints);
-          setLoadAvg(loadPoints);
+          setCpu(history.cpu);
+          setMem(history.mem);
+          setLoadAvg(history.load);
           setLoadedRange(range);
           setHistoryError(null);
         }
@@ -501,6 +498,7 @@ export default function FleetScreen({
                     key={value}
                     size="sm"
                     variant={filter === value ? 'default' : 'outline'}
+                    aria-pressed={filter === value}
                     onClick={() => setFilter(value)}
                   >
                     {value[0]?.toUpperCase()}{value.slice(1)}
@@ -521,13 +519,13 @@ export default function FleetScreen({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
-                      <TableHead>Project</TableHead>
-                      <TableHead>Management</TableHead>
-                      <TableHead>Runtime</TableHead>
+                      <TableHead className="hidden md:table-cell">Project</TableHead>
+                      <TableHead className="hidden md:table-cell">Management</TableHead>
+                      <TableHead className="hidden md:table-cell">Runtime</TableHead>
                       <TableHead className="text-right">CPU</TableHead>
-                      <TableHead className="text-right">Memory</TableHead>
-                      <TableHead className="text-right">Restarts</TableHead>
-                      <TableHead className="text-right">Sampled</TableHead>
+                      <TableHead className="hidden text-right md:table-cell">Memory</TableHead>
+                      <TableHead className="hidden text-right md:table-cell">Restarts</TableHead>
+                      <TableHead className="hidden text-right md:table-cell">Sampled</TableHead>
                       <TableHead className="text-right">Action</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -539,21 +537,26 @@ export default function FleetScreen({
                       return (
                         <TableRow key={container.id}>
                           <TableCell className="font-mono text-xs font-medium">
-                            <button type="button" className="hover:underline" onClick={() => onSelectContainer(container.id)}>
+                            <button type="button" className="max-w-40 break-all whitespace-normal text-left hover:underline md:max-w-none md:break-normal md:whitespace-nowrap" onClick={() => onSelectContainer(container.id)}>
                               {container.name}
                             </button>
+                            <div className="text-muted-foreground mt-1 space-y-1 font-sans font-normal whitespace-normal md:hidden">
+                              <p className="break-words">{[container.project, container.state].filter(Boolean).join(' · ')}</p>
+                              <ManagedBadge container={container} onSelectService={onSelectService} />
+                              {container.mem_bytes !== null && <p>Memory {formatBytes(container.mem_bytes)}</p>}
+                            </div>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden md:table-cell">
                             {container.project === '' ? (
                               <span className="text-muted-foreground">—</span>
                             ) : (
                               <Badge variant="outline">{container.project}</Badge>
                             )}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden md:table-cell">
                             <ManagedBadge container={container} onSelectService={onSelectService} />
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="hidden md:table-cell">
                             <div className="space-y-1">
                               {container.state === 'running' ? (
                                 <Badge variant="default">{container.state}</Badge>
@@ -570,20 +573,20 @@ export default function FleetScreen({
                           <TableCell className="text-right font-mono">
                             {container.cpu_percent === null ? 'n/a' : `${container.cpu_percent.toFixed(1)}%`}
                           </TableCell>
-                          <TableCell className="text-right font-mono">
+                          <TableCell className="hidden text-right font-mono md:table-cell">
                             {container.mem_bytes === null ? 'n/a' : formatBytes(container.mem_bytes)}
                             {mem !== null && (
                               <span className="text-muted-foreground"> ({mem.toFixed(1)}%)</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-right font-mono">
+                          <TableCell className="hidden text-right font-mono md:table-cell">
                             {container.restarts === null ? 'n/a' : container.restarts > 0 ? (
                               <Badge variant="destructive">{container.restarts}</Badge>
                             ) : (
                               container.restarts
                             )}
                           </TableCell>
-                          <TableCell className="text-muted-foreground text-right text-xs">
+                          <TableCell className="text-muted-foreground hidden text-right text-xs md:table-cell">
                             {container.sampled_at === undefined && container.last_seen_at === undefined
                               ? 'n/a'
                               : timeAgo(container.sampled_at ?? container.last_seen_at ?? '')}
@@ -591,7 +594,10 @@ export default function FleetScreen({
                           <TableCell className="text-right">
                             {!container.managed ? (
                               isAdmin ? (
-                                <Button size="sm" onClick={() => setPromoteTarget(container.name)}>
+                                <Button size="sm" onClick={(event) => {
+                                  promoteTrigger.current = event.currentTarget;
+                                  setPromoteTarget(container.name);
+                                }}>
                                   Manage
                                 </Button>
                               ) : null
@@ -798,6 +804,12 @@ export default function FleetScreen({
       <PromoteDialog
         container={promoteTarget}
         onClose={() => setPromoteTarget(null)}
+        onRestoreFocus={() => {
+          if (!promoteTrigger.current?.isConnected) return false;
+
+          promoteTrigger.current.focus();
+          return true;
+        }}
         onCreated={(id) => {
           setPromoteTarget(null);
           onSelectService(id);

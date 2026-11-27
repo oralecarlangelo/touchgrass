@@ -1,24 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
-import ErrorState from '../ErrorState.tsx';
 import IssueDetail from '../issues/IssueDetail.tsx';
 import LogLineRow from '../logs/LogLineRow.tsx';
+import { PanelError } from '../performance/PerformancePanel.tsx';
 import {
   fetchDeploys,
-  fetchIssues,
   fetchLogs,
   fetchOccurrences,
-  isUnauthorized,
   type Deploy,
-  type Issue,
   type LogLine,
   type Occurrence,
 } from '@/lib/api.ts';
 import { formatTime, stripAnsi } from '@/lib/format.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 type Filter = 'all' | 'logs' | 'errors' | 'deploys';
 
@@ -27,7 +25,7 @@ type Row =
   | { kind: 'error'; ts: string; occurrence: Occurrence }
   | { kind: 'deploy'; ts: string; deploy: Deploy };
 
-const maxRows = 300;
+const dayMs = 86_400_000;
 
 function rowTime(row: Row): number {
   return new Date(row.ts).getTime();
@@ -52,75 +50,38 @@ export default function ActivityTab({
   serviceId: string;
   onUnauthorized: () => void;
 }) {
-  const [logs, setLogs] = useState<LogLine[] | null>(null);
-  const [occurrences, setOccurrences] = useState<Occurrence[] | null>(null);
-  const [deploys, setDeploys] = useState<Deploy[] | null>(null);
-  const [issues, setIssues] = useState<Issue[]>([]);
   const [filter, setFilter] = useState<Filter>('all');
   const [selectedIssueId, setSelectedIssueId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [windowEnd, setWindowEnd] = useState(Date.now);
+  const since = windowEnd - dayMs;
+  const readLogs = useCallback((signal: AbortSignal) => fetchLogs(serviceId, {
+    after: new Date(since).toISOString(), limit: 50,
+  }, signal), [serviceId, since]);
+  const readOccurrences = useCallback((signal: AbortSignal) => fetchOccurrences(serviceId, 50, signal), [serviceId]);
+  const readDeploys = useCallback((signal: AbortSignal) => fetchDeploys(serviceId, signal, 10), [serviceId]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const [fetchedLogs, fetchedOccurrences, fetchedDeploys, fetchedIssues] = await Promise.all([
-        fetchLogs(serviceId, { limit: 200 }),
-        fetchOccurrences(serviceId, 100),
-        fetchDeploys(serviceId),
-        fetchIssues(serviceId),
-      ]);
-      setLogs(fetchedLogs);
-      setOccurrences(fetchedOccurrences);
-      setDeploys(fetchedDeploys.slice(0, 10));
-      setIssues(fetchedIssues);
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [serviceId, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const titles = useMemo(() => {
-    const map = new Map<number, string>();
-
-    for (const issue of issues) {
-      map.set(issue.id, issue.title);
-    }
-
-    return map;
-  }, [issues]);
+  const logs = usePanelRead(serviceId, readLogs, windowEnd, onUnauthorized);
+  const occurrences = usePanelRead(serviceId, readOccurrences, windowEnd, onUnauthorized);
+  const deploys = usePanelRead(serviceId, readDeploys, windowEnd, onUnauthorized);
+  const loading = logs.loading || occurrences.loading || deploys.loading;
 
   const rows = useMemo(() => {
     const merged: Row[] = [];
 
-    for (const line of logs ?? []) {
+    for (const line of logs.data ?? []) {
       merged.push({ kind: 'log', ts: line.ts, line });
     }
 
-    for (const occurrence of occurrences ?? []) {
+    for (const occurrence of occurrences.data ?? []) {
       merged.push({ kind: 'error', ts: occurrence.created_at, occurrence });
     }
 
-    for (const deploy of deploys ?? []) {
+    for (const deploy of deploys.data ?? []) {
       merged.push({ kind: 'deploy', ts: deploy.started_at ?? deploy.created_at, deploy });
     }
 
-    merged.sort((a, b) => rowTime(b) - rowTime(a));
-
-    return merged.slice(0, maxRows);
-  }, [logs, occurrences, deploys]);
+    return merged.filter((row) => rowTime(row) >= since).sort((a, b) => rowTime(b) - rowTime(a));
+  }, [logs.data, occurrences.data, deploys.data, since]);
 
   const counts = useMemo(() => {
     const counts = { all: rows.length, logs: 0, errors: 0, deploys: 0 };
@@ -141,10 +102,11 @@ export default function ActivityTab({
   const visible =
     filter === 'all' ? rows : rows.filter((row) => row.kind === filterKind(filter));
 
-  if (error !== null) {
-    return <ErrorState title="Couldn't load activity" message={error} onRetry={() => void load()} />;
-  }
-
+  const visibleLoading = filter === 'all' ? loading : filter === 'logs' ? logs.loading :
+    filter === 'errors' ? occurrences.loading : deploys.loading;
+  const hasVisibleError = (filter === 'all' || filter === 'logs') && logs.error !== null ||
+    (filter === 'all' || filter === 'errors') && occurrences.error !== null ||
+    (filter === 'all' || filter === 'deploys') && deploys.error !== null;
   const filters: { value: Filter; label: string }[] = [
     { value: 'all', label: `All (${counts.all})` },
     { value: 'logs', label: `Logs (${counts.logs})` },
@@ -160,26 +122,32 @@ export default function ActivityTab({
             key={option.value}
             variant={filter === option.value ? 'default' : 'outline'}
             size="sm"
+            aria-pressed={filter === option.value}
             onClick={() => setFilter(option.value)}
           >
             {option.label}
           </Button>
         ))}
         <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={() => setWindowEnd(Date.now())} disabled={loading}>
           {loading ? 'Loading…' : 'Refresh'}
         </Button>
       </div>
 
-      {loading && logs === null ? (
+      <p className="text-muted-foreground text-xs">Last 24 hours · latest 50 logs, 50 errors, and 10 deploys</p>
+      {(filter === 'all' || filter === 'logs') && <PanelError name="logs" error={logs.error} retry={logs.retry} />}
+      {(filter === 'all' || filter === 'errors') && <PanelError name="errors" error={occurrences.error} retry={occurrences.retry} />}
+      {(filter === 'all' || filter === 'deploys') && <PanelError name="deploys" error={deploys.error} retry={deploys.retry} />}
+
+      {visibleLoading && visible.length === 0 ? (
         <div className="space-y-1" aria-label="Loading activity">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-full" />
         </div>
-      ) : visible.length === 0 ? (
+      ) : visible.length === 0 && hasVisibleError ? null : visible.length === 0 ? (
         <p className="text-muted-foreground px-4 py-6 text-center text-sm">
-          Nothing here yet — activity appears as the service logs, errors, and deploys.
+          No matching activity in the last 24 hours.
         </p>
       ) : (
         <ul className="divide-y divide-border rounded-md border">
@@ -213,9 +181,6 @@ export default function ActivityTab({
                   {row.occurrence.issue_id !== null && (
                     <span className="text-muted-foreground shrink-0 text-[11px]">
                       #{row.occurrence.issue_id}
-                      {titles.has(row.occurrence.issue_id)
-                        ? ` · ${titles.get(row.occurrence.issue_id)}`
-                        : ''}
                     </span>
                   )}
                 </button>

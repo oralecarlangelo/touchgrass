@@ -314,6 +314,45 @@ func (s *ContainerStore) Summary(ctx context.Context) (model.InventorySummary, e
 	return summary, nil
 }
 
+// PostureSummary returns inventory freshness and counts in one snapshot.
+func (s *ContainerStore) PostureSummary(ctx context.Context) (model.InventorySummary, model.InventoryPosture, error) {
+	var (
+		freshness    model.InventorySummary
+		posture      model.InventoryPosture
+		reconciledAt sql.NullString
+		complete     int
+	)
+
+	err := s.db.read.QueryRowContext(ctx, `WITH critical AS (
+		SELECT DISTINCT container_id FROM security_findings
+		WHERE severity = 'critical' AND status IN ('open', 'acknowledged')
+	), posture AS (
+		SELECT COUNT(*) AS total, COUNT(critical.container_id) AS critical,
+			COUNT(CASE WHEN i.classification = 'unknown' THEN 1 END) AS unknown,
+			COUNT(CASE WHEN i.state <> 'running' THEN 1 END) AS stopped
+		FROM container_instances i LEFT JOIN critical ON critical.container_id = i.container_id
+		WHERE i.current = 1
+	)
+	SELECT reconciled_at, complete, last_error_category, observed_count,
+		posture.total, posture.critical, posture.unknown, posture.stopped
+	FROM container_inventory_state CROSS JOIN posture WHERE singleton = 1`).Scan(
+		&reconciledAt, &complete, &freshness.LastErrorCategory, &freshness.ObservedCount,
+		&posture.Total, &posture.Critical, &posture.Unknown, &posture.Stopped,
+	)
+	if err != nil {
+		return model.InventorySummary{}, model.InventoryPosture{}, fmt.Errorf("querying inventory posture: %w", err)
+	}
+
+	freshness.ReconciledAt, err = parseNullTime(reconciledAt, "reconciled_at")
+	if err != nil {
+		return model.InventorySummary{}, model.InventoryPosture{}, err
+	}
+
+	freshness.Complete = complete != 0
+
+	return freshness, posture, nil
+}
+
 type containerScanner interface {
 	Scan(dest ...any) error
 }

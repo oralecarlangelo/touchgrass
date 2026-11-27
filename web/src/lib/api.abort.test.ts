@@ -7,15 +7,17 @@ afterEach(() => {
 });
 
 describe('abortable fleet requests', () => {
-  it('forwards the caller signal to history requests', async () => {
+  it('loads all history series with one abortable request', async () => {
     const controller = new AbortController();
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ points: [] })));
+    const series = { cpu: [], mem: [], load: [] };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ series })));
     vi.stubGlobal('fetch', fetchMock);
 
-    await fetchSystemHistory('cpu', 24, controller.signal);
+    expect(await fetchSystemHistory(24, controller.signal)).toEqual(series);
 
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/system/history?metric=cpu&hours=24',
+      '/api/system/history?metric=all&hours=24',
       expect.objectContaining({ signal: controller.signal }),
     );
   });
@@ -37,10 +39,10 @@ describe('abortable fleet requests', () => {
     })));
     vi.stubGlobal('fetch', fetchMock);
 
-    const suggestion = await suggestService('web', controller.signal);
+    const suggestion = await suggestService('web', controller.signal, false);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/onboarding/suggest?container=web',
+      '/api/onboarding/suggest?container=web&probe=false',
       expect.objectContaining({ signal: controller.signal }),
     );
     expect(suggestion.reasons).toEqual([]);

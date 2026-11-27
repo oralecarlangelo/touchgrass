@@ -1744,11 +1744,12 @@ paths:
       description: |
         Metric mem reports used bytes. Buckets size to the window so the
         series never exceeds 1500 points. Hours above 168 clamp to 168.
+        Use all to return all three series from the same aggregation.
       parameters:
         - name: metric
           in: query
           required: true
-          schema: { type: string, enum: [cpu, mem, load] }
+          schema: { type: string, enum: [cpu, mem, load, all] }
         - name: hours
           in: query
           schema: { type: integer, default: 24, minimum: 1, maximum: 168 }
@@ -1758,12 +1759,29 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [points]
-                properties:
-                  points:
-                    type: array
-                    items: { $ref: '#/components/schemas/HistoryPoint' }
+                oneOf:
+                  - type: object
+                    required: [points]
+                    properties:
+                      points:
+                        type: array
+                        items: { $ref: '#/components/schemas/HistoryPoint' }
+                  - type: object
+                    required: [series]
+                    properties:
+                      series:
+                        type: object
+                        required: [cpu, mem, load]
+                        properties:
+                          cpu:
+                            type: array
+                            items: { $ref: '#/components/schemas/HistoryPoint' }
+                          mem:
+                            type: array
+                            items: { $ref: '#/components/schemas/HistoryPoint' }
+                          load:
+                            type: array
+                            items: { $ref: '#/components/schemas/HistoryPoint' }
         '400': { $ref: '#/components/responses/BadRequest' }
   /performance/summary:
     get:

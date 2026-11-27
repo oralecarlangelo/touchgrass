@@ -311,15 +311,11 @@ export default function FleetScreen({
       if (timer !== undefined) clearTimeout(timer);
       running = true;
       try {
-        const [cpuPoints, memPoints, loadPoints] = await Promise.all([
-          fetchSystemHistory('cpu', range, controller.signal),
-          fetchSystemHistory('mem', range, controller.signal),
-          fetchSystemHistory('load', range, controller.signal),
-        ]);
+        const history = await fetchSystemHistory(range, controller.signal);
         if (!controller.signal.aborted) {
-          setCpu(cpuPoints);
-          setMem(memPoints);
-          setLoadAvg(loadPoints);
+          setCpu(history.cpu);
+          setMem(history.mem);
+          setLoadAvg(history.load);
           setLoadedRange(range);
           setHistoryError(null);
         }

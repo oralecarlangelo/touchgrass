@@ -352,6 +352,19 @@ func (s *Sampler) HostHistory(
 		return nil, fmt.Errorf("%w: metric %q (want cpu, mem, or load)", ErrInvalidInput, metric)
 	}
 
+	since, bucket := hostHistoryWindow(hours)
+
+	return s.fleet.History(ctx, metric, since, bucket)
+}
+
+// HostHistorySeries reads all supported host metrics with one aggregation.
+func (s *Sampler) HostHistorySeries(ctx context.Context, hours int) (map[string][]model.HistoryPoint, error) {
+	since, bucket := hostHistoryWindow(hours)
+
+	return s.fleet.HistorySeries(ctx, since, bucket)
+}
+
+func hostHistoryWindow(hours int) (time.Time, int64) {
 	if hours <= 0 {
 		hours = defaultHistoryHours
 	}
@@ -363,5 +376,5 @@ func (s *Sampler) HostHistory(
 	bucket := (int64(hours)*3600 + maxHistoryPoints - 1) / maxHistoryPoints
 	since := time.Now().Add(-time.Duration(hours) * time.Hour)
 
-	return s.fleet.History(ctx, metric, since, bucket)
+	return since, bucket
 }

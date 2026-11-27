@@ -1409,26 +1409,21 @@ export async function fetchContainer(id: string): Promise<ContainerDetailRespons
   return request<ContainerDetailResponse>(`/api/system/containers/${encodeURIComponent(id)}`);
 }
 
-export type SystemHistoryMetric = 'cpu' | 'mem' | 'load';
-
 export interface HistoryPoint {
   ts: string;
   value: number;
 }
 
-interface SystemHistoryResponse {
-  points: HistoryPoint[];
-}
-
 export async function fetchSystemHistory(
-  metric: SystemHistoryMetric,
   hours: number,
   signal?: AbortSignal,
-): Promise<HistoryPoint[]> {
-  const params = new URLSearchParams({ metric, hours: String(hours) });
-  const body = await request<SystemHistoryResponse>(`/api/system/history?${params.toString()}`, { signal });
+): Promise<Record<'cpu' | 'mem' | 'load', HistoryPoint[]>> {
+  const params = new URLSearchParams({ metric: 'all', hours: String(hours) });
+  const body = await request<{ series: Record<'cpu' | 'mem' | 'load', HistoryPoint[]> }>(
+    `/api/system/history?${params.toString()}`, { signal },
+  );
 
-  return body.points ?? [];
+  return body.series;
 }
 
 export interface DatabaseView {

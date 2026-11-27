@@ -10,13 +10,20 @@ import { fetchSelfUpdate, isUnauthorized, startSelfUpdate, type SelfUpdateStatus
 export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () => void }) {
   const initialVersion = useRef<string | null>(null);
   const reloadRequested = useRef(false);
+  const reading = useRef(false);
+  const jobState = useRef<SelfUpdateStatus['job']>(null);
   const [status, setStatus] = useState<SelfUpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [working, setWorking] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
 
   const refresh = useCallback(async (force = false) => {
+    if (reading.current) return;
+    reading.current = true;
+    setChecking(true);
     try {
       const next = await fetchSelfUpdate(force);
       if (!reloadRequested.current && shouldReloadUpdatedConsole(initialVersion.current, next, pendingUpdate())) {
@@ -26,6 +33,9 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
         return;
       }
       initialVersion.current ??= next.installed;
+      jobState.current = next.job;
+      if (next.job?.state === 'failed') pendingUpdate(null);
+      setCheckedAt(new Date().toISOString());
       setStatus(next);
       setError(null);
       setReconnecting(false);
@@ -40,19 +50,27 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
         onUnauthorized();
         return;
       }
-      if (status?.job?.state === 'pending' || status?.job?.state === 'running') {
+      if (jobState.current?.state === 'pending' || jobState.current?.state === 'running' || pendingUpdate() !== null) {
         setReconnecting(true);
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }
+    } finally {
+      reading.current = false;
+      setChecking(false);
     }
-  }, [onUnauthorized, status?.job?.state]);
+  }, [onUnauthorized]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
     if (status?.job?.state !== 'pending' && status?.job?.state !== 'running' && !reconnecting) return;
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => window.clearInterval(timer);
+    const refreshVisible = () => { if (!document.hidden) void refresh(); };
+    const timer = window.setInterval(refreshVisible, 5000);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
   }, [refresh, status?.job?.state, reconnecting]);
 
   async function install(): Promise<void> {
@@ -63,7 +81,9 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
     setError(null);
     setReconnecting(true);
     try {
-      setStatus(await startSelfUpdate(tag));
+      const next = await startSelfUpdate(tag);
+      jobState.current = next.job;
+      setStatus(next);
       setConfirming(false);
     } catch (err) {
       if (isUnauthorized(err)) { pendingUpdate(null); onUnauthorized(); }
@@ -83,7 +103,7 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
   return <div className="space-y-5">
     <div className="flex items-center justify-between gap-3">
       <div><h1 className="text-xl font-semibold">Updates</h1><p className="text-sm text-muted-foreground">Install a published Touch Grass release.</p></div>
-      <Button variant="outline" onClick={() => void refresh(true)}>Check again</Button>
+      <Button variant="outline" disabled={checking || working || reconnecting} onClick={() => void refresh(true)}>{checking ? 'Checking…' : 'Check again'}</Button>
     </div>
     {status === null && error === null ? <Skeleton className="h-48 w-full" /> : null}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -91,8 +111,9 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
       <CardHeader><CardTitle>Console version</CardTitle></CardHeader>
       <CardContent className="space-y-4 text-sm">
         <div>Installed: <strong>{status.installed}</strong></div>
+        {checkedAt !== null && <p className="text-muted-foreground text-xs">Console status checked at {new Date(checkedAt).toLocaleTimeString()}.</p>}
         {!status.configured && <p>This older installation needs a one-time updater setup. Once enabled, future updates install here without extra configuration.</p>}
-        {!status.configured && <a className="underline" href="https://github.com/oralecarlangelo/touchgrass/blob/main/docs/native-updates.md" target="_blank" rel="noreferrer">Set up updates</a>}
+        {!status.configured && <a className="underline" href="https://github.com/oralecarlangelo/touchgrass/blob/develop/docs/native-updates.md" target="_blank" rel="noreferrer">Set up updates</a>}
         {status.check_error && <p role="status">{status.check_error}</p>}
         {status.release && <div className="space-y-1">
           <div>Latest published release: <strong>{status.release.tag}</strong></div>

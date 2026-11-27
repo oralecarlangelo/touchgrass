@@ -381,8 +381,6 @@ func runServe(args []string) error {
 	}
 	reconcileDatabases(databases, logger)
 
-	onboarding := newOnboarding(wiring, prober, audit)
-
 	managedUsers, err := ensureUsers(ctx, db, audit, cfg, logger)
 	if err != nil {
 		return err
@@ -427,6 +425,7 @@ func runServe(args []string) error {
 		Interval: cfg.InventoryInterval, InspectLimit: cfg.InventoryWorkers, Logger: logger,
 		Security: securityStore, Evaluator: securityService, Audit: audit, Observe: databases.ObserveContainers,
 	})
+	onboarding := newOnboarding(wiring, prober, audit, fleetInventory)
 	processSecurity := service.NewProcessScanner(service.ProcessScannerConfig{
 		Inventory: fleetInventory, Docker: dockerClient, Security: securityService,
 		Policies: securityStore, Interval: cfg.SecurityProcessInterval,
@@ -527,10 +526,15 @@ type serveWiring struct {
 }
 
 // newOnboarding wires the suggest + create service.
-func newOnboarding(wiring serveWiring, prober *probe.Prober, audit *service.Audit) *service.Onboarding {
+func newOnboarding(
+	wiring serveWiring,
+	prober *probe.Prober,
+	audit *service.Audit,
+	inventory docker.Lister,
+) *service.Onboarding {
 	return service.NewOnboarding(service.OnboardingConfig{
 		Services:   wiring.services,
-		Docker:     wiring.docker,
+		Docker:     inventory,
 		Prober:     prober,
 		Audit:      audit,
 		ScriptsDir: wiring.cfg.ScriptsDir,

@@ -39,10 +39,10 @@ describe('abortable fleet requests', () => {
     })));
     vi.stubGlobal('fetch', fetchMock);
 
-    const suggestion = await suggestService('web', controller.signal);
+    const suggestion = await suggestService('web', controller.signal, false);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/onboarding/suggest?container=web',
+      '/api/onboarding/suggest?container=web&probe=false',
       expect.objectContaining({ signal: controller.signal }),
     );
     expect(suggestion.reasons).toEqual([]);

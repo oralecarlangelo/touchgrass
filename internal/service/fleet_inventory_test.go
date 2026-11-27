@@ -140,6 +140,38 @@ func TestFleetInventoryReconcileSkipsVanishedContainer(t *testing.T) {
 	}
 }
 
+func TestFleetInventoryProvidesOnboardingDataWithoutDockerRead(t *testing.T) {
+	t.Parallel()
+
+	db := openInventoryDB(t)
+	dockerClient := &fakeInventoryDocker{containers: []docker.Container{
+		{ID: "demo-one", Name: "demo-1", State: updateStateRunning, Labels: map[string]string{
+			docker.LabelComposeProject: "demo", docker.LabelComposeWorkingDir: "/srv/demo",
+			"private.token": "excluded-from-onboarding",
+		}},
+		{ID: "demo-two", Name: "demo-2", State: "exited"},
+	}}
+	inventory := NewFleetInventory(FleetInventoryConfig{
+		Services: store.NewServiceStore(db), Containers: store.NewContainerStore(db), Docker: dockerClient,
+	})
+
+	if _, err := inventory.List(t.Context()); !errors.Is(err, docker.ErrDaemonBackoff) {
+		t.Fatalf("List() before inventory returns %v, want retryable discovery", err)
+	}
+
+	if _, err := inventory.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	dockerClient.listErr = errors.New("unexpected docker read")
+
+	got, err := inventory.List(t.Context())
+	if err != nil || len(got) != 1 || got[0].Name != "demo-1" ||
+		got[0].Labels[docker.LabelComposeWorkingDir] != "/srv/demo" || len(got[0].Labels) != 2 {
+		t.Fatalf("List() = %v, %v, want running Compose metadata from the heartbeat", got, err)
+	}
+}
+
 func TestFleetInventoryDatabaseDiscoveryReusesInspection(t *testing.T) {
 	t.Parallel()
 

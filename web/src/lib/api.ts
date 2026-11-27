@@ -1558,8 +1558,9 @@ export interface OnboardingSuggest {
   warnings: string[];
 }
 
-export async function suggestService(container: string, signal?: AbortSignal): Promise<OnboardingSuggest> {
+export async function suggestService(container: string, signal?: AbortSignal, verifyHealth = true): Promise<OnboardingSuggest> {
   const params = new URLSearchParams({ container });
+  if (!verifyHealth) params.set('probe', 'false');
   const body = await request<OnboardingSuggest>(`/api/onboarding/suggest?${params.toString()}`, { signal });
 
   return {

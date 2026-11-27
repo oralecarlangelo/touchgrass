@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -54,14 +54,12 @@ function Field({
   value,
   onChange,
   placeholder,
-  note,
 }: {
   id: string;
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  note?: string;
 }) {
   return (
     <div className="space-y-1">
@@ -73,9 +71,6 @@ function Field({
         placeholder={placeholder}
         className="font-mono text-xs"
       />
-      {note !== undefined && note !== '' && (
-        <p className="text-muted-foreground text-xs">{note}</p>
-      )}
     </div>
   );
 }
@@ -106,6 +101,9 @@ export default function PromoteDialog({
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const checkRequest = useRef<AbortController | null>(null);
+  const [checkingHealth, setCheckingHealth] = useState(false);
+  const [healthMessage, setHealthMessage] = useState<string | null>(null);
 
   const [serviceId, setServiceId] = useState('');
   const [strategy, setStrategy] = useState<OnboardingStrategy>('recreate');
@@ -143,8 +141,10 @@ export default function PromoteDialog({
     setLoading(true);
     setLoadError(null);
     setSubmitError(null);
+    setCheckingHealth(false);
+    setHealthMessage(null);
 
-    void suggestService(container, controller.signal)
+    void suggestService(container, controller.signal, false)
       .then((suggestion) => {
         if (controller.signal.aborted) {
           return;
@@ -194,6 +194,8 @@ export default function PromoteDialog({
 
     return () => {
       controller.abort();
+      checkRequest.current?.abort();
+      checkRequest.current = null;
     };
   }, [container, loadAttempt, onUnauthorized]);
 
@@ -203,6 +205,50 @@ export default function PromoteDialog({
 
   function setBlueGreenField(field: keyof BlueGreenFields, value: string): void {
     setBluegreen((current) => ({ ...current, [field]: value }));
+  }
+
+  async function checkHealth(): Promise<void> {
+    if (container === null || checkRequest.current !== null) return;
+
+    const controller = new AbortController();
+    checkRequest.current = controller;
+    setCheckingHealth(true);
+    setHealthMessage(null);
+    try {
+      const checked = await suggestService(container, controller.signal);
+      if (controller.signal.aborted) return;
+
+      setDraft((current) => current === null ? null : {
+        ...current,
+        confidence: checked.confidence,
+        reasons: checked.reasons,
+        warnings: checked.warnings,
+      });
+      if (checked.strategy === 'recreate') {
+        setRecreate((current) => ({ ...current, health_url: current.health_url || checked.health_url }));
+      } else {
+        setBluegreen((current) => ({
+          ...current,
+          blue_url: current.blue_url || checked.blue_url || '',
+          green_url: current.green_url || checked.green_url || '',
+        }));
+      }
+      setHealthMessage(checked.health_url || checked.blue_url || checked.green_url
+        ? 'Verified URLs are available. Review the current fields before saving.'
+        : 'No published endpoint passed. You can enter the health URLs manually.');
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (isUnauthorized(error)) {
+        onUnauthorized();
+        return;
+      }
+      setHealthMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (checkRequest.current === controller) {
+        checkRequest.current = null;
+        setCheckingHealth(false);
+      }
+    }
   }
 
   async function handleCreate(): Promise<void> {
@@ -298,13 +344,6 @@ export default function PromoteDialog({
     }
   }
 
-  const probeNote =
-    draft === null
-      ? ''
-      : draft.health_url === ''
-        ? 'Probe found no responding port — fill in manually.'
-        : 'Prefilled from a successful container-port probe — verify before creating.';
-
   return (
     <Dialog open={container !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -349,7 +388,11 @@ export default function PromoteDialog({
               <span className="text-muted-foreground text-xs">
                 container <span className="font-mono">{draft.container}</span>
               </span>
+              <Button type="button" variant="outline" size="sm" onClick={() => void checkHealth()} disabled={checkingHealth || creating}>
+                {checkingHealth ? 'Checking health URLs…' : 'Check health URLs'}
+              </Button>
             </div>
+            {healthMessage !== null && <p className="text-muted-foreground text-sm" role="status">{healthMessage}</p>}
 
             <div className="grid gap-3 sm:grid-cols-2">
               <Field
@@ -404,7 +447,6 @@ export default function PromoteDialog({
                   value={recreate.health_url}
                   onChange={(value) => setRecreateField('health_url', value)}
                   placeholder="http://127.0.0.1:8080/health"
-                  note={probeNote}
                 />
                 <Field
                   id="promote-public"
@@ -459,7 +501,6 @@ export default function PromoteDialog({
                   label="Blue URL"
                   value={bluegreen.blue_url}
                   onChange={(value) => setBlueGreenField('blue_url', value)}
-                  note={probeNote}
                 />
                 <Field
                   id="promote-green-url"

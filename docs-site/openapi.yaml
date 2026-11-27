@@ -897,17 +897,18 @@ paths:
       tags: [onboarding]
       summary: Draft a service row for one fleet container (admin only)
       description: |
-        Drafts project/service/dir from compose labels, the service id
-        from the project name, the health URL by probing the lowest
-        published host port, and blue-green fields when an X-blue +
-        X-green pair shares the project. It writes nothing, but it
-        probes a container's ports and returns host paths, so it is
-        limited to admins.
+        Uses the current Fleet heartbeat to draft Compose and deployment
+        metadata. An optional health check contacts the lowest published
+        host port. This read-only action returns host paths and requires an admin.
       parameters:
         - name: container
           in: query
           required: true
           schema: { type: string }
+        - name: probe
+          in: query
+          description: Use false to draft from inventory without contacting the service.
+          schema: { type: boolean, default: true }
       responses:
         '200':
           description: Drafted service row

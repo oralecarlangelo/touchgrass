@@ -67,6 +67,44 @@ class UpdaterTests(unittest.TestCase):
 
 
 class InstallFlowTests(unittest.TestCase):
+    def test_backup_finishes_while_wal_writes_continue(self):
+        import sqlite3
+        from contextlib import closing
+        connect = sqlite3.connect
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source, destination = root / 'busy.db', root / 'backup.db'
+            with closing(connect(source)) as writer:
+                writer.execute('pragma journal_mode=wal')
+                writer.execute('create table sample (generation integer, payload blob)')
+                writer.execute('insert into sample values (0, zeroblob(8388608))')
+                writer.commit()
+                steps = []
+
+                class BusyConnection(sqlite3.Connection):
+                    def backup(self, target, **kwargs):
+                        progress = kwargs.get('progress')
+
+                        def write_during_copy(status, remaining, total):
+                            steps.append(remaining)
+                            if len(steps) > 8:
+                                raise RuntimeError('backup starved by concurrent writes')
+                            writer.execute('update sample set generation=generation+1')
+                            writer.commit()
+                            if progress:
+                                progress(status, remaining, total)
+
+                        super().backup(target, **{**kwargs, 'progress': write_during_copy})
+
+                def connection(path, **kwargs):
+                    return connect(path, **kwargs, factory=BusyConnection)
+
+                with patch.object(updater.sqlite3, 'connect', side_effect=connection):
+                    updater.backup_database(source, destination)
+                self.assertGreater(len(steps), 1)
+                with closing(connect(destination)) as backup:
+                    self.assertEqual(backup.execute('select generation from sample').fetchone(), (0,))
+
     def exercise(self, failure=False, stop_failure=False, recovery_failure=False):
         import json
         import sqlite3

@@ -122,6 +122,7 @@ func (s *Server) routes() []route {
 		{method: nethttp.MethodPost, pattern: "/api/services/{id}/deploy", kind: guardServicePath, capability: authz.DeployTrigger, handler: s.handleDeploy},
 
 		// Env and secrets.
+		{method: nethttp.MethodGet, pattern: "/api/env/overview", kind: guardServiceQuery, capability: authz.EnvReadKeys, listScoped: true, handler: s.handleEnvFleet},
 		{method: nethttp.MethodGet, pattern: "/api/services/{id}/env", kind: guardServicePath, capability: authz.EnvReadKeys, handler: s.handleEnv},
 		{method: nethttp.MethodPut, pattern: "/api/services/{id}/env/entries/{key}", kind: guardServicePath, capability: authz.EnvStage, handler: s.handleEnvPut},
 		{method: nethttp.MethodDelete, pattern: "/api/services/{id}/env/entries/{key}", kind: guardServicePath, capability: authz.EnvStage, handler: s.handleEnvDelete},

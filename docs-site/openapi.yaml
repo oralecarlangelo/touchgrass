@@ -2326,6 +2326,41 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /env/overview:
+    get:
+      x-touchgrass-capability: env.read_keys
+      x-touchgrass-scope: service
+      operationId: getEnvFleetOverview
+      tags: [env]
+      summary: Environment status for permitted services without entry values
+      parameters:
+        - name: service_id
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Per-service key counts and apply status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [services]
+                properties:
+                  services:
+                    type: array
+                    items:
+                      type: object
+                      required: [service_id, configured, key_count, secret_count, pending_count, apply_in_progress]
+                      properties:
+                        service_id: { type: string }
+                        configured: { type: boolean }
+                        reason: { type: string }
+                        target_path: { type: string }
+                        key_count: { type: integer }
+                        secret_count: { type: integer }
+                        pending_count: { type: integer }
+                        last_applied_at: { type: string, format: date-time }
+                        apply_in_progress: { type: boolean }
   /services/{id}/env:
     get:
       x-touchgrass-capability: env.read_keys

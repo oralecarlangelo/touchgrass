@@ -2,20 +2,18 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { EnvironmentScreenView, envRowSummary, type EnvFleetRow } from './EnvironmentScreen.tsx';
-import type { EnvOverview, ServiceView } from '@/lib/api.ts';
+import type { EnvFleetSummary, ServiceView } from '@/lib/api.ts';
 
 const noop = () => undefined;
 const service: ServiceView = { id: 'shop-api', name: 'Shop API', strategy: 'recreate', live_color: '', health: 'healthy', colors: [], containers: [] };
-const overview: EnvOverview = {
+const overview: EnvFleetSummary = {
+  service_id: service.id,
   configured: true,
-  target: { path: '/srv/shop-api/.env', owner: 'app:app', mode: '0600' },
-  entries: [
-    { key: 'A', is_secret: false, value: '1', masked: false, updated_by: '', updated_at: '2026-11-10T00:00:00Z', state: 'applied', required: false },
-    { key: 'B', is_secret: true, value: null, masked: true, updated_by: '', updated_at: '2026-11-10T00:00:00Z', state: 'applied', required: false },
-  ],
-  applied_revision: { id: 'r', created_at: '2026-11-09T00:00:00Z', created_by: 'ana', summary: '' },
+  target_path: '/srv/shop-api/.env',
+  key_count: 2,
+  secret_count: 1,
+  last_applied_at: '2026-11-09T00:00:00Z',
   pending_count: 0,
-  last_validation: null,
   apply_in_progress: false,
 };
 
@@ -29,7 +27,7 @@ describe('EnvironmentScreen', () => {
     expect(envRowSummary(row({ overview: { ...overview, configured: false, reason: 'key_missing' } }))).toMatchObject({ label: 'No encryption key on the host' });
     expect(envRowSummary(row({ overview: { ...overview, apply_in_progress: true } }))).toMatchObject({ label: 'Apply running' });
     expect(envRowSummary(row({ overview: { ...overview, pending_count: 2 } }))).toMatchObject({ label: '2 changes not applied', tone: 'pending' });
-    expect(envRowSummary(row({ overview: { ...overview, entries: [] } }))).toMatchObject({ label: 'No entries yet' });
+    expect(envRowSummary(row({ overview: { ...overview, key_count: 0 } }))).toMatchObject({ label: 'No entries yet' });
     expect(envRowSummary(row({}))).toMatchObject({ label: 'Up to date', tone: 'ok' });
   });
 

@@ -1620,6 +1620,23 @@ export interface EnvValidation {
   required_keys?: string[];
 }
 
+export interface EnvFleetSummary {
+  service_id: string;
+  configured: boolean;
+  reason?: string;
+  target_path?: string;
+  key_count: number;
+  secret_count: number;
+  pending_count: number;
+  last_applied_at?: string;
+  apply_in_progress: boolean;
+}
+
+export async function fetchEnvFleet(signal?: AbortSignal): Promise<EnvFleetSummary[]> {
+  const result = await request<{ services: EnvFleetSummary[] }>('/api/env/overview', { signal });
+  return result.services ?? [];
+}
+
 export interface EnvOverview {
   configured: boolean;
   reason?: EnvNotConfiguredReason;

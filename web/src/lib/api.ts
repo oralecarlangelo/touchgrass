@@ -1174,6 +1174,7 @@ export interface ApiKey {
   sample_rate: number;
   revoked_at: string | null;
   created_at: string;
+  last_used_at?: string | null;
 }
 
 interface KeysResponse {
@@ -1188,9 +1189,10 @@ export interface CreatedApiKey {
   sample_rate: number;
 }
 
-export async function fetchKeys(serviceId: string): Promise<ApiKey[]> {
+export async function fetchKeys(serviceId: string, signal?: AbortSignal): Promise<ApiKey[]> {
   const body = await request<KeysResponse>(
     `/api/keys?service_id=${encodeURIComponent(serviceId)}`,
+    { signal },
   );
 
   return body.keys ?? [];

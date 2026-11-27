@@ -3174,6 +3174,7 @@ components:
         sample_rate: { type: number }
         revoked_at: { type: ['string', 'null'], format: date-time }
         created_at: { type: string, format: date-time }
+        last_used_at: { type: ['string', 'null'], format: date-time, description: 'Latest recorded SDK key authentication, updated at most once per minute.' }
     ServiceView:
       type: object
       required: [id, name, strategy, live_color, health, colors, containers]

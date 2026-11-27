@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -38,7 +38,8 @@ import {
   type CreatedApiKey,
   type ServiceView,
 } from '@/lib/api.ts';
-import { formatTime } from '@/lib/format.ts';
+import { formatTime, timeAgo } from '@/lib/format.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const sampleRates = ['1', '0.5', '0.1', '0.01'];
 
@@ -59,8 +60,6 @@ export default function KeysScreen({
   isAdmin: boolean;
 }) {
   const [serviceId, setServiceId] = useState(services[0]?.id ?? '');
-  const [keys, setKeys] = useState<ApiKey[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [sampleRate, setSampleRate] = useState('1');
   const [created, setCreated] = useState<CreatedApiKey | null>(null);
   const [pendingRevoke, setPendingRevoke] = useState<ApiKey | null>(null);
@@ -70,29 +69,8 @@ export default function KeysScreen({
     ? serviceId
     : (services[0]?.id ?? '');
 
-  const load = useCallback(async () => {
-    if (effectiveId === '') {
-      setKeys([]);
-      return;
-    }
-
-    setError(null);
-
-    try {
-      setKeys(await fetchKeys(effectiveId));
-    } catch (err) {
-      if (isUnauthorized(err)) {
-        onUnauthorized();
-        return;
-      }
-
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [effectiveId, onUnauthorized]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const readKeys = useCallback((signal: AbortSignal) => fetchKeys(effectiveId, signal), [effectiveId]);
+  const { data: keys, error, retry } = usePanelRead(effectiveId, effectiveId ? readKeys : null, 0, onUnauthorized);
 
   async function handleCreate(): Promise<void> {
     setWorking(true);
@@ -101,7 +79,7 @@ export default function KeysScreen({
       const key = await createKey(effectiveId, Number(sampleRate));
       setCreated(key);
       toast.success('API key created — copy it now, it shows once.');
-      await load();
+      retry();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -125,7 +103,7 @@ export default function KeysScreen({
       await revokeKey(pendingRevoke.id);
       toast.success(`Key ${pendingRevoke.key_prefix}… revoked.`);
       setPendingRevoke(null);
-      await load();
+      retry();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -143,10 +121,6 @@ export default function KeysScreen({
       .writeText(value)
       .then(() => toast.success('Copied to clipboard.'))
       .catch(() => toast.error('Could not copy. Select the text and copy it manually.'));
-  }
-
-  if (error !== null) {
-    return <ErrorState title="Couldn't load API keys" message={error} onRetry={() => void load()} />;
   }
 
   return (
@@ -169,11 +143,11 @@ export default function KeysScreen({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm font-medium">Ingest keys for error tracking</CardTitle>
+          <CardTitle className="text-sm font-medium">SDK ingest keys</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {effectiveId === '' ? (
-            <p className="text-muted-foreground text-sm">No services on the radar yet.</p>
+            <p className="text-muted-foreground text-sm">Add a service to create an ingest key.</p>
           ) : (
             <>
               {isAdmin && (
@@ -214,7 +188,8 @@ export default function KeysScreen({
                 </div>
               </details>
 
-              {keys === null ? (
+              {error !== null && <ErrorState title="Couldn't refresh API keys" message={error} onRetry={retry} />}
+              {keys === null ? error === null && (
                 <div className="space-y-2" aria-label="Loading keys">
                   <Skeleton className="h-10 w-full" />
                 </div>
@@ -227,8 +202,9 @@ export default function KeysScreen({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Prefix</TableHead>
-                      <TableHead className="text-right">Sample rate</TableHead>
-                      <TableHead>Created</TableHead>
+                      <TableHead className="hidden text-right sm:table-cell">Sample rate</TableHead>
+                      <TableHead className="hidden lg:table-cell">Created</TableHead>
+                      <TableHead>Last used</TableHead>
                       <TableHead>Status</TableHead>
                       {isAdmin && <TableHead className="text-right">Action</TableHead>}
                     </TableRow>
@@ -236,10 +212,16 @@ export default function KeysScreen({
                   <TableBody>
                     {keys.map((key) => (
                       <TableRow key={key.id}>
-                        <TableCell className="font-mono text-xs">{key.key_prefix}…</TableCell>
-                        <TableCell className="text-right font-mono">{key.sample_rate}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
+                        <TableCell className="font-mono text-xs">
+                          {key.key_prefix}…
+                          <span className="text-muted-foreground block sm:hidden">Sample {key.sample_rate}</span>
+                        </TableCell>
+                        <TableCell className="hidden text-right font-mono sm:table-cell">{key.sample_rate}</TableCell>
+                        <TableCell className="text-muted-foreground hidden text-xs lg:table-cell">
                           {formatTime(key.created_at)}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground text-xs">
+                          {key.last_used_at ? <time dateTime={key.last_used_at} title={formatTime(key.last_used_at)}>{timeAgo(key.last_used_at)}</time> : 'No use recorded'}
                         </TableCell>
                         <TableCell>
                           {key.revoked_at === null ? (

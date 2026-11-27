@@ -371,7 +371,7 @@ func runServe(args []string) error {
 	deploys := service.NewDeploys(serviceStore, deployStore).WithAudit(audit)
 	ingestor := newIngestor(serviceStore, db, audit, cfg.MaxOccurrences, logger)
 	collector := newLogCollector(wiring)
-	sdkLogs := newLogIngestor(serviceStore, db)
+	sdkLogs := newLogIngestor(serviceStore, db, logger)
 	sys := newServeSystem(dockerClient, cfg.DB, cfg.HostRoot, logger)
 	databases := newDatabase(db, cfg, logger)
 	maintenance := newMaintenance(db, cfg, logger)
@@ -733,11 +733,12 @@ func newServeSystem(
 }
 
 // newLogIngestor wires structured-log ingestion on the shared key store.
-func newLogIngestor(serviceStore *store.ServiceStore, db *store.DB) *service.LogIngestor {
+func newLogIngestor(serviceStore *store.ServiceStore, db *store.DB, logger *slog.Logger) *service.LogIngestor {
 	return service.NewLogIngestor(service.LogIngestorConfig{
 		Services: serviceStore,
 		Keys:     store.NewKeyStore(db),
 		SDKLogs:  store.NewSDKLogStore(db),
+		Logger:   logger,
 	})
 }
 

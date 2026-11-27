@@ -18,6 +18,7 @@ type APIKey struct {
 	SampleRate float64    `json:"sample_rate"`
 	RevokedAt  *time.Time `json:"revoked_at"`
 	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
 }
 
 // KeyCreate carries API key minting input.

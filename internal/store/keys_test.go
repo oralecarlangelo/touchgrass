@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/oralecarlangelo/touchgrass/internal/model"
 )
@@ -70,6 +71,44 @@ func TestKeyStoreListHidesHash(t *testing.T) {
 
 	if listed[0].KeyPrefix != "tg_prefix2" {
 		t.Errorf("ListByService() prefix = %q, want tg_prefix2", listed[0].KeyPrefix)
+	}
+}
+
+func TestKeyStoreRecordsUseAtMostOncePerMinute(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	keys := NewKeyStore(openTestDB(t))
+	at := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+
+	key, err := keys.Create(ctx, model.APIKey{
+		ServiceID: testServiceAPI, KeyHash: "hash-timestamp", KeyPrefix: "tg_timestamp", SampleRate: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, usedAt := range []time.Time{at, at.Add(2 * time.Minute), at.Add(2*time.Minute + time.Second), at} {
+		if err := keys.RecordUse(ctx, key, usedAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := keys.Revoke(ctx, key.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := keys.RecordUse(ctx, key, at.Add(3*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := keys.ListByService(ctx, testServiceAPI, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(listed) != 1 || listed[0].LastUsedAt == nil || !listed[0].LastUsedAt.Equal(at.Add(2*time.Minute)) {
+		t.Fatalf("last used = %+v, want latest observation before revocation", listed)
 	}
 }
 

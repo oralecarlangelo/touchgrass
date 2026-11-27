@@ -72,13 +72,14 @@ against the actual sampling interval instead of assuming setup takes under ten
 seconds. Production results are recorded below.
 
 Rendered browser validation used the built UI with a generic authenticated fixture:
-system data delayed 2.5 seconds and fleet data delayed 4 seconds. Services and
+system data delayed 5 seconds and fleet data delayed 7 seconds. Services and
 notifications appeared before either delayed response. Initial requests were one
 each for session, services, system, and fleet; notifications had two intentional
 consumers (the navigation bell and dashboard). One manual refresh issued one
 additional service request. A controlled HTTP 502 preserved the service row/count
 and showed retry alerts on both Services and Overview. No unexpected browser
-runtime errors were observed.
+runtime errors were observed. This was repeated against the final deployment build;
+host freshness rendered as `Current · observed 2s ago` after its delayed response.
 
 Screenshot evidence: `touchgrass-dashboard-stale-services.png` in the chat's
 visualization artifacts. This fixture verifies UI behavior, not production speed.

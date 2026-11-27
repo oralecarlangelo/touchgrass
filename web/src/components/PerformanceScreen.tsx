@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { RefreshCw, Search, TriangleAlert } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -28,18 +28,11 @@ import {
   fetchPerformanceRoutes,
   fetchPerformanceSummary,
   fetchPerformanceTimeline,
-  isUnauthorized,
-  type CollectorStatusView,
-  type FleetContainer,
   type PerformanceFilters,
-  type PerformanceRouteRow,
-  type PerformanceSummaryView,
-  type PerformanceTimelineView,
-  type PostgresPerformanceRow,
-  type RedisPerformanceRow,
   type ServiceView,
 } from '@/lib/api.ts';
 import { collectorState, performanceDrilldownHref } from '@/lib/performance.ts';
+import { usePanelRead } from '@/lib/use-panel-read.ts';
 
 const ranges = [
   { hours: 1, label: '1h' },
@@ -47,26 +40,6 @@ const ranges = [
   { hours: 24, label: '24h' },
   { hours: 168, label: '7d' },
 ] as const;
-
-interface PerformanceData {
-  summary: PerformanceSummaryView | null;
-  timeline: PerformanceTimelineView | null;
-  routes: PerformanceRouteRow[] | null;
-  postgres: PostgresPerformanceRow[] | null;
-  redis: RedisPerformanceRow[] | null;
-  collectors: CollectorStatusView[] | null;
-  fleetContainers: FleetContainer[] | null;
-}
-
-const emptyData: PerformanceData = {
-  summary: null,
-  timeline: null,
-  routes: null,
-  postgres: null,
-  redis: null,
-  collectors: null,
-  fleetContainers: null,
-};
 
 function filtersFor(hours: number, serviceId: string): PerformanceFilters {
   const end = new Date();
@@ -82,8 +55,27 @@ function filtersFor(hours: number, serviceId: string): PerformanceFilters {
   };
 }
 
-function rejectedMessage(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
+function PanelError({ name, error, retry }: { name: string; error: string | null; retry: () => void }) {
+  return error === null ? null : (
+    <ErrorState title={`Couldn’t refresh ${name}`} message={error} onRetry={retry} />
+  );
+}
+
+function DetailsPanel({ title, description, onChange, children }: {
+  title: string;
+  description: string;
+  onChange: (open: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <details className="bg-card rounded-lg border" onToggle={(event) => onChange(event.currentTarget.open)}>
+      <summary className="cursor-pointer p-4 text-sm font-medium">
+        {title}
+        <span className="text-muted-foreground ml-2 font-normal">{description}</span>
+      </summary>
+      <div className="space-y-3 px-4 pb-4">{children}</div>
+    </details>
+  );
 }
 
 export default function PerformanceScreen({
@@ -104,98 +96,39 @@ export default function PerformanceScreen({
     canFleet || services.some((service) => service.id === chosenServiceId)
       ? chosenServiceId
       : (services[0]?.id ?? '');
-  const [data, setData] = useState<PerformanceData>(emptyData);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [failures, setFailures] = useState<string[]>([]);
+  const [refresh, setRefresh] = useState(0);
+  const [timelineOpen, setTimelineOpen] = useState(false);
+  const [routesOpen, setRoutesOpen] = useState(false);
+  const [dependenciesOpen, setDependenciesOpen] = useState(false);
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
 
-  const load = useCallback(
-    async (background = false) => {
-      if (background) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      setFailures([]);
+  const filters = useMemo(() => filtersFor(hours, serviceId), [hours, refresh, serviceId]);
+  const scope = `${serviceId}:${hours}`;
+  const hasScope = serviceId !== '';
+  const readSummary = useCallback((signal: AbortSignal) => fetchPerformanceSummary(filters, signal), [filters]);
+  const readTimeline = useCallback((signal: AbortSignal) => fetchPerformanceTimeline(filters, signal), [filters]);
+  const readRoutes = useCallback((signal: AbortSignal) => fetchPerformanceRoutes(filters, signal), [filters]);
+  const readPostgres = useCallback((signal: AbortSignal) => fetchPerformancePostgres(filters, signal), [filters]);
+  const readRedis = useCallback((signal: AbortSignal) => fetchPerformanceRedis(filters, signal), [filters]);
 
-      if (serviceId === '') {
-        // A scoped user whose service list has not loaded yet: keep
-        // the loading state until there is a service to ask about.
-        setRefreshing(false);
-        return;
-      }
+  const summary = usePanelRead(scope, hasScope ? readSummary : null, refresh, onUnauthorized);
+  const timeline = usePanelRead(scope, hasScope && timelineOpen ? readTimeline : null, refresh, onUnauthorized);
+  const routes = usePanelRead(scope, hasScope && routesOpen ? readRoutes : null, refresh, onUnauthorized);
+  const postgres = usePanelRead(scope, hasScope && dependenciesOpen ? readPostgres : null, refresh, onUnauthorized);
+  const redis = usePanelRead(scope, hasScope && dependenciesOpen ? readRedis : null, refresh, onUnauthorized);
+  const collectors = usePanelRead('fleet', canFleet ? fetchCollectorStatuses : null, refresh, onUnauthorized);
+  const discovery = usePanelRead('fleet', canFleet && discoveryOpen ? fetchFleetContainers : null, refresh, onUnauthorized);
 
-      const filters = filtersFor(hours, serviceId);
-      const results = await Promise.allSettled([
-        fetchPerformanceSummary(filters),
-        fetchPerformanceTimeline(filters),
-        fetchPerformanceRoutes(filters),
-        fetchPerformancePostgres(filters),
-        fetchPerformanceRedis(filters),
-        canFleet ? fetchCollectorStatuses() : Promise.resolve(null),
-        canFleet ? fetchFleetContainers() : Promise.resolve(null),
-      ]);
+  const refreshing = summary.loading || collectors.loading;
+  const collectorWarnings = (collectors.data ?? []).filter((collector) => {
+    const state = collectorState(collector);
+    return state === 'degraded' || state === 'stale';
+  });
 
-      const unauthorized = results.some(
-        (result) => result.status === 'rejected' && isUnauthorized(result.reason),
-      );
-
-      if (unauthorized) {
-        onUnauthorized();
-        return;
-      }
-
-      const errors = results.flatMap((result) =>
-        result.status === 'rejected' ? [rejectedMessage(result.reason)] : [],
-      );
-      setFailures([...new Set(errors)]);
-      setData({
-        summary: results[0].status === 'fulfilled' ? results[0].value : null,
-        timeline: results[1].status === 'fulfilled' ? results[1].value : null,
-        routes: results[2].status === 'fulfilled' ? results[2].value : null,
-        postgres: results[3].status === 'fulfilled' ? results[3].value : null,
-        redis: results[4].status === 'fulfilled' ? results[4].value : null,
-        collectors: results[5].status === 'fulfilled' ? results[5].value : null,
-        fleetContainers:
-          results[6].status === 'fulfilled' ? (results[6].value?.containers ?? null) : null,
-      });
-      setLoading(false);
-      setRefreshing(false);
-    },
-    [hours, serviceId, onUnauthorized, canFleet],
-  );
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const failedCompletely =
-    !loading &&
-    data.summary === null &&
-    data.timeline === null &&
-    data.routes === null &&
-    data.postgres === null &&
-    data.redis === null &&
-    data.collectors === null;
-  const collectorWarnings = useMemo(
-    () =>
-      (data.collectors ?? []).filter((collector) => {
-        const state = collectorState(collector);
-
-        return state === 'degraded' || state === 'stale';
-      }),
-    [data.collectors],
-  );
-  const noSignals =
-    data.summary?.request_count === 0 &&
-    (data.timeline?.points.length ?? 0) === 0 &&
-    (data.routes?.length ?? 0) === 0 &&
-    (data.postgres?.length ?? 0) === 0 &&
-    (data.redis?.length ?? 0) === 0;
   const drilldownFilters: PerformanceFilters = {
     serviceId: serviceId === 'all' ? undefined : serviceId,
-    start: data.summary?.start,
-    end: data.summary?.end,
+    start: summary.data?.start,
+    end: summary.data?.end,
   };
 
   return (
@@ -244,7 +177,7 @@ export default function PerformanceScreen({
             size="sm"
             variant="outline"
             disabled={refreshing}
-            onClick={() => void load(true)}
+            onClick={() => setRefresh((value) => value + 1)}
           >
             <RefreshCw className={refreshing ? 'animate-spin' : ''} aria-hidden />
             {refreshing ? 'Refreshing' : 'Refresh'}
@@ -252,58 +185,51 @@ export default function PerformanceScreen({
         </div>
       </div>
 
-      {failedCompletely && (
-        <ErrorState
-          title="Couldn't load performance signals"
-          message={failures[0] ?? 'No performance endpoint responded.'}
-          onRetry={() => void load()}
-        />
-      )}
+      <PanelError name="performance summary" error={summary.error} retry={summary.retry} />
+      {summary.data !== null ? (
+        <PerformanceSummary summary={summary.data} routes={routes.data} />
+      ) : summary.loading ? <PerformanceSummarySkeleton /> : null}
 
-      {!failedCompletely && failures.length > 0 && (
-        <Alert>
-          <TriangleAlert aria-hidden />
-          <AlertTitle>Some signals are unavailable</AlertTitle>
-          <AlertDescription>
-            Available panels remain usable. Retry after checking collector status. {failures[0]}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {!failedCompletely && collectorWarnings.length > 0 && (
+      {collectorWarnings.length > 0 && (
         <Alert>
           <TriangleAlert aria-hidden />
           <AlertTitle>Collector attention needed</AlertTitle>
           <AlertDescription>
-            {collectorWarnings.length} source{collectorWarnings.length === 1 ? ' is' : 's are'} stale,
-            degraded, or awaiting setup. Historical data remains visible.
+            {collectorWarnings.map(({ source }) => source.replace(/_/g, ' ')).join(', ')}.
+            See the last successful sample and next step below.
           </AlertDescription>
         </Alert>
       )}
-
-      {loading ? (
-        <PerformanceSummarySkeleton />
-      ) : data.summary !== null ? (
-        <PerformanceSummary summary={data.summary} routes={data.routes ?? []} />
-      ) : null}
-
-      {!loading && noSignals && !failedCompletely && (
-        <div className="rounded-lg border border-dashed px-6 py-10 text-center">
-          <p className="text-sm font-medium">No performance samples yet</p>
-          <p className="text-muted-foreground mx-auto mt-1 max-w-lg text-sm">
-            Configure the read-only Nginx timing log and optional PostgreSQL or Redis collectors.
-            Touch Grass will keep each available source independent.
-          </p>
-        </div>
+      <PanelError name="collector status" error={collectors.error} retry={collectors.retry} />
+      {collectors.loading && collectors.data === null && (
+        <p className="text-muted-foreground text-sm" role="status">Loading collector status…</p>
+      )}
+      {collectors.data !== null && (
+        <CollectorStatus collectors={collectors.data} services={services} serviceId={serviceId} fleetContainers={[]} />
       )}
 
-      {data.timeline !== null && <CorrelationTimeline timeline={data.timeline} />}
-      {data.routes !== null && <RouteTable routes={data.routes} />}
-      {(data.postgres !== null || data.redis !== null) && (
-        <DependencyPanels postgres={data.postgres ?? []} redis={data.redis ?? []} />
-      )}
+      <DetailsPanel title="Timeline" description="Compare latency, deploys, and runtime events" onChange={setTimelineOpen}>
+        <PanelError name="timeline" error={timeline.error} retry={timeline.retry} />
+        {timeline.loading && timeline.data === null && <p role="status">Loading timeline…</p>}
+        {timeline.data !== null && <CorrelationTimeline timeline={timeline.data} />}
+      </DetailsPanel>
+      <DetailsPanel title="HTTP routes" description="Find the slowest approved route families" onChange={setRoutesOpen}>
+        <PanelError name="HTTP routes" error={routes.error} retry={routes.retry} />
+        {routes.loading && routes.data === null && <p role="status">Loading routes…</p>}
+        {routes.data !== null && <RouteTable routes={routes.data} />}
+      </DetailsPanel>
+      <DetailsPanel title="Database signals" description="Review PostgreSQL and Redis samples" onChange={setDependenciesOpen}>
+        <PanelError name="PostgreSQL" error={postgres.error} retry={postgres.retry} />
+        <PanelError name="Redis" error={redis.error} retry={redis.retry} />
+        {((postgres.loading && postgres.data === null) || (redis.loading && redis.data === null)) && (
+          <p role="status">Loading database signals…</p>
+        )}
+        {(postgres.data !== null || redis.data !== null) && (
+          <DependencyPanels postgres={postgres.data ?? []} redis={redis.data ?? []} />
+        )}
+      </DetailsPanel>
 
-      {data.summary !== null && (
+      {summary.data !== null && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -313,13 +239,13 @@ export default function PerformanceScreen({
             <CardDescription>Ranked correlations and the next safe drill-down.</CardDescription>
           </CardHeader>
           <CardContent>
-            {data.summary.anomalies.length === 0 ? (
+            {summary.data.anomalies.length === 0 ? (
               <p className="text-muted-foreground text-sm">
                 No notable change against the preceding window.
               </p>
             ) : (
               <div className="space-y-2">
-                {data.summary.anomalies.map((anomaly, index) => (
+                {summary.data.anomalies.map((anomaly, index) => (
                   <div
                     key={`${anomaly.kind}:${index}`}
                     className="flex flex-col justify-between gap-3 rounded-md border p-3 sm:flex-row sm:items-center"
@@ -349,13 +275,20 @@ export default function PerformanceScreen({
         </Card>
       )}
 
-      {data.collectors !== null && (
-        <CollectorStatus
-          collectors={data.collectors}
-          services={services}
-          serviceId={serviceId}
-          fleetContainers={data.fleetContainers ?? []}
-        />
+      {canFleet && (
+        <DetailsPanel title="Discover collector setup" description="Find Docker database sources" onChange={setDiscoveryOpen}>
+          <PanelError name="discovered sources" error={discovery.error} retry={discovery.retry} />
+          {discovery.loading && discovery.data === null && <p role="status">Loading discovered sources…</p>}
+          {discovery.data !== null && (
+            <CollectorStatus
+              collectors={collectors.data ?? []}
+              services={services}
+              serviceId={serviceId}
+              fleetContainers={discovery.data.containers}
+              setupOnly
+            />
+          )}
+        </DetailsPanel>
       )}
     </div>
   );

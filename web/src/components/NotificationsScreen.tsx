@@ -28,6 +28,21 @@ import { notificationFindingID } from '@/lib/security.ts';
 
 const pageSize = 20;
 
+function groupNotifications(items: Notification[]): Notification[][] {
+  const bySignal = new Map<string, Notification[]>();
+
+  for (const item of items) {
+    const finding = item.kind === 'security' ? notificationFindingID(item.body) : null;
+    const key = JSON.stringify([item.kind, item.service_id, finding ?? [item.title, item.body]]);
+    const group = bySignal.get(key);
+    if (group === undefined) bySignal.set(key, [item]);
+    else group.push(item);
+  }
+
+  const unread = (group: Notification[]) => group.some((item) => item.read_at === null);
+  return [...bySignal.values()].sort((a, b) => Number(unread(b)) - Number(unread(a)));
+}
+
 export default function NotificationsScreen({
   services,
   onUnauthorized,
@@ -87,9 +102,10 @@ export default function NotificationsScreen({
     [notes, kind, unreadOnly],
   );
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const groups = useMemo(() => groupNotifications(filtered), [filtered]);
+  const pageCount = Math.max(1, Math.ceil(groups.length / pageSize));
   const safePage = Math.min(page, pageCount - 1);
-  const rows = filtered.slice(safePage * pageSize, safePage * pageSize + pageSize);
+  const rows = groups.slice(safePage * pageSize, safePage * pageSize + pageSize);
 
   async function handleMarkRead(id: number): Promise<void> {
     try {
@@ -123,6 +139,48 @@ export default function NotificationsScreen({
 
       toast.error(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  function notificationRow(item: Notification) {
+    return (
+      <li key={item.id} className="flex items-start gap-3 px-4 py-3">
+        {!item.read_at && (
+          <span
+            className="bg-primary mt-1.5 h-2 w-2 shrink-0 rounded-full"
+            aria-label="Unread"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">{item.title}</p>
+          {item.kind === 'security' && notificationFindingID(item.body) !== null && (
+            <button
+              type="button"
+              className="text-primary text-xs underline underline-offset-4"
+              onClick={() => onSelectSecurityFinding(notificationFindingID(item.body) as number)}
+            >
+              Open finding #{notificationFindingID(item.body)}
+            </button>
+          )}
+          {item.body !== '' && (
+            <p className="text-muted-foreground mt-0.5 text-sm break-words">
+              {item.body}
+            </p>
+          )}
+          <p className="text-muted-foreground mt-1 text-xs">
+            <Badge variant="outline" className="mr-1.5 text-[10px]">
+              {item.kind}
+            </Badge>
+            <span className="font-mono">{item.service_id}</span> · {timeAgo(item.created_at)}{' '}
+            <span className="hidden sm:inline">({formatTime(item.created_at)})</span>
+          </p>
+        </div>
+        {item.read_at === null && isAdmin && (
+          <Button variant="ghost" size="sm" onClick={() => void handleMarkRead(item.id)}>
+            Mark read
+          </Button>
+        )}
+      </li>
+    );
   }
 
   if (error !== null) {
@@ -210,49 +268,34 @@ export default function NotificationsScreen({
           <CardContent className="px-0 py-1">
             {rows.length === 0 ? (
               <p className="text-muted-foreground px-4 py-8 text-center text-sm">
-                Quiet. Prod is covered.
+                No notifications match these filters.
               </p>
             ) : (
               <ul className="divide-y divide-border">
-                {rows.map((item) => (
-                  <li key={item.id} className="flex items-start gap-3 px-4 py-3">
-                    {!item.read_at && (
-                      <span
-                        className="bg-primary mt-1.5 h-2 w-2 shrink-0 rounded-full"
-                        aria-label="Unread"
-                      />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{item.title}</p>
-                      {item.kind === 'security' && notificationFindingID(item.body) !== null && (
-                        <button
-                          type="button"
-                          className="text-primary text-xs underline underline-offset-4"
-                          onClick={() => onSelectSecurityFinding(notificationFindingID(item.body) as number)}
-                        >
-                          Open finding #{notificationFindingID(item.body)}
-                        </button>
-                      )}
-                      {item.body !== '' && (
-                        <p className="text-muted-foreground mt-0.5 text-sm break-words">
-                          {item.body}
-                        </p>
-                      )}
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        <Badge variant="outline" className="mr-1.5 text-[10px]">
-                          {item.kind}
-                        </Badge>
-                        <span className="font-mono">{item.service_id}</span> · {timeAgo(item.created_at)}{' '}
-                        <span className="hidden sm:inline">({formatTime(item.created_at)})</span>
-                      </p>
-                    </div>
-                    {item.read_at === null && isAdmin && (
-                      <Button variant="ghost" size="sm" onClick={() => void handleMarkRead(item.id)}>
-                        Mark read
-                      </Button>
-                    )}
-                  </li>
-                ))}
+                {rows.map((group) => {
+                  const newest = group[0];
+                  if (group.length === 1) return notificationRow(newest);
+
+                  const oldest = group[group.length - 1];
+                  const unreadCount = group.filter((item) => item.read_at === null).length;
+                  return (
+                    <li key={newest.id} className="px-4 py-2">
+                      <details>
+                        <summary className="cursor-pointer space-x-2 py-2 text-sm">
+                          <span className="font-medium">{newest.title}</span>
+                          <Badge variant="secondary">{group.length} occurrences</Badge>
+                          {unreadCount > 0 && <Badge variant="outline">{unreadCount} unread</Badge>}
+                          <span className="text-muted-foreground text-xs">
+                            Earliest shown {timeAgo(oldest.created_at)} · Last {timeAgo(newest.created_at)}
+                          </span>
+                        </summary>
+                        <ul className="divide-y divide-border">
+                          {group.map(notificationRow)}
+                        </ul>
+                      </details>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </CardContent>

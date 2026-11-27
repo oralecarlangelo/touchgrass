@@ -70,13 +70,18 @@ export default function ImagesScreen({
     const controller = new AbortController();
     let running = false;
     const refresh = async () => {
-      if (running) return;
+      if (running || document.hidden) return;
       running = true;
       try { await load(controller.signal); } finally { running = false; }
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 30_000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
   }, [load]);
 
   async function handlePrune(): Promise<void> {

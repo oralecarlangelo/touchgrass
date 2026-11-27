@@ -404,16 +404,18 @@ export function performanceApiPath(
 
 export async function fetchPerformanceSummary(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PerformanceSummaryView> {
-  const result = await request<PerformanceSummaryView>(performanceApiPath('summary', filters));
+  const result = await request<PerformanceSummaryView>(performanceApiPath('summary', filters), { signal });
 
   return { ...result, anomalies: result.anomalies ?? [] };
 }
 
 export async function fetchPerformanceTimeline(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PerformanceTimelineView> {
-  const result = await request<PerformanceTimelineView>(performanceApiPath('timeline', filters));
+  const result = await request<PerformanceTimelineView>(performanceApiPath('timeline', filters), { signal });
 
   return {
     ...result,
@@ -425,9 +427,11 @@ export async function fetchPerformanceTimeline(
 
 export async function fetchPerformanceRoutes(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PerformanceRouteRow[]> {
   const result = await request<{ routes: PerformanceRouteRow[] }>(
     performanceApiPath('routes', filters),
+    { signal },
   );
 
   return result.routes ?? [];
@@ -435,9 +439,11 @@ export async function fetchPerformanceRoutes(
 
 export async function fetchPerformancePostgres(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<PostgresPerformanceRow[]> {
   const result = await request<{ metrics: PostgresPerformanceRow[] }>(
     performanceApiPath('postgres', filters),
+    { signal },
   );
 
   return result.metrics ?? [];
@@ -445,16 +451,18 @@ export async function fetchPerformancePostgres(
 
 export async function fetchPerformanceRedis(
   filters: PerformanceFilters = {},
+  signal?: AbortSignal,
 ): Promise<RedisPerformanceRow[]> {
   const result = await request<{ metrics: RedisPerformanceRow[] }>(
     performanceApiPath('redis', filters),
+    { signal },
   );
 
   return result.metrics ?? [];
 }
 
-export async function fetchCollectorStatuses(): Promise<CollectorStatusView[]> {
-  const result = await request<{ collectors: CollectorStatusView[] }>('/api/collectors/status');
+export async function fetchCollectorStatuses(signal?: AbortSignal): Promise<CollectorStatusView[]> {
+  const result = await request<{ collectors: CollectorStatusView[] }>('/api/collectors/status', { signal });
 
   return result.collectors ?? [];
 }
@@ -658,11 +666,11 @@ export interface SecurityPolicy extends SecurityPolicyBody {
   updated_at: string;
 }
 
-export async function fetchSecuritySummary(): Promise<SecuritySummary> {
-  return request<SecuritySummary>('/api/security/summary');
+export async function fetchSecuritySummary(signal?: AbortSignal): Promise<SecuritySummary> {
+  return request<SecuritySummary>('/api/security/summary', { signal });
 }
 
-export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}): Promise<SecurityFinding[]> {
+export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}, signal?: AbortSignal): Promise<SecurityFinding[]> {
   const params = new URLSearchParams();
   if (filters.status !== undefined) params.set('status', filters.status);
   if (filters.severity !== undefined) params.set('severity', filters.severity);
@@ -671,12 +679,12 @@ export async function fetchSecurityFindings(filters: SecurityFindingFilters = {}
   if (filters.limit !== undefined) params.set('limit', String(filters.limit));
   if (filters.offset !== undefined) params.set('offset', String(filters.offset));
   const query = params.toString();
-  const body = await request<{ findings?: SecurityFinding[] }>(`/api/security/findings${query === '' ? '' : `?${query}`}`);
+  const body = await request<{ findings?: SecurityFinding[] }>(`/api/security/findings${query === '' ? '' : `?${query}`}`, { signal });
   return (body.findings ?? []).map(normalizeSecurityFinding);
 }
 
-export async function fetchSecurityFinding(id: number): Promise<SecurityFinding> {
-  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}`));
+export async function fetchSecurityFinding(id: number, signal?: AbortSignal): Promise<SecurityFinding> {
+  return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}`, { signal }));
 }
 
 export async function acknowledgeSecurityFinding(id: number): Promise<SecurityFinding> {
@@ -691,8 +699,8 @@ export async function suppressSecurityFinding(id: number, reason: string, until:
   return normalizeSecurityFinding(await request<SecurityFinding>(`/api/security/findings/${id}/suppress`, jsonBody({ reason, until })));
 }
 
-export async function fetchSecurityPolicies(): Promise<SecurityPolicy[]> {
-  const body = await request<{ policies?: SecurityPolicy[] }>('/api/security/policies');
+export async function fetchSecurityPolicies(signal?: AbortSignal): Promise<SecurityPolicy[]> {
+  const body = await request<{ policies?: SecurityPolicy[] }>('/api/security/policies', { signal });
   return (body.policies ?? []).map(normalizeSecurityPolicy);
 }
 

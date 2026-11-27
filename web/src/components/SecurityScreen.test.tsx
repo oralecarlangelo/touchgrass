@@ -20,6 +20,29 @@ describe('SecurityScreenView', () => {
     expect(renderToStaticMarkup(<SecurityScreenView summary={{ ...summary, coverage_complete: false }} findings={[finding]} error={null} isAdmin={false} onRetry={() => undefined} onSelect={() => undefined} onCreatePolicy={() => undefined} />)).toContain('Partial collector coverage');
   });
 
+  it('shows collector coverage before findings and defaults to open findings', () => {
+    const shared = {
+      summary: { ...summary, coverage_complete: false },
+      error: null,
+      isAdmin: false,
+      onRetry: () => undefined,
+      onSelect: () => undefined,
+      onCreatePolicy: () => undefined,
+    };
+    const loading = renderToStaticMarkup(<SecurityScreenView {...shared} findings={null} />);
+    expect(loading).toContain('Partial collector coverage');
+    expect(loading).toContain('Loading security findings');
+
+    const withHistory = renderToStaticMarkup(
+      <SecurityScreenView
+        {...shared}
+        findings={[finding, { ...finding, id: 2, status: 'resolved', rule_id: 'historical-incident' }]}
+      />,
+    );
+    expect(withHistory).toContain(finding.rule_id);
+    expect(withHistory).not.toContain('historical-incident');
+  });
+
   it('renders a narrow-screen-safe table and admin-only policy action', () => {
     const viewer = renderToStaticMarkup(<SecurityScreenView summary={summary} findings={[finding]} error={null} isAdmin={false} onRetry={() => undefined} onSelect={() => undefined} onCreatePolicy={() => undefined} />);
     const admin = renderToStaticMarkup(<SecurityScreenView summary={summary} findings={[finding]} error={null} isAdmin onRetry={() => undefined} onSelect={() => undefined} onCreatePolicy={() => undefined} />);

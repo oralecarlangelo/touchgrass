@@ -262,10 +262,13 @@ export default function App() {
     }
 
     void load();
-    const timer = setInterval(() => void load(), refreshIntervalMs);
+    const refreshVisible = () => { if (!document.hidden) void load(); };
+    const timer = setInterval(refreshVisible, refreshIntervalMs);
+    document.addEventListener('visibilitychange', refreshVisible);
 
     return () => {
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', refreshVisible);
       servicesRequestRef.current.cancel();
     };
   }, [authed, session, can, load]);

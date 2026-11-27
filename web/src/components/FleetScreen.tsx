@@ -215,6 +215,7 @@ export default function FleetScreen({
   const [systemError, setSystemError] = useState<string | null>(null);
   const [containersError, setContainersError] = useState<string | null>(null);
   const [range, setRange] = useState(24);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [cpu, setCpu] = useState<HistoryPoint[] | null>(null);
   const [mem, setMem] = useState<HistoryPoint[] | null>(null);
   const [loadAvg, setLoadAvg] = useState<HistoryPoint[] | null>(null);
@@ -230,7 +231,11 @@ export default function FleetScreen({
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let running = false;
     const load = async () => {
+      if (running || document.hidden || controller.signal.aborted) return;
+      if (timer !== undefined) clearTimeout(timer);
+      running = true;
       try {
         const snapshot = await fetchSystem(controller.signal);
         if (!controller.signal.aborted) {
@@ -245,11 +250,15 @@ export default function FleetScreen({
         }
         setSystemError(err instanceof Error ? err.message : String(err));
       } finally {
+        running = false;
         if (!controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
       }
     };
     void load();
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
       controller.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
@@ -258,7 +267,11 @@ export default function FleetScreen({
   useEffect(() => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let running = false;
     const load = async () => {
+      if (running || document.hidden || controller.signal.aborted) return;
+      if (timer !== undefined) clearTimeout(timer);
+      running = true;
       try {
         const fleet = await fetchFleetContainers(controller.signal);
         if (!controller.signal.aborted) {
@@ -274,20 +287,29 @@ export default function FleetScreen({
         }
         setContainersError(err instanceof Error ? err.message : String(err));
       } finally {
+        running = false;
         if (!controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
       }
     };
     void load();
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
       controller.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
   }, [containersAttempt, onUnauthorized]);
 
   useEffect(() => {
+    if (!historyOpen) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let running = false;
     const load = async () => {
+      if (running || document.hidden || controller.signal.aborted) return;
+      if (timer !== undefined) clearTimeout(timer);
+      running = true;
       try {
         const [cpuPoints, memPoints, loadPoints] = await Promise.all([
           fetchSystemHistory('cpu', range, controller.signal),
@@ -309,15 +331,19 @@ export default function FleetScreen({
         }
         setHistoryError(err instanceof Error ? err.message : String(err));
       } finally {
+        running = false;
         if (!controller.signal.aborted) timer = setTimeout(() => void load(), refreshIntervalMs);
       }
     };
     void load();
+    const onVisible = () => { if (!document.hidden) void load(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
       controller.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [historyAttempt, onUnauthorized, range]);
+  }, [historyAttempt, historyOpen, onUnauthorized, range]);
 
   const cpuSeries = useMemo(() => toSeries(cpu ?? [], range), [cpu, range]);
   const memSeries = useMemo(() => toSeries(mem ?? [], range), [mem, range]);
@@ -398,116 +424,31 @@ export default function FleetScreen({
         </>
       )}
 
-      <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-sm font-medium">Host history</CardTitle>
-              <Select value={String(range)} onValueChange={(value) => setRange(Number(value))}>
-                <SelectTrigger className="w-28" aria-label="History range">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {rangeOptions.map((option) => (
-                    <SelectItem key={option.hours} value={String(option.hours)}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </CardHeader>
-            <CardContent>
-              {historyError !== null && historyLoading ? (
-                <ErrorState
-                  title="Couldn't load host history"
-                  message={historyError}
-                  onRetry={() => setHistoryAttempt((attempt) => attempt + 1)}
-                />
-              ) : historyLoading ? (
-                <div className="grid gap-4 lg:grid-cols-3">
-                  <Skeleton className="h-44 w-full" />
-                  <Skeleton className="h-44 w-full" />
-                  <Skeleton className="h-44 w-full" />
-                </div>
-              ) : (
-                <>
-                  {historyError !== null && (
-                    <div className="mb-2 flex items-center gap-2 text-sm">
-                      <span className="text-muted-foreground">
-                        Refresh failed: {historyError} — showing last good data.
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setHistoryAttempt((attempt) => attempt + 1)}
-                      >
-                        Retry
-                      </Button>
-                    </div>
-                  )}
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <div>
-                      <p className="text-muted-foreground mb-1 text-xs">CPU %</p>
-                      {cpuSeries.length === 0 ? (
-                        <p className="text-muted-foreground py-6 text-center text-sm">
-                          No CPU samples in range.
-                        </p>
-                      ) : (
-                        <ChartContainer config={cpuConfig} className="h-44 w-full">
-                          <LineChart data={cpuSeries}>
-                            <CartesianGrid vertical={false} />
-                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
-                            <YAxis tickLine={false} axisLine={false} width={40} />
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                            <Line type="monotone" dataKey="value" stroke="var(--color-cpu)" dot={false} />
-                          </LineChart>
-                        </ChartContainer>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground mb-1 text-xs">Memory used</p>
-                      {memSeries.length === 0 ? (
-                        <p className="text-muted-foreground py-6 text-center text-sm">
-                          No memory samples in range.
-                        </p>
-                      ) : (
-                        <ChartContainer config={memConfig} className="h-44 w-full">
-                          <LineChart data={memSeries}>
-                            <CartesianGrid vertical={false} />
-                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
-                            <YAxis
-                              tickLine={false}
-                              axisLine={false}
-                              width={52}
-                              tickFormatter={(value: number) => formatBytes(value)}
-                            />
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                            <Line type="monotone" dataKey="value" stroke="var(--color-mem)" dot={false} />
-                          </LineChart>
-                        </ChartContainer>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground mb-1 text-xs">Load (1m)</p>
-                      {loadSeries.length === 0 ? (
-                        <p className="text-muted-foreground py-6 text-center text-sm">
-                          No load samples in range.
-                        </p>
-                      ) : (
-                        <ChartContainer config={loadConfig} className="h-44 w-full">
-                          <LineChart data={loadSeries}>
-                            <CartesianGrid vertical={false} />
-                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
-                            <YAxis tickLine={false} axisLine={false} width={36} />
-                            <ChartTooltip content={<ChartTooltipContent />} />
-                            <Line type="monotone" dataKey="value" stroke="var(--color-load)" dot={false} />
-                          </LineChart>
-                        </ChartContainer>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+      {containers !== null && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Top container CPU</CardTitle>
+            <CardDescription>Latest available samples. 100% represents one CPU core.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="divide-y">
+              {containers.filter((container) => (container.cpu_percent ?? 0) > 0)
+                .sort((a, b) => (b.cpu_percent ?? 0) - (a.cpu_percent ?? 0))
+                .slice(0, 5)
+                .map((container) => (
+                  <li key={container.id} className="flex justify-between gap-3 py-1.5 text-sm">
+                    <button type="button" className="min-w-0 truncate text-left underline-offset-4 hover:underline"
+                      onClick={() => onSelectContainer(container.id)}>{container.name}</button>
+                    <span className="shrink-0 font-mono">{container.cpu_percent?.toFixed(1)}%</span>
+                  </li>
+                ))}
+            </ul>
+            {!containers.some((container) => (container.cpu_percent ?? 0) > 0) && (
+              <p className="text-muted-foreground text-sm">No container CPU usage sampled.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
           <Card>
             <CardHeader className="flex flex-row items-start justify-between gap-4">
@@ -681,6 +622,121 @@ export default function FleetScreen({
               )}
             </CardContent>
       </Card>
+
+      <details className="rounded-lg border" onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
+        <summary className="cursor-pointer p-4 text-sm font-medium">Host history</summary>
+        {historyOpen && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-end">
+              <Select value={String(range)} onValueChange={(value) => setRange(Number(value))}>
+                <SelectTrigger className="w-28" aria-label="History range">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {rangeOptions.map((option) => (
+                    <SelectItem key={option.hours} value={String(option.hours)}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </CardHeader>
+            <CardContent>
+              {historyError !== null && historyLoading ? (
+                <ErrorState
+                  title="Couldn't load host history"
+                  message={historyError}
+                  onRetry={() => setHistoryAttempt((attempt) => attempt + 1)}
+                />
+              ) : historyLoading ? (
+                <div className="grid gap-4 lg:grid-cols-3">
+                  <Skeleton className="h-44 w-full" />
+                  <Skeleton className="h-44 w-full" />
+                  <Skeleton className="h-44 w-full" />
+                </div>
+              ) : (
+                <>
+                  {historyError !== null && (
+                    <div className="mb-2 flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground">
+                        Refresh failed: {historyError} — showing last good data.
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setHistoryAttempt((attempt) => attempt + 1)}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  )}
+                  <div className="grid gap-4 lg:grid-cols-3">
+                    <div>
+                      <p className="text-muted-foreground mb-1 text-xs">CPU %</p>
+                      {cpuSeries.length === 0 ? (
+                        <p className="text-muted-foreground py-6 text-center text-sm">
+                          No CPU samples in range.
+                        </p>
+                      ) : (
+                        <ChartContainer config={cpuConfig} className="h-44 w-full">
+                          <LineChart data={cpuSeries}>
+                            <CartesianGrid vertical={false} />
+                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
+                            <YAxis tickLine={false} axisLine={false} width={40} />
+                            <ChartTooltip content={<ChartTooltipContent />} />
+                            <Line type="monotone" dataKey="value" stroke="var(--color-cpu)" dot={false} />
+                          </LineChart>
+                        </ChartContainer>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground mb-1 text-xs">Memory used</p>
+                      {memSeries.length === 0 ? (
+                        <p className="text-muted-foreground py-6 text-center text-sm">
+                          No memory samples in range.
+                        </p>
+                      ) : (
+                        <ChartContainer config={memConfig} className="h-44 w-full">
+                          <LineChart data={memSeries}>
+                            <CartesianGrid vertical={false} />
+                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
+                            <YAxis
+                              tickLine={false}
+                              axisLine={false}
+                              width={52}
+                              tickFormatter={(value: number) => formatBytes(value)}
+                            />
+                            <ChartTooltip content={<ChartTooltipContent />} />
+                            <Line type="monotone" dataKey="value" stroke="var(--color-mem)" dot={false} />
+                          </LineChart>
+                        </ChartContainer>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground mb-1 text-xs">Load (1m)</p>
+                      {loadSeries.length === 0 ? (
+                        <p className="text-muted-foreground py-6 text-center text-sm">
+                          No load samples in range.
+                        </p>
+                      ) : (
+                        <ChartContainer config={loadConfig} className="h-44 w-full">
+                          <LineChart data={loadSeries}>
+                            <CartesianGrid vertical={false} />
+                            <XAxis dataKey="at" tickLine={false} axisLine={false} minTickGap={32} />
+                            <YAxis tickLine={false} axisLine={false} width={36} />
+                            <ChartTooltip content={<ChartTooltipContent />} />
+                            <Line type="monotone" dataKey="value" stroke="var(--color-load)" dot={false} />
+                          </LineChart>
+                        </ChartContainer>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </details>
 
       {system !== null && (
         <div className="grid gap-4 lg:grid-cols-3">

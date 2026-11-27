@@ -39,6 +39,7 @@ export default function ImagesScreen({
   onUnauthorized: () => void;
   isAdmin: boolean;
 }) {
+  const [bucketsOpen, setBucketsOpen] = useState(false);
   const [images, setImages] = useState<ImageView[] | null>(null);
   const [imagesStale, setImagesStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +130,6 @@ export default function ImagesScreen({
       </div>
 
       <StoragePanel revision={revision} onUnauthorized={onUnauthorized} />
-      {isAdmin && <BucketManager onUnauthorized={onUnauthorized} />}
       <h2 className="text-lg font-semibold">Docker images</h2>
       {imagesStale && <p role="status" className="text-muted-foreground text-sm">Image inventory is refreshing in the background; showing the last available snapshot.</p>}
       {error !== null && <ErrorState title="Couldn't load images" message={error} onRetry={() => void load()} />}
@@ -242,6 +242,13 @@ export default function ImagesScreen({
           )}
         </CardContent>
       </Card>
+
+      {isAdmin && (
+        <details className="rounded-lg border" onToggle={(event) => setBucketsOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer p-4 text-sm font-medium">Browse object storage</summary>
+          {bucketsOpen && <BucketManager onUnauthorized={onUnauthorized} />}
+        </details>
+      )}
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>

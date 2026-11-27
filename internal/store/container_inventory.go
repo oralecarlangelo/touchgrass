@@ -189,6 +189,15 @@ func (s *ContainerStore) List(ctx context.Context, query model.ContainerQuery) (
 		args = append(args, query.ServiceID)
 	}
 
+	if query.Search != "" {
+		statement += ` AND (instr(lower(name), ?) > 0 OR instr(lower(compose_project), ?) > 0
+			OR instr(lower(container_id), ?) > 0)`
+		needle := strings.ToLower(query.Search)
+		args = append(args, needle, needle, needle)
+	}
+
+	statement += containerFilter(query.Filter)
+
 	order, err := containerOrder(query.Sort)
 	if err != nil {
 		return nil, err
@@ -448,8 +457,28 @@ func containerOrder(sort string) (string, error) {
 		return "last_seen_at DESC, container_id ASC", nil
 	case "state":
 		return "state ASC, name ASC, container_id ASC", nil
+	case "cpu":
+		return "cpu_percent DESC, name ASC, container_id ASC", nil
+	case "project":
+		return "compose_project = '' ASC, compose_project ASC, name ASC, container_id ASC", nil
 	default:
 		return "", fmt.Errorf("unknown container sort %q", sort)
+	}
+}
+
+func containerFilter(filter string) string {
+	switch filter {
+	case "running":
+		return " AND state = 'running'"
+	case "stopped":
+		return " AND state <> 'running'"
+	case "unknown":
+		return " AND classification = 'unknown'"
+	case "risky":
+		return ` AND container_id IN (SELECT container_id FROM security_findings
+			WHERE status IN ('open', 'acknowledged'))`
+	default:
+		return ""
 	}
 }
 

@@ -1631,7 +1631,7 @@ paths:
       x-touchgrass-scope: fleet
       operationId: listFleetContainers
       tags: [system]
-      summary: Complete current container inventory, including stopped containers
+      summary: Current container inventory, including stopped containers
       parameters:
         - name: view
           in: query
@@ -1649,9 +1649,16 @@ paths:
         - name: include_historical
           in: query
           schema: { type: boolean, default: false }
+        - name: q
+          in: query
+          description: Search by container name, Compose project, or ID.
+          schema: { type: string, maxLength: 128 }
+        - name: filter
+          in: query
+          schema: { type: string, enum: [all, running, stopped, unknown, risky], default: all }
         - name: sort
           in: query
-          schema: { type: string, enum: [name, last_seen, state], default: name }
+          schema: { type: string, enum: [name, last_seen, state, cpu, project], default: name }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 100 }

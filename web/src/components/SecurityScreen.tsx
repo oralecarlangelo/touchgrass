@@ -117,7 +117,7 @@ export function SecurityScreenView({
       {summary?.collectors && summary.collectors.length > 0 && (
         <details className="bg-card rounded-lg border" open={!summary.coverage_complete || undefined}>
           <summary className="cursor-pointer p-4 text-sm font-medium">Security collector coverage</summary>
-          <CollectorStatus collectors={summary.collectors} services={[]} serviceId="" fleetContainers={[]} />
+          <CollectorStatus collectors={summary.collectors} services={[]} serviceId="" />
         </details>
       )}
 

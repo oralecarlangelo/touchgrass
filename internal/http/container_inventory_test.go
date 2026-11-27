@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,80 @@ func TestHandleContainersIncludesStoppedAndNullMetrics(t *testing.T) {
 	if byID["stopped-id"].State != "exited" || byID["stopped-id"].CPUPercent != nil ||
 		byID["stopped-id"].MemBytes != nil {
 		t.Errorf("stopped container = %+v, want exited with null live metrics", byID["stopped-id"])
+	}
+}
+
+func TestHandleContainersFiltersAndOrdersBeforePaging(t *testing.T) {
+	t.Parallel()
+
+	const dbID = "b-db"
+
+	server, db := fullTestServer(t)
+	lowCPU, highCPU := 2.0, 65.0
+	seedContainerInventory(t, db, model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true,
+		Instances: []model.ContainerInstance{
+			{
+				ID: "z-worker", Name: "working", ComposeProject: "alpha-jobs", State: "running",
+				Classification: model.ContainerClassificationManaged, CPUPercent: &highCPU,
+			},
+			{
+				ID: "a-cache", Name: "cache", ComposeProject: "beta-api", State: "running",
+				Classification: model.ContainerClassificationManaged, CPUPercent: &lowCPU,
+			},
+			{
+				ID: dbID, Name: "db", ComposeProject: "beta-api", State: "exited",
+				Classification: model.ContainerClassificationUnknown,
+			},
+			{
+				ID: "a-worker", Name: "worker", ComposeProject: "alpha-jobs", State: "exited",
+				Classification: model.ContainerClassificationUnknown,
+			},
+		},
+	})
+
+	_, err := server.security.Evaluate(t.Context(), model.SecurityEvaluation{Observation: model.SecurityObservation{
+		ContainerID: dbID, RuleID: "test-example-rule", Category: model.SecurityCategoryPosture,
+		Severity: model.SecuritySeverityHigh, Confidence: model.SecurityConfidenceHigh,
+		Detected: true, CoverageComplete: true, Evidence: map[string]string{"fixture": "active risk"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{name: "hottest before truncation", query: "sort=cpu&limit=1", want: []string{"z-worker"}},
+		{name: "compose keeps peers together", query: "sort=project&limit=2", want: []string{"a-worker", "z-worker"}},
+		{name: "literal case insensitive search before pagination", query: "q=BETA&sort=project&limit=1&offset=1", want: []string{dbID}},
+		{name: "stopped includes exited", query: "filter=stopped&q=alpha&limit=1", want: []string{"a-worker"}},
+		{name: "active risk filters before pagination", query: "filter=risky&limit=1", want: []string{dbID}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			status, body := doRequest(t, server, nethttp.MethodGet, "/api/system/containers?"+tc.query, "")
+			if status != nethttp.StatusOK {
+				t.Fatalf("status = %d, want 200 (body: %s)", status, body)
+			}
+
+			var got containerListResponse
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatal(err)
+			}
+
+			ids := make([]string, 0, len(got.Containers))
+			for _, item := range got.Containers {
+				ids = append(ids, item.ID)
+			}
+
+			if !slices.Equal(ids, tc.want) {
+				t.Fatalf("returned IDs %v, want %v", ids, tc.want)
+			}
+		})
 	}
 }
 

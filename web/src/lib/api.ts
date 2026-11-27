@@ -1398,19 +1398,18 @@ export async function fetchFleetContainerSummary(signal?: AbortSignal): Promise<
   return request<FleetContainerSummary>('/api/system/containers?view=summary', { signal });
 }
 
-export async function fetchFleetContainers(signal?: AbortSignal): Promise<FleetContainersResponse> {
-  const pageSize = 500;
-  const containers: FleetContainer[] = [];
-  let freshness: ContainerFreshness | undefined;
-  for (let offset = 0; ; offset += pageSize) {
-    const body = await request<FleetContainersResponse>(`/api/system/containers?limit=${pageSize}&offset=${offset}`, { signal });
-    const page = body.containers ?? [];
-    containers.push(...page);
-    freshness = body.freshness;
-    if (page.length < pageSize) break;
-  }
-  if (!freshness) throw new Error('Container inventory response did not include freshness metadata');
-  return { containers, freshness };
+export async function fetchFleetContainerPage(
+  query: { offset: number; limit: number; sort: string; filter: string; search: string },
+  signal: AbortSignal,
+): Promise<FleetContainersResponse> {
+  const params = new URLSearchParams({
+    limit: String(query.limit), offset: String(query.offset), sort: query.sort,
+  });
+  if (query.filter !== 'all') params.set('filter', query.filter);
+  if (query.search !== '') params.set('q', query.search);
+  const body = await request<FleetContainersResponse>(`/api/system/containers?${params}`, { signal });
+  if (!body.freshness) throw new Error('Container inventory response did not include freshness metadata');
+  return { containers: body.containers ?? [], freshness: body.freshness };
 }
 
 export interface SafeContainerInspection {

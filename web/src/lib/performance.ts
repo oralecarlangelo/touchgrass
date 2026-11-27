@@ -1,7 +1,7 @@
 import type {
   CollectorStatusView,
   Deploy,
-  FleetContainer,
+  DatabaseView,
   PerformanceFilters,
   PerformanceTimelinePoint,
   RuntimeMarker,
@@ -178,7 +178,7 @@ export function collectorSetupSnippet(
   collectors: CollectorStatusView[],
   services: ServiceView[],
   serviceId: string,
-  fleetContainers: FleetContainer[] = [],
+  databaseSources: DatabaseView[] = [],
 ): string {
   const missing = new Set(
     collectors
@@ -194,7 +194,11 @@ export function collectorSetupSnippet(
     const managed = service.containers.find(
       (container) => pattern.test(container.name) || pattern.test(container.image),
     )?.name;
-    return managed ?? fleetContainers.find((container) => pattern.test(container.name))?.name;
+    if (managed) return managed;
+    const discovered = [...new Set(databaseSources.flatMap((database) =>
+      database.container && database.status !== 'stopped' && pattern.test(database.label) ? [database.container] : [],
+    ))];
+    return discovered.length === 1 ? discovered[0] : undefined;
   };
   const postgres = missing.has('postgres') ? findContainer(/postgres/i) : undefined;
   const redis = missing.has('redis') ? findContainer(/redis|valkey/i) : undefined;

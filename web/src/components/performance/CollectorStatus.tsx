@@ -3,7 +3,7 @@ import { CircleCheck, CircleDashed, CircleX, Copy, RadioTower } from 'lucide-rea
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import type { CollectorStatusView, FleetContainer, ServiceView } from '@/lib/api.ts';
+import type { CollectorStatusView, DatabaseView, ServiceView } from '@/lib/api.ts';
 import { timeAgo } from '@/lib/format.ts';
 import {
   collectorGuidance,
@@ -35,19 +35,19 @@ export default function CollectorStatus({
   collectors,
   services,
   serviceId,
-  fleetContainers,
+  databaseSources,
   setupOnly = false,
 }: {
   collectors: CollectorStatusView[];
   services: ServiceView[];
   serviceId: string;
-  fleetContainers: FleetContainer[];
+  databaseSources?: DatabaseView[];
   setupOnly?: boolean;
 }) {
-  const setupSnippet = collectorSetupSnippet(collectors, services, serviceId, fleetContainers);
+  const setupSnippet = collectorSetupSnippet(collectors, services, serviceId, databaseSources);
 
   if (setupOnly && setupSnippet === '') {
-    return <p className="text-muted-foreground text-sm">No additional collector configuration was detected for this service.</p>;
+    return <p className="text-muted-foreground text-sm">No setup suggestion for this service. Check collector status and the Databases inventory.</p>;
   }
 
   return (

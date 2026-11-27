@@ -3,7 +3,9 @@ package http
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	nethttp "net/http"
 
@@ -139,7 +141,8 @@ func (s *Server) handleContainers(w nethttp.ResponseWriter, r *nethttp.Request) 
 	// Databases upgraded before the first reconciliation can still expose their
 	// legacy samples. Once a reconciliation timestamp exists, inventory is the
 	// sole authority, including an intentionally empty daemon.
-	if len(items) == 0 && summary.ReconciledAt == nil && s.sampler != nil {
+	useLegacyInventory := query.Search == "" && query.Filter == "" && query.Sort != "cpu" && query.Sort != "project"
+	if len(items) == 0 && summary.ReconciledAt == nil && s.sampler != nil && useLegacyInventory {
 		legacy, legacyErr := s.sampler.FleetContainers(r.Context())
 		if legacyErr != nil {
 			writeServiceError(w, s.logger, legacyErr, "failed to load legacy fleet containers")
@@ -237,9 +240,14 @@ func (s *Server) handleIgnoreContainer(w nethttp.ResponseWriter, r *nethttp.Requ
 }
 
 func parseContainerQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.Request) (model.ContainerQuery, bool) {
+	search, filter, ok := containerSearch(w, s, r)
+	if !ok {
+		return model.ContainerQuery{}, false
+	}
+
 	query := model.ContainerQuery{
 		State: r.URL.Query().Get("state"), ServiceID: r.URL.Query().Get("service_id"),
-		Sort: r.URL.Query().Get("sort"),
+		Sort: r.URL.Query().Get("sort"), Search: search, Filter: filter,
 	}
 	if classification := r.URL.Query().Get("classification"); classification != "" {
 		query.Classification = model.ContainerClassification(classification)
@@ -275,9 +283,33 @@ func parseContainerQuery(w nethttp.ResponseWriter, s *Server, r *nethttp.Request
 	return query, true
 }
 
+func containerSearch(w nethttp.ResponseWriter, s *Server, r *nethttp.Request) (string, string, bool) {
+	params := r.URL.Query()
+
+	search := strings.TrimSpace(params.Get("q"))
+	if utf8.RuneCountInString(search) > 128 {
+		writeError(w, s.logger, errors.New("query is too long"), "container search is limited to 128 characters", "invalid_request", nethttp.StatusBadRequest)
+
+		return "", "", false
+	}
+
+	filter := params.Get("filter")
+	switch filter {
+	case "all":
+		filter = ""
+	case "", "running", "stopped", "unknown", "risky":
+	default:
+		writeError(w, s.logger, errors.New("unknown filter"), "invalid container filter", "invalid_request", nethttp.StatusBadRequest)
+
+		return "", "", false
+	}
+
+	return search, filter, true
+}
+
 func containerSort(value string) (string, error) {
 	switch value {
-	case "", "name", "last_seen", "state":
+	case "", "name", "last_seen", "state", "cpu", "project":
 		return value, nil
 	default:
 		return "", errors.New("unknown container sort")

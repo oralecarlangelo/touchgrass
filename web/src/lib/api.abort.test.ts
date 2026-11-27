@@ -1,12 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchStorageUsage, fetchSystemHistory, suggestService } from './api.ts';
+import { fetchFleetContainerPage, fetchStorageUsage, fetchSystemHistory, suggestService } from './api.ts';
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe('abortable fleet requests', () => {
+  it('makes one bounded inventory request with the current filters', async () => {
+    const controller = new AbortController();
+    const freshness = { reconciled_at: null, stale: false, complete: false, observed_count: 0 };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ containers: [], freshness })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const page = await fetchFleetContainerPage({
+      offset: 40, limit: 41, sort: 'project', filter: 'stopped', search: 'sample & worker',
+    }, controller.signal);
+
+    expect(page).toEqual({ containers: [], freshness });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/system/containers?limit=41&offset=40&sort=project&filter=stopped&q=sample+%26+worker',
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
   it('loads all history series with one abortable request', async () => {
     const controller = new AbortController();
     const series = { cpu: [], mem: [], load: [] };

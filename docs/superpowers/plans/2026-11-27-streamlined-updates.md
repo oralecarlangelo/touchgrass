@@ -32,23 +32,25 @@
 
 - [x] Reproduce missing release without helper and custom-version rejection with failing tests.
 - [x] Keep discovery independent of installation readiness; allow strictly newer base releases for custom versions.
-- [ ] Add conventional helper/status discovery, preserve explicit overrides and origin security.
-- [ ] Explain installed/current/custom/setup states and force an actual check on Check again.
-- [ ] Run affected Go and UI tests, lint, and authorization regressions.
+- [x] Add conventional helper/status discovery, preserve explicit overrides and origin security.
+- [x] Explain installed/current/custom/setup states and force an actual check on Check again.
+- [x] Run affected Go and UI tests, lint, and authorization regressions.
 
 ### Task 2: Portable updater bootstrap
 
 **Files:** scripts/updater/ (installer, request, runner, tests); release packaging; native installation documentation.
 
-- [ ] Adapt the existing Stellar detached updater into a generic packaged kit with root-owned host configuration.
-- [ ] Bootstrap from the existing systemd service without manual environment editing; preserve existing cutover lock via explicit deployment metadata.
-- [ ] Test generic paths, malformed tags, concurrency, checksum failure, rollback, custom builds, and success in a disposable fixture.
-- [ ] Document one-time bootstrap for legacy installations; new native installations include the updater automatically.
+- [x] Adapt the existing Stellar detached updater into a generic packaged kit with root-owned host configuration.
+- [x] Bootstrap from the existing systemd service without manual environment editing; preserve existing cutover lock via explicit deployment metadata.
+- [x] Test generic paths, malformed tags, concurrency, checksum failure, rollback, custom builds, and success in a disposable fixture.
+- [x] Document one-time bootstrap for legacy installations; new native installations include the updater automatically.
 
 ### Task 3: Publish and verify consistent rollout
 
-- [ ] Prepare release PR containing fleet and updater changes; complete repository-required checks.
-- [ ] Obtain required main merge approval only after the release is concrete and reviewable.
-- [ ] Publish versioned assets through release workflow and verify checksums/content.
-- [ ] Bootstrap legacy host integrations and exercise the real update path on Stellar and Ticketnation.
-- [ ] Verify installed versions, durable success, application health, and Updates UI; record evidence.
+- [x] Prepare release PR containing fleet and updater changes; complete repository-required checks.
+- [x] Confirm release branch policy: remote main does not exist; publish from develop following the established release path and existing deployment authorization.
+- [x] Publish versioned assets through release workflow and verify checksums/content.
+- [x] Bootstrap legacy host integrations and exercise the real update path on Stellar and Ticketnation.
+- [x] Verify installed versions, durable success, application health, and Updates UI; record evidence.
+
+Completion evidence: docs/streamlined-updates-verification.md records the published v0.10.1 release, both host rollouts, busy-database regression and production UI checks.

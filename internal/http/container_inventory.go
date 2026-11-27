@@ -56,6 +56,12 @@ type containerListResponse struct {
 	Freshness  collectorFreshness  `json:"freshness"`
 }
 
+type containerSummaryResponse struct {
+	model.InventoryPosture
+
+	Freshness collectorFreshness `json:"freshness"`
+}
+
 type safeInspectionResponse struct {
 	CoverageComplete bool              `json:"coverage_complete"`
 	User             string            `json:"user"`
@@ -89,6 +95,12 @@ type ignoreContainerRequest struct {
 }
 
 func (s *Server) handleContainers(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.URL.Query().Get("view") == "summary" {
+		s.handleContainerSummary(w, r)
+
+		return
+	}
+
 	query, ok := parseContainerQuery(w, s, r)
 	if !ok {
 		return
@@ -140,11 +152,29 @@ func (s *Server) handleContainers(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 	writeJSON(w, s.logger, nethttp.StatusOK, containerListResponse{
 		Containers: items,
-		Freshness: collectorFreshness{
-			ReconciledAt: summary.ReconciledAt, Complete: summary.Complete, Stale: summary.Stale,
-			LastErrorCategory: summary.LastErrorCategory, ObservedCount: summary.ObservedCount,
-		},
+		Freshness:  containerFreshness(summary),
 	})
+}
+
+func (s *Server) handleContainerSummary(w nethttp.ResponseWriter, r *nethttp.Request) {
+	summary, posture, err := s.fleetInventory.PostureSummary(r.Context())
+	if err != nil {
+		writeServiceError(w, s.logger, err, "failed to load container summary")
+
+		return
+	}
+
+	writeJSON(w, s.logger, nethttp.StatusOK, containerSummaryResponse{
+		InventoryPosture: posture,
+		Freshness:        containerFreshness(summary),
+	})
+}
+
+func containerFreshness(summary model.InventorySummary) collectorFreshness {
+	return collectorFreshness{
+		ReconciledAt: summary.ReconciledAt, Complete: summary.Complete, Stale: summary.Stale,
+		LastErrorCategory: summary.LastErrorCategory, ObservedCount: summary.ObservedCount,
+	}
 }
 
 func (s *Server) handleContainer(w nethttp.ResponseWriter, r *nethttp.Request) {

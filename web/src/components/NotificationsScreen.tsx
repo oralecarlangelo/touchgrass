@@ -47,11 +47,13 @@ export default function NotificationsScreen({
   services,
   onUnauthorized,
   isAdmin,
+  onReadChange,
   onSelectSecurityFinding,
 }: {
   services: ServiceView[];
   onUnauthorized: () => void;
   isAdmin: boolean;
+  onReadChange: () => void;
   onSelectSecurityFinding: (id: number) => void;
 }) {
   const [notes, setNotes] = useState<Notification[] | null>(null);
@@ -116,6 +118,7 @@ export default function NotificationsScreen({
         ),
       );
       setUnread((current) => Math.max(0, current - 1));
+      onReadChange();
     } catch (err) {
       if (isUnauthorized(err)) {
         onUnauthorized();
@@ -130,6 +133,7 @@ export default function NotificationsScreen({
     try {
       const result = await markNotificationsRead(serviceId === 'all' ? '' : serviceId);
       toast.success(`Marked ${result.marked} as read.`);
+      onReadChange();
       await load();
     } catch (err) {
       if (isUnauthorized(err)) {

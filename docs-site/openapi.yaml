@@ -1606,6 +1606,10 @@ paths:
       tags: [system]
       summary: Complete current container inventory, including stopped containers
       parameters:
+        - name: view
+          in: query
+          description: Use summary for current inventory totals and freshness. List filters and paging apply only to inventory rows.
+          schema: { type: string, enum: [summary] }
         - name: classification
           in: query
           schema: { type: string, enum: [managed, approved_observed, unknown, ignored, missing_expected] }
@@ -1633,13 +1637,22 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [containers, freshness]
-                properties:
-                  containers:
-                    type: array
-                    items: { $ref: '#/components/schemas/FleetContainer' }
-                  freshness: { $ref: '#/components/schemas/ContainerFreshness' }
+                oneOf:
+                  - type: object
+                    required: [containers, freshness]
+                    properties:
+                      containers:
+                        type: array
+                        items: { $ref: '#/components/schemas/FleetContainer' }
+                      freshness: { $ref: '#/components/schemas/ContainerFreshness' }
+                  - type: object
+                    required: [total, critical, unknown, stopped, freshness]
+                    properties:
+                      total: { type: integer, minimum: 0 }
+                      critical: { type: integer, minimum: 0 }
+                      unknown: { type: integer, minimum: 0 }
+                      stopped: { type: integer, minimum: 0 }
+                      freshness: { $ref: '#/components/schemas/ContainerFreshness' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /system/containers/{id}:

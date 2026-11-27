@@ -48,6 +48,55 @@ func TestHandleContainersIncludesStoppedAndNullMetrics(t *testing.T) {
 	}
 }
 
+func TestHandleContainerSummaryCountsCurrentPosture(t *testing.T) {
+	t.Parallel()
+
+	const workerID = "demo-stopped-worker"
+
+	server, db := fullTestServer(t)
+	seedContainerInventory(t, db, model.InventoryBatch{
+		ObservedAt: time.Now().UTC(), Complete: true,
+		Instances: []model.ContainerInstance{
+			{ID: "demo-db", Name: "demo-db", State: "running", Classification: model.ContainerClassificationManaged},
+			{ID: workerID, Name: "demo-worker", State: "exited", Classification: model.ContainerClassificationUnknown},
+		},
+	})
+
+	for _, rule := range []string{"demo-rule-one", "demo-rule-two"} {
+		_, err := server.security.Evaluate(t.Context(), model.SecurityEvaluation{Observation: model.SecurityObservation{
+			ContainerID: workerID, RuleID: rule, Category: model.SecurityCategoryPosture,
+			Severity: model.SecuritySeverityCritical, Confidence: model.SecurityConfidenceHigh,
+			Detected: true, CoverageComplete: true, Evidence: map[string]string{"detected": "true"},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status, body := doRequest(t, server, nethttp.MethodGet, "/api/system/containers?view=summary", "")
+	if status != nethttp.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", status, body)
+	}
+
+	var got struct {
+		Total      int                `json:"total"`
+		Critical   int                `json:"critical"`
+		Unknown    int                `json:"unknown"`
+		Stopped    int                `json:"stopped"`
+		Freshness  collectorFreshness `json:"freshness"`
+		Containers json.RawMessage    `json:"containers"`
+	}
+
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Total != 2 || got.Critical != 1 || got.Unknown != 1 || got.Stopped != 1 ||
+		got.Freshness.Stale || !got.Freshness.Complete || len(got.Containers) != 0 {
+		t.Errorf("summary = %s, want counts per container, current freshness, and no inventory rows", body)
+	}
+}
+
 func TestHandleContainerDetailExcludesSensitiveInspection(t *testing.T) {
 	t.Parallel()
 

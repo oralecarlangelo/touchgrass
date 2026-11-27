@@ -102,3 +102,11 @@ type InventorySummary struct {
 	PresentCount      int        `json:"present_count"`
 	Stale             bool       `json:"stale"`
 }
+
+// InventoryPosture counts current identities for the dashboard.
+type InventoryPosture struct {
+	Total    int `json:"total"`
+	Critical int `json:"critical"`
+	Unknown  int `json:"unknown"`
+	Stopped  int `json:"stopped"`
+}

@@ -449,8 +449,26 @@ func (f *FleetInventory) Summary(ctx context.Context) (model.InventorySummary, e
 	if err != nil {
 		return model.InventorySummary{}, err
 	}
-	summary.Stale = summary.ReconciledAt == nil || time.Since(*summary.ReconciledAt) > 2*f.interval
+
+	summary.Stale = f.isStale(summary.ReconciledAt)
+
 	return summary, nil
+}
+
+// PostureSummary reads counts without loading individual inventory rows.
+func (f *FleetInventory) PostureSummary(ctx context.Context) (model.InventorySummary, model.InventoryPosture, error) {
+	summary, posture, err := f.containers.PostureSummary(ctx)
+	if err != nil {
+		return model.InventorySummary{}, model.InventoryPosture{}, err
+	}
+
+	summary.Stale = f.isStale(summary.ReconciledAt)
+
+	return summary, posture, nil
+}
+
+func (f *FleetInventory) isStale(reconciledAt *time.Time) bool {
+	return reconciledAt == nil || time.Since(*reconciledAt) > 2*f.interval
 }
 
 // ApproveContainer records the current image/configuration fingerprint as an

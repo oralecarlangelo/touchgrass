@@ -1364,6 +1364,18 @@ export interface FleetContainersResponse {
   freshness: ContainerFreshness;
 }
 
+export interface FleetContainerSummary {
+  total: number;
+  critical: number;
+  unknown: number;
+  stopped: number;
+  freshness: ContainerFreshness;
+}
+
+export async function fetchFleetContainerSummary(signal?: AbortSignal): Promise<FleetContainerSummary> {
+  return request<FleetContainerSummary>('/api/system/containers?view=summary', { signal });
+}
+
 export async function fetchFleetContainers(signal?: AbortSignal): Promise<FleetContainersResponse> {
   const pageSize = 500;
   const containers: FleetContainer[] = [];

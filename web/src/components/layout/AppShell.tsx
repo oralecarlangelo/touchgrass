@@ -16,6 +16,7 @@ import { Separator } from '@/components/ui/separator';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { accessLabel, canOpenView, isScoped, type Can } from '@/lib/access.ts';
 import type { ServiceView, SessionInfo } from '@/lib/api.ts';
+import type { NotificationPreview } from '@/lib/use-notification-preview.ts';
 import { navGroups, type ViewId } from '@/lib/views.ts';
 import NotificationBell from './NotificationBell.tsx';
 import ServiceSwitcher from './ServiceSwitcher.tsx';
@@ -32,6 +33,7 @@ export default function AppShell({
   onUnauthorized,
   session,
   can,
+  notificationPreview,
   children,
 }: {
   view: ViewId;
@@ -43,6 +45,7 @@ export default function AppShell({
   onUnauthorized: () => void;
   session: SessionInfo;
   can: Can;
+  notificationPreview?: NotificationPreview;
   children: ReactNode;
 }) {
   // Entries the user cannot open are hidden, not disabled: they are
@@ -122,11 +125,14 @@ export default function AppShell({
               >
                 <CircleHelp className="h-4 w-4" aria-hidden />
               </Button>
-              <NotificationBell
-                onViewAll={() => onView('notifications')}
-                onUnauthorized={onUnauthorized}
-                isAdmin={can('notifications.ack')}
-              />
+              {notificationPreview !== undefined && (
+                <NotificationBell
+                  preview={notificationPreview}
+                  onViewAll={() => onView('notifications')}
+                  onUnauthorized={onUnauthorized}
+                  isAdmin={can('notifications.ack')}
+                />
+              )}
               <ThemeToggle />
               <UserMenu username={session.username} access={accessLabel(session)} onLogout={onLogout} />
               <DropdownMenu>

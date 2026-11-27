@@ -37,6 +37,7 @@ import {
 import { navGroups, type ViewId } from './lib/views.ts';
 import { parseHash, writeHash } from './lib/hash.ts';
 import { LatestRequest } from './lib/latest-request.ts';
+import { useNotificationPreview } from './lib/use-notification-preview.ts';
 
 const ContainerDetail = lazy(() => import('./components/ContainerDetail.tsx'));
 const DatabasesScreen = lazy(() => import('./components/DatabasesScreen.tsx'));
@@ -171,6 +172,13 @@ export default function App() {
     session?.all_services,
     [...(session?.services ?? [])].sort(),
   ]);
+  const canReadNotifications = can('alerts.read') && session?.must_change_password !== true && !hasNoServices(session);
+  const notificationPreview = useNotificationPreview(
+    dataScope,
+    canReadNotifications,
+    view === 'dashboard' && selected === null && selectedContainerId === null,
+    handleUnauthorized,
+  );
 
   useEffect(() => {
     if (dataScopeRef.current !== null && dataScopeRef.current !== dataScope) {
@@ -448,6 +456,7 @@ export default function App() {
         onUnauthorized={handleUnauthorized}
         session={session}
         can={can}
+        notificationPreview={canReadNotifications ? notificationPreview : undefined}
       >
         <ScreenErrorBoundary key={selectedContainerId ?? selected?.id ?? view}>
           <Suspense fallback={<p className="text-muted-foreground py-6 text-sm" role="status">Loading screen…</p>}>
@@ -508,6 +517,7 @@ export default function App() {
                 onView={handleView}
                 onUnauthorized={handleUnauthorized}
                 canHost={can('host.read')}
+                notificationPreview={canReadNotifications ? notificationPreview : undefined}
               />
             ) : view === 'audit' ? (
               <HistoryScreen services={services ?? []} onUnauthorized={handleUnauthorized} />
@@ -518,6 +528,7 @@ export default function App() {
                 services={services ?? []}
                 onUnauthorized={handleUnauthorized}
                 isAdmin={can('notifications.ack')}
+                onReadChange={notificationPreview.retry}
                 onSelectSecurityFinding={(id) => {
                   setSelectedSecurityFindingId(id);
                   setView('security');

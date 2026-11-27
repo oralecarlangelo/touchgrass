@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -79,10 +81,102 @@ func TestUpdateVersionOrdering(t *testing.T) {
 		{candidate: "v1.0.0", installed: "0.9.9", want: true},
 		{candidate: candidateTag, installed: "0.8.0", want: false},
 		{candidate: candidateTag, installed: "dev", want: false},
+		{candidate: "v0.10.0", installed: "0.9.0-fleet.1", want: true},
+		{candidate: "v0.9.0", installed: "0.9.0-fleet.1", want: false},
+		{candidate: "v0.8.0", installed: "0.9.0-fleet.1", want: false},
+		{candidate: "v0.10.0", installed: "0.9.0+build.123", want: true},
 		{candidate: "v0.8.0-beta", installed: "0.7.0", want: false},
 	} {
 		if got := newer(tt.candidate, tt.installed); got != tt.want {
 			t.Errorf("newer(%q, %q) = %t, want %t", tt.candidate, tt.installed, got, tt.want)
 		}
+	}
+}
+
+func TestSelfUpdateDiscoversReleaseWithoutHostHelper(t *testing.T) {
+	t.Parallel()
+
+	asset := "touchgrass_0.8.0_linux_" + runtime.GOARCH + ".tar.gz"
+
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := w.Write([]byte(`{"tag_name":"v0.8.0","html_url":"https://github.com/oralecarlangelo/touchgrass/releases/tag/v0.8.0","assets":[{"name":"` + asset + `"},{"name":"checksums.txt"}]}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer fixture.Close()
+
+	updater := NewSelfUpdate("", "", "", "0.7.0")
+	updater.releaseURL = fixture.URL
+
+	status := updater.Check(t.Context())
+	if status.Configured || status.CanInstall || status.Release == nil || status.Release.Tag != candidateTag {
+		t.Fatalf("Check() = %+v, want visible release with installation disabled", status)
+	}
+}
+
+func TestSelfUpdateUsesStandardHostPaths(t *testing.T) {
+	t.Parallel()
+
+	u := NewSelfUpdate("", "", "", "0.9.0")
+	if u.helper != "/usr/local/libexec/touchgrass-updater/request" || u.statusPath != "/var/lib/touchgrass-updater/status.json" {
+		t.Fatalf("unexpected defaults: %s %s", u.helper, u.statusPath)
+	}
+}
+
+func TestSelfUpdateExplicitRefreshBypassesCache(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int32
+
+	fixture := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+
+		body := `{"tag_name":"v0.8.0","html_url":"https://github.com/oralecarlangelo/touchgrass/releases/tag/v0.8.0","assets":[{"name":"touchgrass_0.8.0_linux_` + runtime.GOARCH + `.tar.gz"},{"name":"checksums.txt"}]}`
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer fixture.Close()
+
+	u := NewSelfUpdate("", "", "", "0.7.0")
+	u.releaseURL = fixture.URL
+	u.Check(t.Context())
+	u.Check(t.Context())
+	u.CheckNow(t.Context())
+
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("release requests = %d, want 2", got)
+	}
+}
+
+func TestSelfUpdateReconcilesStoppedHostJob(t *testing.T) {
+	t.Parallel()
+
+	for _, active := range []bool{true, false} {
+		t.Run(strconv.FormatBool(active), func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "status.json")
+			if err := os.WriteFile(path, []byte(`{"tag":"v0.10.0","state":"running","unit":"touchgrass-update-123.service"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			u := NewSelfUpdate("/usr/bin/true", path, "", "0.9.0")
+			u.jobActive = func(context.Context, string) (bool, error) { return active, nil }
+
+			job, err := u.readJob(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			want := updateStateFailed
+			if active {
+				want = updateStateRunning
+			}
+
+			if job.State != want {
+				t.Fatalf("state = %s, want %s", job.State, want)
+			}
+		})
 	}
 }

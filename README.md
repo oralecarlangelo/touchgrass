@@ -80,9 +80,9 @@ Environment only (no config file):
 | `DOCKER_HOST`                        | unix socket        | Docker daemon (standard client env)                    |
 | `TOUCHGRASS_ADMIN_PASSWORD`          | (empty)            | Optional: seeds `admin` on first boot (12+ chars). Empty = a one-time password is generated in `initial-admin-password` beside the DB |
 | `TOUCHGRASS_COOKIE_SECURE`           | `false`            | Set `true` when serving behind TLS                     |
-| `TOUCHGRASS_PUBLIC_ORIGIN`           | empty              | Exact browser origin required for admin update requests |
-| `TOUCHGRASS_UPDATE_HELPER`           | empty              | Absolute path to root-owned console update request helper; empty disables self-update |
-| `TOUCHGRASS_UPDATE_STATUS_FILE`      | empty              | Absolute path to root-owned job status JSON, readable by the service user |
+| `TOUCHGRASS_PUBLIC_ORIGIN`           | empty              | Optional exact browser origin override; otherwise same-host browser requests are required |
+| `TOUCHGRASS_UPDATE_HELPER`           | standard host path | Optional override for the root-owned console update request helper |
+| `TOUCHGRASS_UPDATE_STATUS_FILE`      | standard host path | Optional override for root-owned job status JSON, readable by the service user |
 | `TOUCHGRASS_ENV_KEY_FILE`            | (empty)            | 0600 file with the AES-256 key for the env pillar; empty = pillar off |
 | `TOUCHGRASS_ENV_KEY`                 | (empty)            | Hex key inline (development only)                      |
 | `TOUCHGRASS_METRICS_INTERVAL`        | `30s`              | Metric sample cadence                                  |
@@ -209,3 +209,5 @@ Apache-2.0 — see `LICENSE`.
 ## Storage management
 
 Operations → Storage shows host capacity, Docker usage and an optional MinIO/S3-compatible bucket manager. See [storage management](docs/storage-management.md) for connection setup, permissions, accounting limits and deployment checks.
+
+Native systemd installations can enable console updates with automatic host discovery. See [native updates](docs/native-updates.md) for the one-time bootstrap and recovery procedure.

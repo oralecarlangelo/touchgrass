@@ -59,6 +59,9 @@ jobs:
             echo "$packages"
           fi
 
+      - name: Verify native updater
+        run: python3 -m unittest discover -s scripts/updater
+
       - name: Verify dependencies
         run: |
           go mod verify

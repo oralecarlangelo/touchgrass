@@ -37,8 +37,8 @@ export interface SelfUpdateStatus {
   can_install: boolean;
 }
 
-export function fetchSelfUpdate(): Promise<SelfUpdateStatus> {
-  return request<SelfUpdateStatus>('/api/self-update');
+export function fetchSelfUpdate(refresh = false): Promise<SelfUpdateStatus> {
+  return request<SelfUpdateStatus>(`/api/self-update${refresh ? '?refresh=true' : ''}`);
 }
 
 export function startSelfUpdate(tag: string): Promise<SelfUpdateStatus> {

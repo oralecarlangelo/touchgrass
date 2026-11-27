@@ -28,6 +28,9 @@ archives:
     files:
       - LICENSE
       - README.md
+      - scripts/updater/install.py
+      - scripts/updater/updater.py
+      - docs/native-updates.md
 
 checksum:
   name_template: checksums.txt

@@ -32,7 +32,15 @@ export interface SelfUpdateStatus {
   installed: string;
   configured: boolean;
   release?: { tag: string; url: string; published_at: string };
-  job?: { tag: string; state: 'pending' | 'running' | 'succeeded' | 'failed'; started_at?: string; finished_at?: string };
+  job?: {
+    tag: string;
+    state: 'pending' | 'running' | 'succeeded' | 'failed';
+    phase?: string;
+    backup_percent?: number;
+    updated_at?: string;
+    started_at?: string;
+    finished_at?: string;
+  };
   check_error?: string;
   can_install: boolean;
 }

@@ -57,6 +57,12 @@ The console reconnects after restart; a new login may be needed. Installation
 uses no GitHub write credentials. Application credentials never enter updater
 configuration or status files.
 
+The Updates page shows the installer step, the fraction of SQLite pages copied
+while backing up, and when the installer last reported progress. Backup
+verification has its own step after copying completes. Existing helpers report
+the job state until a host administrator refreshes the helper by rerunning
+`install.py` from a verified release kit that includes progress reporting.
+
 ## Host files and recovery
 
 - `/usr/local/lib/touchgrass/touchgrass`: protected executable.

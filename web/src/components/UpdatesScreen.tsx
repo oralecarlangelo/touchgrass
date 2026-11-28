@@ -8,6 +8,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { apiErrorCode, fetchSelfUpdate, isUnauthorized, startSelfUpdate, type SelfUpdateStatus } from '@/lib/api.ts';
 
 const updaterGuide = 'https://github.com/oralecarlangelo/touchgrass/blob/develop/docs/native-updates.md';
+const phaseMessages = new Map([
+  ['preparing', 'Preparing the update.'],
+  ['downloading', 'Downloading and verifying the release.'],
+  ['backing_up', 'Backing up the database.'],
+  ['verifying_backup', 'Checking the database backup.'],
+  ['restarting', 'Restarting the console.'],
+  ['verifying_health', 'Checking the new console version.'],
+  ['rolling_back', 'Restoring the previous console version.'],
+]);
 
 export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () => void }) {
   const initialVersion = useRef<string | null>(null);
@@ -82,17 +91,18 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
     pendingUpdate(tag);
     setWorking(true);
     setInstallError(null);
-    setReconnecting(true);
     try {
       const next = await startSelfUpdate(tag);
       jobState.current = next.job;
+      setCheckedAt(new Date().toISOString());
       setStatus(next);
+      setReconnecting(false);
       setConfirming(false);
     } catch (err) {
       if (isUnauthorized(err)) { pendingUpdate(null); onUnauthorized(); }
       else if (err instanceof Error && err.message.startsWith('API unreachable:')) {
         setConfirming(false);
-        // The detached job may have restarted the console before its 202 reached us.
+        setReconnecting(true);
       } else {
         pendingUpdate(null);
         setReconnecting(false);
@@ -103,10 +113,17 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
     }
   }
 
+  const job = status?.job;
+  const jobMessage = updateJobMessage(job);
+  const backupPercent = job?.phase === 'backing_up' ? job.backup_percent : undefined;
+  const checkingProgress = jobMessage !== null || reconnecting;
+
   return <div className="space-y-5">
     <div className="flex items-center justify-between gap-3">
       <div><h1 className="text-xl font-semibold">Updates</h1><p className="text-sm text-muted-foreground">Install a published Touch Grass release.</p></div>
-      <Button variant="outline" disabled={checking || working || reconnecting} onClick={() => void refresh(true)}>{checking ? 'Checking…' : 'Check again'}</Button>
+      <Button variant="outline" disabled={checking || working} onClick={() => void refresh(!checkingProgress)}>
+        {checking ? 'Checking…' : checkingProgress ? 'Check status' : 'Check again'}
+      </Button>
     </div>
     {status === null && error === null ? <Skeleton className="h-48 w-full" /> : null}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
@@ -122,10 +139,20 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
           <div>Latest published release: <strong>{status.release.tag}</strong></div>
           <a className="underline" href={status.release.url} target="_blank" rel="noreferrer">Review release notes</a>
         </div>}
-        {status.release && !status.can_install && <p role="status">{updateVersionMessage(status)}</p>}
-        {status.job && <div aria-live="polite">Last update: <Badge variant="secondary">{status.job.state}</Badge> {status.job.tag}</div>}
-        {reconnecting && <p role="status">Console restarting. Reconnecting… You may need to sign in again.</p>}
-        {status.job?.state === 'failed' && <p role="alert">The update failed. Use the deployment recovery workflow if the console needs repair.</p>}
+        {status.release && !status.can_install && !checkingProgress && <p role="status">{updateVersionMessage(status)}</p>}
+        {job && <div aria-live="polite">Last update: <Badge variant="secondary">{job.state}</Badge> {job.tag}</div>}
+        {jobMessage && <div className="space-y-2">
+          <p role="status">{jobMessage}</p>
+          {backupPercent !== undefined && <div className="flex items-center gap-3">
+            <progress aria-label="Database backup progress" max={100} value={backupPercent} className="h-2 w-full max-w-xs accent-primary" />
+            <span className="tabular-nums">{backupPercent}%</span>
+          </div>}
+          {job?.updated_at && <p className="text-muted-foreground text-xs">
+            Installer last reported at {new Date(job.updated_at).toLocaleTimeString()}.
+          </p>}
+        </div>}
+        {reconnecting && <p role="status">Waiting for the console to respond. Showing the last known status.</p>}
+        {job?.state === 'failed' && <p role="alert">The update failed. Use the deployment recovery workflow if the console needs repair.</p>}
         <Button disabled={!status.can_install || working || reconnecting} onClick={() => {
           setInstallError(null);
           setConfirming(true);
@@ -153,8 +180,13 @@ export default function UpdatesScreen({ onUnauthorized }: { onUnauthorized: () =
   </div>;
 }
 
+export function updateJobMessage(job: SelfUpdateStatus['job']): string | null {
+  if (job?.state === 'pending') return 'Waiting for the installer to start.';
+  if (job?.state !== 'running') return null;
+  return phaseMessages.get(job.phase ?? '') ?? 'The installer is running.';
+}
+
 export function updateVersionMessage(status: SelfUpdateStatus): string {
-  if (status.job?.state === 'pending' || status.job?.state === 'running') return 'Update in progress.';
   if (!status.release) return '';
   if (`v${status.installed.replace(/^v/, '')}` === status.release.tag) return 'You are running the latest published release.';
   if (/[-+]/.test(status.installed)) return 'This is a custom build. Updates are offered when a newer base version is published.';

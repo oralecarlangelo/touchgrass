@@ -157,7 +157,12 @@ func TestSelfUpdateReconcilesStoppedHostJob(t *testing.T) {
 			t.Parallel()
 
 			path := filepath.Join(t.TempDir(), "status.json")
-			if err := os.WriteFile(path, []byte(`{"tag":"v0.10.0","state":"running","unit":"touchgrass-update-123.service"}`), 0o600); err != nil {
+
+			fixture := `{
+				"tag":"v0.10.0","state":"running","unit":"touchgrass-update-123.service",
+				"phase":"backing_up","backup_percent":0,"updated_at":"2026-11-28T02:42:05Z"
+			}`
+			if err := os.WriteFile(path, []byte(fixture), 0o600); err != nil {
 				t.Fatal(err)
 			}
 
@@ -176,6 +181,10 @@ func TestSelfUpdateReconcilesStoppedHostJob(t *testing.T) {
 
 			if job.State != want {
 				t.Fatalf("state = %s, want %s", job.State, want)
+			}
+
+			if job.Phase != "backing_up" || job.BackupPercent == nil || *job.BackupPercent != 0 || job.UpdatedAt == "" {
+				t.Fatalf("job progress = %+v, want the backup report", job)
 			}
 		})
 	}

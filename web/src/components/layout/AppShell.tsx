@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { BookOpen, ChevronDown, CircleHelp, Menu } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -48,6 +48,25 @@ export default function AppShell({
   notificationPreview?: NotificationPreview;
   children: ReactNode;
 }) {
+  const main = useRef<HTMLElement>(null);
+  const focusMainAfterMenu = useRef(false);
+  const focusMain = () => main.current?.focus();
+  const markMenuNavigation = () => {
+    focusMainAfterMenu.current = true;
+  };
+
+  const openViewFromMenu = (next: ViewId) => {
+    markMenuNavigation();
+    onView(next);
+  };
+
+  const onMenuCloseAutoFocus = (event: Event) => {
+    if (!focusMainAfterMenu.current) return;
+    focusMainAfterMenu.current = false;
+    event.preventDefault();
+    focusMain();
+  };
+
   // Entries the user cannot open are hidden, not disabled: they are
   // never available to this account.
   const visibleGroups = navGroups
@@ -66,6 +85,16 @@ export default function AppShell({
   return (
     <TooltipProvider>
       <div className="bg-background min-h-screen">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-4 focus:z-50 focus:rounded-md focus:border focus:bg-background focus:px-3 focus:py-2 focus:text-foreground"
+          onClick={(event) => {
+            event.preventDefault();
+            focusMain();
+          }}
+        >
+          Skip to main content
+        </a>
         <header className="border-border bg-card sticky top-0 z-40 border-b">
           <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
             <span className="text-sm font-semibold tracking-tight">touchgrass</span>
@@ -84,7 +113,15 @@ export default function AppShell({
             <Separator orientation="vertical" className="mx-1 hidden h-5 md:block" />
 
             <div className="hidden md:block">
-              <ServiceSwitcher services={services} selectedId={selectedId} onSelect={onSelectService} />
+              <ServiceSwitcher
+                services={services}
+                selectedId={selectedId}
+                onSelect={(id) => {
+                  markMenuNavigation();
+                  onSelectService(id);
+                }}
+                onCloseAutoFocus={onMenuCloseAutoFocus}
+              />
             </div>
 
             <nav aria-label="Primary" className="ml-2 hidden items-center gap-1 lg:flex">
@@ -100,12 +137,12 @@ export default function AppShell({
                       <ChevronDown className="h-3.5 w-3.5 opacity-50" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
+                  <DropdownMenuContent align="start" onCloseAutoFocus={onMenuCloseAutoFocus}>
                     {group.items.map((tab) => (
                       <DropdownMenuItem
                         key={tab.id}
                         aria-current={view === tab.id ? 'page' : undefined}
-                        onSelect={() => onView(tab.id)}
+                        onSelect={() => openViewFromMenu(tab.id)}
                       >
                         {tab.label}
                       </DropdownMenuItem>
@@ -121,7 +158,10 @@ export default function AppShell({
                 size="icon"
                 aria-label="Help and how-to guides"
                 title="Help and how-to guides"
-                onClick={() => onView('help')}
+                onClick={() => {
+                  onView('help');
+                  focusMain();
+                }}
               >
                 <CircleHelp className="h-4 w-4" aria-hidden />
               </Button>
@@ -130,6 +170,8 @@ export default function AppShell({
                   preview={notificationPreview}
                   onUnauthorized={onUnauthorized}
                   isAdmin={can('notifications.ack')}
+                  onNavigate={markMenuNavigation}
+                  onCloseAutoFocus={onMenuCloseAutoFocus}
                 />
               )}
               <ThemeToggle />
@@ -140,20 +182,24 @@ export default function AppShell({
                     <Menu className="h-4 w-4" aria-hidden />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuContent align="end" className="w-48" onCloseAutoFocus={onMenuCloseAutoFocus}>
                   {visibleGroups.map((group, index) => (
                     <DropdownMenuGroup key={group.id}>
                       {index > 0 && <DropdownMenuSeparator />}
                       <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
                       {group.items.map((tab) => (
-                        <DropdownMenuItem key={tab.id} onSelect={() => onView(tab.id)}>
+                        <DropdownMenuItem
+                          key={tab.id}
+                          aria-current={view === tab.id ? 'page' : undefined}
+                          onSelect={() => openViewFromMenu(tab.id)}
+                        >
                           {tab.label}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuGroup>
                   ))}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onSelect={() => onView('help')}>
+                  <DropdownMenuItem onSelect={() => openViewFromMenu('help')}>
                     <CircleHelp aria-hidden />
                     Help and how-to guides
                   </DropdownMenuItem>
@@ -169,7 +215,9 @@ export default function AppShell({
           </div>
         </header>
 
-        <main className="mx-auto max-w-6xl space-y-4 px-4 py-6">{children}</main>
+        <main id="main-content" tabIndex={-1} ref={main} className="mx-auto max-w-6xl scroll-mt-14 space-y-4 px-4 py-6">
+          {children}
+        </main>
       </div>
     </TooltipProvider>
   );

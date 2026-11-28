@@ -19,10 +19,14 @@ export default function NotificationBell({
   preview,
   onUnauthorized,
   isAdmin,
+  onNavigate,
+  onCloseAutoFocus,
 }: {
   preview: NotificationPreview;
   onUnauthorized: () => void;
   isAdmin: boolean;
+  onNavigate: () => void;
+  onCloseAutoFocus: (event: Event) => void;
 }) {
   const { data, error, loading, retry } = preview;
   const items = data?.notifications ?? [];
@@ -56,20 +60,8 @@ export default function NotificationBell({
           </span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel className="flex items-center">
-          Notifications
-          {unread > 0 && isAdmin && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-auto h-7 text-xs"
-              onClick={() => void markAll()}
-            >
-              Mark all read
-            </Button>
-          )}
-        </DropdownMenuLabel>
+      <DropdownMenuContent align="end" className="w-80" onCloseAutoFocus={onCloseAutoFocus}>
+        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {items.length === 0 && (
           <p className="text-muted-foreground px-2 py-4 text-center text-sm">
@@ -77,7 +69,7 @@ export default function NotificationBell({
           </p>
         )}
         {items.slice(0, notificationPreviewLimit).map((item) => (
-          <DropdownMenuItem key={item.id} asChild className="items-start gap-2">
+          <DropdownMenuItem key={item.id} asChild className="items-start gap-2" onSelect={onNavigate}>
             <a href={alertHref(item.id)}>
               {!item.read_at && (
                 <span className="bg-primary mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden />
@@ -92,7 +84,12 @@ export default function NotificationBell({
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem asChild className="justify-center text-sm font-medium">
+        {unread > 0 && isAdmin && (
+          <DropdownMenuItem onSelect={() => void markAll()}>
+            Mark all read
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem asChild className="justify-center text-sm font-medium" onSelect={onNavigate}>
           <a href="#/notifications">View all</a>
         </DropdownMenuItem>
       </DropdownMenuContent>

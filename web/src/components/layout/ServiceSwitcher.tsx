@@ -16,10 +16,12 @@ export default function ServiceSwitcher({
   services,
   selectedId,
   onSelect,
+  onCloseAutoFocus,
 }: {
   services: ServiceView[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  onCloseAutoFocus: (event: Event) => void;
 }) {
   const selected = services.find((service) => service.id === selectedId) ?? null;
 
@@ -32,7 +34,7 @@ export default function ServiceSwitcher({
           <ChevronsUpDown className="h-4 w-4 opacity-50" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-56">
+      <DropdownMenuContent align="start" className="w-56" onCloseAutoFocus={onCloseAutoFocus}>
         <DropdownMenuLabel>Services</DropdownMenuLabel>
         <DropdownMenuItem onSelect={() => onSelect(null)}>
           <span className="flex-1">All services</span>

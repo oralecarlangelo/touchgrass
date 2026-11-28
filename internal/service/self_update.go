@@ -39,11 +39,14 @@ var (
 
 // UpdateJob is the durable status written by the external host job.
 type UpdateJob struct {
-	Unit       string `json:"unit,omitempty"`
-	Tag        string `json:"tag"`
-	State      string `json:"state"`
-	StartedAt  string `json:"started_at,omitempty"`
-	FinishedAt string `json:"finished_at,omitempty"`
+	Unit          string `json:"unit,omitempty"`
+	Tag           string `json:"tag"`
+	State         string `json:"state"`
+	Phase         string `json:"phase,omitempty"`
+	BackupPercent *int   `json:"backup_percent,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+	StartedAt     string `json:"started_at,omitempty"`
+	FinishedAt    string `json:"finished_at,omitempty"`
 }
 
 // UpdateRelease is one published, architecture-compatible release.

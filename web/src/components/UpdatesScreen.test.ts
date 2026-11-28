@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { updateVersionMessage, shouldReloadUpdatedConsole } from './UpdatesScreen';
+import { updateJobMessage, updateVersionMessage, shouldReloadUpdatedConsole } from './UpdatesScreen';
 import type { SelfUpdateStatus } from '@/lib/api';
 
 const status: SelfUpdateStatus = {
@@ -12,9 +12,17 @@ describe('update status explanations', () => {
     expect(updateVersionMessage(status)).toContain('latest published release');
     expect(updateVersionMessage({ ...status, installed: '0.9.0-fleet.1' })).toContain('custom build');
   });
-  it('explains setup and running states separately', () => {
+  it('explains setup for an unconfigured installation', () => {
     expect(updateVersionMessage({ ...status, installed: '0.8.0', configured: false })).toContain('one-time setup');
-    expect(updateVersionMessage({ ...status, job: { tag: 'v0.10.0', state: 'running' } })).toBe('Update in progress.');
+  });
+});
+
+describe('installer progress', () => {
+  it('distinguishes queueing, backup and an older updater', () => {
+    expect(updateJobMessage({ tag: 'v0.10.12', state: 'pending' })).toBe('Waiting for the installer to start.');
+    expect(updateJobMessage({ tag: 'v0.10.12', state: 'running', phase: 'backing_up' })).toBe('Backing up the database.');
+    expect(updateJobMessage({ tag: 'v0.10.12', state: 'running' })).toBe('The installer is running.');
+    expect(updateJobMessage({ tag: 'v0.10.12', state: 'succeeded' })).toBeNull();
   });
 });
 

@@ -159,7 +159,7 @@ def request(config, tag):
             raise
 
 
-def backup_database(source, destination):
+def backup_database(source, destination, *, progress=None, report_check=None):
     if shutil.disk_usage(destination.parent).free < pathlib.Path(source).stat().st_size * 2:
         raise RuntimeError('insufficient space for database backup')
     fd, temporary = tempfile.mkstemp(prefix='.backup-', dir=destination.parent)
@@ -171,7 +171,20 @@ def backup_database(source, destination):
             db.execute('BEGIN')
             db.execute('SELECT name FROM sqlite_schema LIMIT 1').fetchone()
             with contextlib.closing(sqlite3.connect(temporary)) as backup:
-                db.backup(backup, pages=1000, sleep=0.1)
+                db.backup(backup, pages=1000, sleep=0.1, progress=progress)
+                if report_check is not None:
+                    next_check_sample = 0
+
+                    def check_progress():
+                        nonlocal next_check_sample
+                        sampled_at = time.monotonic()
+                        if sampled_at >= next_check_sample:
+                            next_check_sample = sampled_at + 5
+                            report_check()
+                        return 0
+
+                    check_progress()
+                    backup.set_progress_handler(check_progress, 100_000)
                 if backup.execute('PRAGMA quick_check').fetchone() != ('ok',):
                     raise RuntimeError('database backup failed integrity check')
         os.chmod(temporary, 0o600)
@@ -206,7 +219,24 @@ def run(config, tag, current):
     status = json.loads(status_path.read_text())
     if status.get('tag') != tag or status.get('state') != 'pending':
         raise RuntimeError('update request is no longer pending')
-    write_json(status_path, {**status, 'state': 'running'})
+    status.pop('phase', None)
+    status.pop('updated_at', None)
+    write_json(status_path, {**status, 'state': 'running', 'phase': 'preparing', 'updated_at': now()})
+
+    def report(phase, **details):
+        # A progress write must not interrupt the installation or rollback.
+        with contextlib.suppress(OSError):
+            write_json(status_path, {**status, 'state': 'running', 'phase': phase, 'updated_at': now(), **details})
+
+    next_sample = 0
+
+    def backup_progress(_status, remaining, total):
+        nonlocal next_sample
+        sampled_at = time.monotonic()
+        if total > 0 and (sampled_at >= next_sample or remaining == 0):
+            next_sample = sampled_at + 5
+            report('backing_up', backup_percent=100 * (total - remaining) // total)
+
     replaced = False
     stop_attempted = False
     backup = STATE / ('backup-' + str(time.time_ns()) + '.db')
@@ -221,18 +251,24 @@ def run(config, tag, current):
             trusted(BINARY)
             with tempfile.TemporaryDirectory(dir=STATE) as directory:
                 work = pathlib.Path(directory)
+                report('downloading')
                 download_release(tag, config['arch'], work / 'new')
-                backup_database(config['database'], backup)
+                report('backing_up')
+                backup_database(config['database'], backup, progress=backup_progress,
+                                report_check=lambda: report('verifying_backup'))
                 shutil.copyfile(BINARY, previous_binary)
                 previous_binary.chmod(0o600)
+                report('restarting')
                 try:
                     stop_attempted = True
                     command(['systemctl', 'stop', config['service']], timeout=90)
                     replaced = True
                     replace_binary(work / 'new')
                     command(['systemctl', 'start', config['service']], timeout=90)
+                    report('verifying_health')
                     wait_healthy(config, tag[1:])
                 except BaseException:
+                    report('rolling_back')
                     if replaced:
                         command(['systemctl', 'stop', config['service']], timeout=90)
                         replace_binary(previous_binary)

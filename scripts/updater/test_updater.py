@@ -119,6 +119,14 @@ class InstallFlowTests(unittest.TestCase):
                 connection.execute("insert into sample values ('preserve')")
             connection.close()
             updater.write_json(root / 'status.json', {'tag': 'v0.10.0', 'state': 'pending'})
+            reports = []
+            write_json = updater.write_json
+
+            def record_status(path, value):
+                reports.append(value.copy())
+                write_json(path, value)
+
+            stack.enter_context(patch.object(updater, 'write_json', side_effect=record_status))
             stack.enter_context(patch.object(updater, 'STATE', root))
             stack.enter_context(patch.object(updater, 'BINARY', binary))
             stack.enter_context(patch.object(updater, 'trusted'))
@@ -146,6 +154,17 @@ class InstallFlowTests(unittest.TestCase):
             connection.close()
             self.assertEqual(commands.call_count, 3 if recovery_failure else 4 if failure else 2)
             self.assertEqual(wait.call_count, 2 if failure and not recovery_failure else 1)
+            running = [entry for entry in reports if entry['state'] == 'running']
+            phases = list(dict.fromkeys(entry.get('phase') for entry in running))
+            expected = ['preparing', 'downloading', 'backing_up', 'verifying_backup', 'restarting']
+            if not stop_failure:
+                expected.append('verifying_health')
+            if failure or stop_failure:
+                expected.append('rolling_back')
+            self.assertEqual(phases, expected)
+            self.assertTrue(all(entry.get('updated_at') for entry in running))
+            self.assertTrue(any(entry.get('backup_percent') == 100 for entry in running))
+            self.assertNotIn('phase', reports[-1])
 
     def test_success_retains_database_and_backup(self):
         self.exercise()
@@ -168,6 +187,22 @@ class InstallFlowTests(unittest.TestCase):
             with self.assertRaises(sqlite3.DatabaseError):
                 updater.backup_database(source, destination)
             self.assertFalse(destination.exists())
+
+    def test_backup_reports_activity_during_integrity_check(self):
+        import sqlite3
+        from contextlib import closing
+        from itertools import count
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source, destination = root / 'example.db', root / 'backup.db'
+            with closing(sqlite3.connect(source)) as db:
+                db.execute('create table items (label text)')
+                db.executemany('insert into items values (?)', [('sample',)] * 40000)
+                db.commit()
+            samples = []
+            with patch.object(updater.time, 'monotonic', side_effect=count(10, 6)):
+                updater.backup_database(source, destination, report_check=lambda: samples.append('checking'))
+            self.assertGreater(len(samples), 1)
 
     def test_download_failure_leaves_no_orphan_rollback_files(self):
         with tempfile.TemporaryDirectory() as directory:

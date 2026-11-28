@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -74,6 +74,18 @@ export default function UsersScreen({
   const [pendingPassword, setPendingPassword] = useState<ManagedUser | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [pendingDelete, setPendingDelete] = useState<ManagedUser | null>(null);
+  const dialogOpener = useRef<HTMLButtonElement>(null);
+  const newUserButton = useRef<HTMLButtonElement>(null);
+
+  function restoreDialogFocus(event: Event): void {
+    const opener = dialogOpener.current;
+    const target = opener?.isConnected && !opener.disabled ? opener : newUserButton.current;
+    dialogOpener.current = null;
+    if (target !== null) {
+      event.preventDefault();
+      target.focus();
+    }
+  }
 
   const load = useCallback(async () => {
     setError(null);
@@ -235,6 +247,7 @@ export default function UsersScreen({
     try {
       await deleteUser(pendingDelete.id);
       toast.success(`User ${pendingDelete.username} deleted.`);
+      dialogOpener.current = null;
       setPendingDelete(null);
       await load();
     } catch (err) {
@@ -252,7 +265,15 @@ export default function UsersScreen({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold tracking-tight">Users</h1>
-        <Button size="sm" className="ml-auto" onClick={() => setCreating(true)}>
+        <Button
+          size="sm"
+          className="ml-auto"
+          ref={newUserButton}
+          onClick={(event) => {
+            dialogOpener.current = event.currentTarget;
+            setCreating(true);
+          }}
+        >
           New user
         </Button>
       </div>
@@ -327,7 +348,10 @@ export default function UsersScreen({
                           variant="ghost"
                           size="sm"
                           disabled={working}
-                          onClick={() => openAccess(user)}
+                          onClick={(event) => {
+                            dialogOpener.current = event.currentTarget;
+                            openAccess(user);
+                          }}
                           aria-label={`Change access of ${user.username}`}
                         >
                           Access
@@ -335,7 +359,8 @@ export default function UsersScreen({
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => {
+                          onClick={(event) => {
+                            dialogOpener.current = event.currentTarget;
                             setPendingPassword(user);
                             setNewPassword('');
                           }}
@@ -356,7 +381,10 @@ export default function UsersScreen({
                           variant="ghost"
                           size="sm"
                           className="text-destructive hover:text-destructive"
-                          onClick={() => setPendingDelete(user)}
+                          onClick={(event) => {
+                            dialogOpener.current = event.currentTarget;
+                            setPendingDelete(user);
+                          }}
                           aria-label={`Delete ${user.username}`}
                         >
                           Delete
@@ -372,7 +400,7 @@ export default function UsersScreen({
       </Card>
 
       <Dialog open={creating} onOpenChange={(open) => !open && setCreating(false)}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
           <DialogHeader>
             <DialogTitle>New user</DialogTitle>
             <DialogDescription>
@@ -426,7 +454,7 @@ export default function UsersScreen({
       </Dialog>
 
       <Dialog open={accessOpen} onOpenChange={(open) => !open && setAccessOpen(false)}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
           <DialogHeader>
             <DialogTitle>Access for {editing?.username}</DialogTitle>
             <DialogDescription>
@@ -487,7 +515,7 @@ export default function UsersScreen({
       </Dialog>
 
       <Dialog open={pendingPassword !== null} onOpenChange={(open) => !open && setPendingPassword(null)}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
           <DialogHeader>
             <DialogTitle>Reset password</DialogTitle>
             <DialogDescription>
@@ -519,7 +547,7 @@ export default function UsersScreen({
       </Dialog>
 
       <Dialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={restoreDialogFocus}>
           <DialogHeader>
             <DialogTitle>Delete {pendingDelete?.username}?</DialogTitle>
             <DialogDescription>
